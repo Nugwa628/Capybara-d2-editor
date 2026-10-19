@@ -200,7 +200,7 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
    - `capybara\user.db` holds the user's data (tags, aliases, favorites, recents, saved searches), keyed by stable asset keys such as path + orientation/main/sub, so it survives a rebuild of the cache.
    - Rebuild rule, chosen to keep the code small: if any archive in a profile changes size or modified time, rebuild that whole profile's index in the background. Incremental per-archive re-indexing waits until rebuilds actually feel slow.
 5. **Ctrl+K global search:**
-   - Fuzzy matching (nucleo) plus filter tokens: `type: act: color: tag: idx:5/2 file: similar: used-in: mirrored: src:mxl`.
+   - Fuzzy matching (nucleo) plus filter tokens: `type: act: color: tag: idx:5/2 file: similar: used-in: mirrored: src:mod`.
    - Thumbnails update live as you type. Enter picks the result as the brush; Shift+Enter shows it in the browser.
 6. **Recents** are recorded automatically. **Favorites** are stars in named, reorderable groups. **Saved searches** work as smart folders, so custom tiles can be pinned to the top.
 

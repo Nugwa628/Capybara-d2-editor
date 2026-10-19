@@ -28,12 +28,14 @@ Perceptual hash via `image_hasher`.
   when it is not "flat" (`grass` is a colour+texture combination chosen from a
   small table: green+noisy → "grass", brown+noisy → "dirt", grey+edgy → "stone",
   blue+flat → "water", dark → "dark"; otherwise `<colour> <texture>`).
-- Colour names: nearest of a fixed 16-entry palette (black, grey, white, red,
+- `dark` only when the mean opaque luma is below 25 (Median XL median luma is
+  40); otherwise the colour name. Colour names: nearest of a fixed 16-entry palette (black, grey, white, red,
   orange, brown, yellow, olive, green, teal, cyan, blue, purple, magenta, pink,
   tan) by squared RGB distance of the mean opaque colour, after act palette and
   gamma 1.0.
 - Texture class from edge density of the opaque pixels (Sobel magnitude mean):
-  `flat` < 12, `noisy` < 40, `edgy` otherwise.
+  `flat` < 20, `noisy` < 60, `edgy` otherwise (recalibrated 2026-10-19 on the
+  Median XL tile corpus: p10 = 22, p50 = 66, p90 = 110).
 - Files: `<place> · <kind>` (`Act1 Town Towne1 · DS1`).
 User aliases (user.db) are shown instead of, and searched alongside, generated names.
 
@@ -107,7 +109,7 @@ pub enum Filter {
     Similar(String),                 // similar:<asset key>  (pHash Hamming distance <= 10, nearest first)
     UsedIn(String),                  // used-in:towne1 (substring of DS1 path)
     Mirrored,                        // mirrored:yes — has a horizontally mirrored twin (phash_mirror match)
-    Src(String),                     // src:mxl / src:base / src:saves / src:<archive substring>
+    Src(String),                     // src:mod / src:base / src:saves / src:<archive substring>
     Not(Box<Filter>),                // -tag:foo
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -141,7 +143,12 @@ pub struct Hit { pub asset: AssetRow, pub score: f32, pub alias: Option<String> 
 pub struct Index { /* path, Connection */ }
 impl Index {
     pub fn open(cache_dir: &std::path::Path) -> Result<Index>;              // creates cache_dir/index.db
+    /// Ignores the profile's saves layer (`saves\<id>`); saving a map never makes
+    /// the profile stale. Saved DS1s are picked up by `refresh_saves`.
     pub fn status(&self, profile_id: &str, overlay: &d2_assets::Overlay) -> Result<IndexStatus>;
+    /// Cheap incremental update: re-reads only the saves layer's DS1 files and
+    /// updates their ds1 assets, src/src_tag and used_in rows. Milliseconds per map.
+    pub fn refresh_saves(&mut self, profile: &d2_assets::Profile, overlay: &d2_assets::Overlay) -> Result<BuildReport>;
     /// Full rebuild of one profile (deletes its rows first) in the calling thread.
     /// Reports progress at least every 250 ms of work; checks `cancel` between items.
     pub fn build(&mut self, profile: &d2_assets::Profile, overlay: &d2_assets::Overlay,
