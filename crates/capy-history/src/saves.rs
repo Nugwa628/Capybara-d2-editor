@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use d2_assets::GamePath;
 
@@ -9,6 +10,17 @@ use crate::atomic::atomic_write;
 use crate::error::{HistoryError, Result};
 
 const CHANGED_FILE: &str = "CHANGED.txt";
+
+/// Serialises every read-modify-write of a `CHANGED.txt` in this process:
+/// the app saves from the main thread and from batch workers, and two
+/// unsynchronised updates would each drop the other's entry.
+static CHANGED_LOCK: Mutex<()> = Mutex::new(());
+
+fn changed_lock() -> MutexGuard<'static, ()> {
+    // A panic while holding the lock cannot leave the file half-written
+    // (writes are atomic), so a poisoned lock is still usable.
+    CHANGED_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The saves folder of one profile.
 #[derive(Clone, Debug)]
@@ -64,9 +76,11 @@ impl SavesDir {
 
     /// `atomic_write` to `path_for(game_path)`, then add the game path to
     /// `CHANGED.txt` if it is not already listed (rewritten atomically).
+    /// Safe to call from several threads at once: no entry is lost.
     pub fn save(&self, game_path: &GamePath, bytes: &[u8]) -> Result<PathBuf> {
         let target = self.path_for(game_path)?;
         atomic_write(&target, bytes)?;
+        let _guard = changed_lock();
         let mut changed = self.changed()?;
         if !changed.contains(game_path) {
             changed.push(game_path.clone());
@@ -99,6 +113,7 @@ impl SavesDir {
 
     /// "Mark as packed": clears `CHANGED.txt` (atomically; file left empty).
     pub fn mark_packed(&self) -> Result<()> {
+        let _guard = changed_lock();
         atomic_write(&self.changed_path(), b"")
     }
 
@@ -164,5 +179,24 @@ mod tests {
                 "{bad:?} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn concurrent_saves_keep_every_changed_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = SavesDir::new(tmp.path(), "vanilla");
+        std::thread::scope(|scope| {
+            for t in 0..8 {
+                let dir = &dir;
+                scope.spawn(move || {
+                    for i in 0..25 {
+                        let path = gp(&format!(r"data\global\t{t}\f{i}.ds1"));
+                        dir.save(&path, b"x").unwrap();
+                    }
+                });
+            }
+        });
+        let changed = dir.changed().unwrap();
+        assert_eq!(changed.len(), 8 * 25, "an entry was lost");
     }
 }
