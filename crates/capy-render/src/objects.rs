@@ -10,35 +10,46 @@
 //! 2. The COF is `{base}\{token}\cof\{token}{mode}{class}.cof` (`cof.c:253`).
 //! 3. Every COF layer is a component sprite
 //!    `{base}\{token}\{CC}\{token}{CC}{skin}{mode}{class}.dcc` with the layer's
-//!    own weapon class (`cof.c:322-333`); `.dc6` is tried only when no `.dcc`
-//!    exists. The skin comes from [`ObjectInfo::skins`] (default `LIT`). When
-//!    a COF has several records of one component the last one wins (`cof.c:306`).
+//!    own weapon class (`cof.c:322-333`, [`d2_formats::cof::component_paths`]);
+//!    `.dc6` is tried only when no `.dcc` exists. The skin comes from
+//!    [`ObjectInfo::skins`] (default `LIT`). When a COF has several records
+//!    of one component the last one wins ([`Cof::component_layer`],
+//!    `cof.c:306`).
 //! 4. One user direction (default 0) is mapped through the editor's
 //!    direction tables (`main.c:331-334`) to the file direction, which indexes
 //!    both the sprite and the COF priority table (lead decision, PLAN.md).
 //! 5. The frame is chosen by [`frame_index`]; layers are listed in COF priority
 //!    order (`preview.c:2095`), each with its blend (`preview.c:2131`) and, for
 //!    layers with `shadow != 0`, its shadow darkness (`preview.c:2235-2259`).
+//! 6. A unique or special monster with an obj.txt palette shift
+//!    ([`ObjectInfo::colormap`]) has the palette indices of its layers with
+//!    `trans_a == 0` mapped through the shift's 256-byte row as the sprites
+//!    load (`cof.c:216-242,343-361`), so [`FrameLayer::image`] already holds
+//!    the shifted indices and every later palette lookup sees them. A
+//!    colormap file that is missing or too short for the row draws the
+//!    monster unshifted, as the reference does.
 //!
 //! The bitmap of a layer in the reference is the whole direction box (the
 //! union of the frame boxes), anchored at the box's top-left corner
 //! (`cof.c:117-122`, `dc6.c:193-260`); [`FrameLayer::box_origin`] is that
 //! corner, which keeps point-sampled zooms in step with the oracle.
 //!
-//! `capy-sprite::compose_cof_frame` cannot be used here: `capy-sprite`
-//! depends on this crate (for [`Blend`]), and the reference draws each layer
-//! as its own scaled bitmap with separately truncated offsets, which a
-//! pre-composited frame cannot reproduce at zoom. [`ObjectFrame::to_rgba`]
-//! gives the same 1:1 composite `compose_cof_frame` does.
+//! `capy-sprite::compose_cof_frame` is not used here: the reference draws
+//! each layer as its own scaled bitmap with separately truncated offsets,
+//! which a pre-composited frame cannot reproduce at zoom. The rules both
+//! share live in `d2-formats`: the sprite paths and the last-record rule in
+//! [`d2_formats::cof`], the `trans_a`/`trans_b` blend mapping in
+//! [`Blend::for_cof_layer`]. [`ObjectFrame::to_rgba`] gives the same 1:1
+//! composite `compose_cof_frame` does.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use d2_assets::objects::{ObjectCatalog, ObjectInfo, SpriteBase};
+use d2_assets::objects::{ObjectCatalog, ObjectInfo, PaletteShift, SpriteBase};
 use d2_assets::{GamePath, Overlay};
 use d2_formats::IndexedImage;
 use d2_formats::animdata::AnimData;
-use d2_formats::cof::Cof;
+use d2_formats::cof::{Cof, cof_path, component_paths, path_token};
 use d2_formats::dc6::Dc6;
 use d2_formats::dcc::Dcc;
 use d2_formats::ds1::{Ds1, Object};
@@ -46,11 +57,6 @@ use d2_formats::palette::Palette;
 
 use crate::compose::Blend;
 use crate::tileset::{TILE_H, TILE_W};
-
-/// Component codes by COF component index.
-const COMPONENT_CODES: [&str; 16] = [
-    "HD", "TR", "LG", "RA", "LA", "RH", "LH", "SH", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8",
-];
 
 /// File direction of user direction `n` for COFs with 8, 16 and 32
 /// directions (`main.c:331-340`); 1 and 4 direction COFs use the user
@@ -316,21 +322,44 @@ type FrameKey = (u8, (i32, i32), u8);
 
 type AssetResult = std::result::Result<Arc<Asset>, MissingReason>;
 
+/// What one cached [`Asset`] is loaded from.
+struct AssetSpec<'s> {
+    base: SpriteBase,
+    token: &'s str,
+    mode: &'s str,
+    class: &'s str,
+    skins: &'s [(String, String)],
+    user_dir: u8,
+    /// The palette shift row for layers with `trans_a == 0`.
+    shift: Option<&'s [u8; 256]>,
+}
+
 /// Loads object sprites through an overlay and caches them.
 ///
 /// Composites are cached per (sprite key, direction, frame): the sprite key is
-/// base, token, mode, class and skins, so objects sharing a sprite share one
-/// decode.
+/// base, token, mode, class, skins and palette shift, so objects sharing a
+/// sprite share one decode.
 pub struct ObjectSprites<'a> {
     overlay: &'a Overlay,
     catalog: &'a ObjectCatalog,
     animdata: OnceLock<Option<AnimData>>,
     assets: Mutex<HashMap<String, AssetResult>>,
+    /// Colormap files by lower-case path (`None` when absent).
+    colormaps: Mutex<HashMap<String, Option<Arc<[u8]>>>>,
 }
 
-fn clean(s: &str) -> String {
-    s.trim_matches(|c: char| c == '\0' || c.is_whitespace())
-        .to_ascii_lowercase()
+/// Maps the visible pixels of `frames` through a palette shift row
+/// (`index -> row[index]`, `cof.c:149-170`, `dc6.c:93-130`). Transparent
+/// pixels (alpha 0 or index 0) stay as they are; a row entry of 0 makes a
+/// visible pixel transparent, which no shipped colormap row does.
+pub(crate) fn shift_palette(frames: &mut [IndexedImage], row: &[u8; 256]) {
+    for frame in frames {
+        for (p, &a) in frame.pixels.iter_mut().zip(&frame.alpha) {
+            if a != 0 && *p != 0 {
+                *p = row[usize::from(*p)];
+            }
+        }
+    }
 }
 
 fn file_direction(cof_dirs: u8, user: u8) -> u8 {
@@ -358,23 +387,6 @@ fn base_folder(base: SpriteBase) -> &'static str {
     }
 }
 
-fn blend_for(transparent: bool, draw_effect: u8) -> Blend {
-    // preview.c:2131: blended only when trans_a != 0 and trans_b is 0..=6
-    // except 5.
-    if !transparent {
-        return Blend::Normal;
-    }
-    match draw_effect {
-        0 => Blend::Alpha25,
-        1 => Blend::Alpha50,
-        2 => Blend::Alpha75,
-        3 => Blend::Additive,
-        4 => Blend::Multiply,
-        6 => Blend::Screen,
-        _ => Blend::Normal,
-    }
-}
-
 /// The direction box origin of a set of frames: the union of the non-empty
 /// frame rectangles (`dc6.c:193-260`; the DCC header box is the same union).
 fn box_origin(frames: &[IndexedImage]) -> (i32, i32) {
@@ -398,7 +410,24 @@ impl<'a> ObjectSprites<'a> {
             catalog,
             animdata: OnceLock::new(),
             assets: Mutex::new(HashMap::new()),
+            colormaps: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The row of a palette shift, `None` when its file is missing or too
+    /// short for the row (`cof.c:232-247`).
+    fn palette_shift(&self, shift: &PaletteShift) -> Option<[u8; 256]> {
+        let file = {
+            let mut cache = self
+                .colormaps
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            cache
+                .entry(shift.path.to_ascii_lowercase())
+                .or_insert_with(|| self.read(&shift.path).map(Arc::from))
+                .clone()
+        }?;
+        shift.row_in(&file).copied()
     }
 
     pub fn catalog(&self) -> &ObjectCatalog {
@@ -505,31 +534,46 @@ impl<'a> ObjectSprites<'a> {
                 MissingReason::NoSprite
             });
         };
-        let token = clean(token);
+        let token = path_token(token);
         if token.is_empty() {
             return Err(MissingReason::NoSprite);
         }
-        let mode = if clean(&info.mode).is_empty() {
+        let mode = if path_token(&info.mode).is_empty() {
             "nu".to_owned()
         } else {
-            clean(&info.mode)
+            path_token(&info.mode)
         };
-        let class = if clean(&info.weapon_class).is_empty() {
+        let class = if path_token(&info.weapon_class).is_empty() {
             "hth".to_owned()
         } else {
-            clean(&info.weapon_class)
+            path_token(&info.weapon_class)
         };
         let skins: Vec<(String, String)> = info
             .skins
             .iter()
-            .map(|(c, s)| (c.to_ascii_uppercase(), clean(s)))
+            .map(|(c, s)| (c.to_ascii_uppercase(), path_token(s)))
             .collect();
-        let key = format!("{base:?}|{token}|{mode}|{class}|{skins:?}|{direction}");
+        let shift = info
+            .colormap
+            .as_ref()
+            .and_then(|c| Some((c, self.palette_shift(c)?)));
+        let shift_key = shift.map(|(c, _)| format!("{}#{}", c.path.to_ascii_lowercase(), c.row));
+        let key = format!("{base:?}|{token}|{mode}|{class}|{skins:?}|{direction}|{shift_key:?}");
         let asset = {
             let mut cache = self.assets.lock().unwrap_or_else(PoisonError::into_inner);
             cache
                 .entry(key)
-                .or_insert_with(|| self.load_asset(base, &token, &mode, &class, &skins, direction))
+                .or_insert_with(|| {
+                    self.load_asset(&AssetSpec {
+                        base,
+                        token: &token,
+                        mode: &mode,
+                        class: &class,
+                        skins: &skins,
+                        user_dir: direction,
+                        shift: shift.as_ref().map(|(_, row)| row),
+                    })
+                })
                 .clone()
         }?;
         // Frame choice: objects use their Objects.txt FrameDelta (0 already
@@ -555,17 +599,18 @@ impl<'a> ObjectSprites<'a> {
         Ok(cached)
     }
 
-    fn load_asset(
-        &self,
-        base: SpriteBase,
-        token: &str,
-        mode: &str,
-        class: &str,
-        skins: &[(String, String)],
-        user_dir: u8,
-    ) -> AssetResult {
+    fn load_asset(&self, spec: &AssetSpec<'_>) -> AssetResult {
+        let &AssetSpec {
+            base,
+            token,
+            mode,
+            class,
+            skins,
+            user_dir,
+            shift,
+        } = spec;
         let folder = base_folder(base);
-        let cof_path = format!("{folder}\\{token}\\cof\\{token}{mode}{class}.cof");
+        let cof_path = cof_path(folder, token, mode, class);
         let bytes = self
             .read(&cof_path)
             .ok_or_else(|| MissingReason::CofNotFound(cof_path.clone()))?;
@@ -576,12 +621,13 @@ impl<'a> ObjectSprites<'a> {
         let dir = file_direction(cof.directions, user_dir).min(cof.directions - 1);
         let mut layers: Vec<Option<LayerSprite>> = (0..16).map(|_| None).collect();
         // The last record of a component wins (cof.c:306-318).
-        for record in &cof.layers {
-            let idx = usize::from(record.component);
-            if idx >= 16 {
+        for (idx, slot) in (0u8..).zip(layers.iter_mut()) {
+            let Some(record) = cof.component_layer(idx) else {
                 continue;
-            }
-            let code = COMPONENT_CODES[idx];
+            };
+            let Some(code) = record.component_code() else {
+                continue;
+            };
             // obj.txt gives every drawn component a skin; an empty cell makes
             // the reference build a name no file has, so the layer is not
             // drawn (cof.c:322-333). Without a skin list (tables other than
@@ -591,11 +637,20 @@ impl<'a> ObjectSprites<'a> {
                 None if skins.is_empty() => "lit",
                 None => continue,
             };
-            let wclass = clean(&String::from_utf8_lossy(&record.weapon_class));
-            let stem = format!("{token}{}{skin}{mode}{wclass}", code.to_ascii_lowercase());
-            let dir_path = format!("{folder}\\{token}\\{}", code.to_ascii_lowercase());
-            let frames = self.load_component(&dir_path, &stem, &cof, dir);
-            layers[idx] = frames.map(|frames| LayerSprite {
+            let paths = component_paths(
+                folder,
+                token,
+                mode,
+                &record.weapon_class_token(),
+                code,
+                skin,
+            );
+            let mut frames = self.load_component(&paths, &cof, dir);
+            // cof.c:343-345: the colormap skips alpha-blended layers.
+            if let (Some(row), Some(frames), 0) = (shift, frames.as_mut(), record.transparent) {
+                shift_palette(frames, row);
+            }
+            *slot = frames.map(|frames| LayerSprite {
                 component: record.component,
                 shadow: record.shadow != 0,
                 transparent: record.transparent != 0,
@@ -620,15 +675,15 @@ impl<'a> ObjectSprites<'a> {
         }))
     }
 
-    /// The frames of direction `dir` from `{stem}.dcc`, else `{stem}.dc6`.
+    /// The frames of direction `dir` from the `.dcc` of `paths`, else its
+    /// `.dc6` ([`component_paths`] order).
     fn load_component(
         &self,
-        dir_path: &str,
-        stem: &str,
+        [dcc, dc6]: &[String; 2],
         cof: &Cof,
         dir: u8,
     ) -> Option<Vec<IndexedImage>> {
-        if let Some(bytes) = self.read(&format!("{dir_path}\\{stem}.dcc")) {
+        if let Some(bytes) = self.read(dcc) {
             // No fall back to .dc6 when the .dcc exists but fails (the game
             // does not either, PLAN.md "Format decisions").
             let dcc = Dcc::parse(&bytes).ok()?;
@@ -638,7 +693,7 @@ impl<'a> ObjectSprites<'a> {
                 .nth(usize::from(dir))
                 .map(|d| d.frames);
         }
-        let bytes = self.read(&format!("{dir_path}\\{stem}.dc6"))?;
+        let bytes = self.read(dc6)?;
         let dc6 = Dc6::parse(&bytes).ok()?;
         // dc6.c:175: the direction count must equal the COF's.
         if dc6.directions != u32::from(cof.directions) {
@@ -666,7 +721,7 @@ fn build_frame(asset: &Asset, frame: u8, offset: (i32, i32), order_flag: u8) -> 
             component: layer.component,
             image: Arc::clone(image),
             box_origin: layer.box_origin,
-            blend: blend_for(layer.transparent, layer.draw_effect),
+            blend: Blend::for_cof_layer(layer.transparent, layer.draw_effect),
             shadow: layer
                 .shadow
                 .then_some(if layer.transparent { 28 } else { 10 }),

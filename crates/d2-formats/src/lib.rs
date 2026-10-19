@@ -9,6 +9,7 @@ pub mod grid;
 pub mod image;
 
 pub mod animdata;
+pub mod blend;
 pub mod cof;
 pub mod dc6;
 pub mod dcc;

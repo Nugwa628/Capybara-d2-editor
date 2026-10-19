@@ -272,7 +272,7 @@ fn rand_selection(rng: &mut Rng, ds: &Ds1) -> Selection {
 }
 
 /// Edit kinds 0..EDIT_KINDS are edits; the next five codes are history commands.
-const EDIT_KINDS: u64 = 25;
+const EDIT_KINDS: u64 = 26;
 
 /// An object index: mostly valid, sometimes just past the end. With `prefer_path`
 /// an object that has an NPC path is favoured.
@@ -413,12 +413,19 @@ fn run_edit(doc: &mut Document, kind: u64, seed: u64) -> Result<(), EditError> {
                 }
                 Err(EditError::NeedsVersion { required, .. }) => {
                     assert_eq!(preview.needs_version, Some(required));
+                    assert!(!preview.warnings.iter().any(|w| is_anchor_warning(w)));
                     Err(EditError::NeedsVersion {
                         current: ds.version,
                         required,
                     })
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    // the only other way a paste fails: an ambiguous anchor,
+                    // which the preview lists
+                    let detail = invalid_detail(&e).expect("paste fails only on anchors");
+                    assert!(preview.warnings.contains(&detail));
+                    Err(e)
+                }
             }
         }
         11 => {
@@ -534,8 +541,110 @@ fn run_edit(doc: &mut Document, kind: u64, seed: u64) -> Result<(), EditError> {
             let idx: Vec<usize> = (0..rng.below(4)).map(|_| rng.below(4) as usize).collect();
             doc.delete_path_points(i, &idx)
         }
+        25 => {
+            // place an object (add or paste) on a sub-tile that may carry an
+            // NPC path anchor: refused exactly when it would be ambiguous
+            let target = if rng.chance(70) && !ds.objects.is_empty() {
+                let prefer_path = rng.chance(50);
+                let o = ds.objects[pick_object(rng, &ds, prefer_path) % ds.objects.len()];
+                (o.x, o.y)
+            } else if rng.chance(50) && !ds.npc_paths.is_empty() {
+                let p = &ds.npc_paths[rng.below(ds.npc_paths.len() as u64) as usize];
+                (p.x, p.y)
+            } else {
+                (
+                    rng.range(0, (ds.width * 5) as i32),
+                    rng.range(0, (ds.height * 5) as i32),
+                )
+            };
+            let object = Object {
+                x: target.0,
+                y: target.1,
+                ..rand_object(rng, 1, 1, false)
+            };
+            let mut ambiguous = would_be_ambiguous(&ds, &[object]);
+            let result = if rng.chance(50) {
+                doc.add_object(object).map(|_| ())
+            } else {
+                // a one-object clip whose origin cell holds the target
+                let clip = Clipboard {
+                    width: 1,
+                    height: 1,
+                    cells: Vec::new(),
+                    objects: vec![Object {
+                        x: target.0.rem_euclid(5),
+                        y: target.1.rem_euclid(5),
+                        ..object
+                    }],
+                    source: capy_edit::ClipSource {
+                        game_path: None,
+                        act: ds.act,
+                        lvl_type: None,
+                        version: ds.version,
+                    },
+                };
+                let at = (target.0.div_euclid(5), target.1.div_euclid(5));
+                // paste drops objects outside the map
+                let inside = (0..ds.width as i32 * 5).contains(&target.0)
+                    && (0..ds.height as i32 * 5).contains(&target.1);
+                ambiguous &= inside;
+                let preview = doc.preview_paste(&clip, at, PasteMode::Overwrite);
+                let anchors = preview
+                    .warnings
+                    .iter()
+                    .filter(|w| is_anchor_warning(w))
+                    .count();
+                assert_eq!(anchors, usize::from(ambiguous), "{:?}", preview.warnings);
+                doc.paste(&clip, at, PasteMode::Overwrite).map(|_| ())
+            };
+            match &result {
+                Err(e) if invalid_detail(e).is_some() => assert!(ambiguous, "{e}"),
+                _ => assert!(!ambiguous, "placed onto an ambiguous anchor: {result:?}"),
+            }
+            if result.is_ok() {
+                assert!(!ambiguous_anywhere_new(&ds, doc.ds1()));
+            }
+            result
+        }
         _ => doc.upgrade_version(ds.version + 1 + rng.range(0, 3)),
     }
+}
+
+/// The detail of a `Format(Invalid)` error.
+fn invalid_detail(e: &EditError) -> Option<String> {
+    match e {
+        EditError::Format(d2_formats::FormatError::Invalid { detail, .. }) => Some(detail.clone()),
+        _ => None,
+    }
+}
+
+fn is_anchor_warning(w: &str) -> bool {
+    w.ends_with("so the path would be ambiguous")
+}
+
+/// Whether the sub-tile `(x, y)` holds two objects and a path, or two paths.
+fn ambiguous_at(ds: &Ds1, x: i32, y: i32) -> bool {
+    let objects = ds.objects.iter().filter(|o| (o.x, o.y) == (x, y)).count();
+    let paths = ds.npc_paths.iter().filter(|p| (p.x, p.y) == (x, y)).count();
+    paths >= 2 || (paths >= 1 && objects >= 2)
+}
+
+/// Whether appending `objects` to `ds` leaves an ambiguous anchor on one of
+/// their sub-tiles (the model of the placement guard).
+fn would_be_ambiguous(ds: &Ds1, objects: &[Object]) -> bool {
+    let mut after = ds.clone();
+    after.objects.extend_from_slice(objects);
+    objects.iter().any(|o| ambiguous_at(&after, o.x, o.y))
+}
+
+/// Whether `after` has an ambiguous sub-tile that `before` did not.
+fn ambiguous_anywhere_new(before: &Ds1, after: &Ds1) -> bool {
+    after
+        .objects
+        .iter()
+        .map(|o| (o.x, o.y))
+        .chain(after.npc_paths.iter().map(|p| (p.x, p.y)))
+        .any(|(x, y)| ambiguous_at(after, x, y) && !ambiguous_at(before, x, y))
 }
 
 // ----- the model check ------------------------------------------------------------
@@ -570,14 +679,14 @@ fn run_case(init_seed: u64, ops: &[(u8, u64)]) -> Result<(), TestCaseError> {
             doc.redo_label().map(str::to_string),
         );
         match kind {
-            25 => {
+            26 => {
                 doc.begin_group("Group");
                 if depth == 0 {
                     group_ops = 0;
                 }
                 depth += 1;
             }
-            26 => {
+            27 => {
                 doc.end_group();
                 if depth > 0 {
                     depth -= 1;
@@ -586,7 +695,7 @@ fn run_case(init_seed: u64, ops: &[(u8, u64)]) -> Result<(), TestCaseError> {
                     }
                 }
             }
-            27 | 28 => {
+            28 | 29 => {
                 // undo and redo close an open group first
                 if depth > 0 {
                     depth = 0;
@@ -594,7 +703,7 @@ fn run_case(init_seed: u64, ops: &[(u8, u64)]) -> Result<(), TestCaseError> {
                         states.push(doc.ds1().clone());
                     }
                 }
-                if kind == 27 {
+                if kind == 28 {
                     let expect = states.len() > 1;
                     prop_assert_eq!(doc.undo(), expect);
                     if expect {
@@ -609,7 +718,7 @@ fn run_case(init_seed: u64, ops: &[(u8, u64)]) -> Result<(), TestCaseError> {
                 }
                 prop_assert_eq!(doc.ds1(), states.last().unwrap());
             }
-            29 => {
+            30 => {
                 doc.mark_saved();
                 saved = doc.ds1().clone();
                 prop_assert!(!doc.is_dirty());
@@ -713,7 +822,7 @@ proptest! {
     #[test]
     fn random_edit_sequences_obey_the_undo_laws(
         seed in any::<u64>(),
-        ops in proptest::collection::vec((0u8..30, any::<u64>()), 1..40),
+        ops in proptest::collection::vec((0u8..31, any::<u64>()), 1..40),
     ) {
         run_case(seed, &ops)?;
     }
@@ -726,7 +835,7 @@ proptest! {
     #[test]
     fn long_sequences(
         seed in any::<u64>(),
-        ops in proptest::collection::vec((0u8..30, any::<u64>()), 60..120),
+        ops in proptest::collection::vec((0u8..31, any::<u64>()), 60..120),
     ) {
         run_case(seed, &ops)?;
     }
@@ -784,13 +893,17 @@ fn many_undo_steps_on_a_large_map() {
 }
 
 /// Guards the generator: every kind of edit must succeed often enough that
-/// the properties above are not vacuous.
+/// the properties above are not vacuous, and the anchor guard (kind 25) must
+/// refuse often enough too.
 #[test]
 fn every_edit_kind_succeeds_sometimes() {
+    /// The object placement kind, which may hit an ambiguous anchor.
+    const PLACE: u64 = 25;
     let mut ok = [0usize; EDIT_KINDS as usize];
     let mut needs_version = 0usize;
+    let mut anchor_refusals = 0usize;
     let mut rng = Rng(99);
-    for _ in 0..400 {
+    for _ in 0..600 {
         let mut doc = Document::new(gen_ds1(&mut rng));
         for _ in 0..30 {
             let kind = rng.below(EDIT_KINDS);
@@ -799,15 +912,22 @@ fn every_edit_kind_succeeds_sometimes() {
                 Ok(()) if doc.revision() > revision => ok[kind as usize] += 1,
                 Ok(()) => {}
                 Err(EditError::NeedsVersion { .. }) => needs_version += 1,
+                Err(e) if kind == PLACE && invalid_detail(&e).is_some() => anchor_refusals += 1,
                 Err(_) => {}
             }
         }
     }
-    eprintln!("successes per kind: {ok:?}, NeedsVersion: {needs_version}");
+    eprintln!(
+        "successes per kind: {ok:?}, NeedsVersion: {needs_version}, anchor refusals: {anchor_refusals}"
+    );
     for (kind, n) in ok.iter().enumerate() {
         assert!(*n >= 30, "edit kind {kind} succeeded only {n} times");
     }
     assert!(needs_version >= 30);
+    assert!(
+        anchor_refusals >= 30,
+        "only {anchor_refusals} anchor refusals"
+    );
 }
 
 // ----- NeedsVersion is the least sufficient version -------------------------------

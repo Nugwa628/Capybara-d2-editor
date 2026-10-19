@@ -19,6 +19,7 @@ pub mod dc6;      // wave 2
 pub mod dcc;      // wave 2
 pub mod cof;      // wave 2
 pub mod animdata; // wave 2
+pub mod blend;    // sprite blend modes (moved from capy-render, lead request 2026-10-19)
 
 // ───────────── error.rs ─────────────
 #[derive(Debug, thiserror::Error)]
@@ -369,7 +370,33 @@ pub fn dcc::cell_spans(frame_min: i64, dir_min: i64, frame_len: i64) -> Vec<(i64
 
 pub struct CofLayer { pub component: u8, pub shadow: u8, pub selectable: u8, pub transparent: u8, pub draw_effect: u8, pub weapon_class: [u8; 4] }
 pub struct Cof { pub directions: u8, pub frames_per_direction: u8, pub layers: Vec<CofLayer>, pub keyframes: Vec<u8>, pub layer_order: Vec<u8> }
-impl Cof { pub fn parse(bytes: &[u8]) -> Result<Cof>; pub fn draw_order(&self, dir: u8, frame: u8) -> Option<&[u8]>; }
+impl Cof {
+    pub fn parse(bytes: &[u8]) -> Result<Cof>;
+    pub fn draw_order(&self, dir: u8, frame: u8) -> Option<&[u8]>;
+    /// The record that counts for `component`: the LAST one when a COF repeats it (cof.c:306-318).
+    pub fn component_layer(&self, component: u8) -> Option<&CofLayer>;
+}
+impl CofLayer {
+    pub fn component_code(&self) -> Option<&'static str>; // "HD".."S8"
+    pub fn weapon_class_token(&self) -> String;           // b"HTH\0" -> "hth"
+}
+pub const cof::COMPONENT_CODES: [&str; 16];                 // HD TR LG RA LA RH LH SH S1..S8
+/// NULs/whitespace trimmed, lower case: how a name part appears in a sprite path.
+pub fn cof::path_token(s: &str) -> String;
+/// `{base}\{token}\cof\{token}{mode}{class}.cof` (cof.c:253); `base` e.g. `data\global\monsters`.
+pub fn cof::cof_path(base: &str, token: &str, mode: &str, weapon_class: &str) -> String;
+/// `[.dcc, .dc6]` of `{base}\{token}\{cc}\{token}{cc}{armor}{mode}{class}` (cof.c:322-333); the .dc6 only when no .dcc exists.
+pub fn cof::component_paths(base: &str, token: &str, mode: &str, weapon_class: &str, component: &str, armor: &str) -> [String; 2];
+
+// blend.rs: shared by capy-render (re-exported as capy_render::Blend / capy_render::compose::Blend) and capy-sprite.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blend { Normal, Alpha25, Alpha50, Alpha75, Additive, Multiply, Screen, Darken(u8) }
+impl Blend {
+    /// COF trans_a/trans_b -> blend (preview.c:2131): blended only when transparent and trans_b is 0..=4 or 6.
+    pub fn for_cof_layer(transparent: bool, draw_effect: u8) -> Blend;
+    /// One source colour over a straight-RGBA destination (DS1Edit's Allegro blenders, preview.c:182,291-380).
+    pub fn apply(self, dst: [u8; 4], src: [u8; 3]) -> [u8; 4];
+}
 
 pub struct AnimRecord { pub cof_name: String, pub frames_per_direction: u32, pub speed: u32, pub flags: [u8; 144] }
 pub struct AnimData { /* records */ }

@@ -690,6 +690,21 @@ fn run_objects(
                 }
             }
         }
+        let shifted: Vec<String> = ds1
+            .objects
+            .iter()
+            .filter_map(|o| {
+                let info = catalog.resolve(ds1.effective_act(), ds1.version, o);
+                let c = info.colormap?;
+                Some(format!(
+                    "t{}/id{} {} ({},{}) {}#{}",
+                    o.kind, o.id, info.name, o.x, o.y, c.path, c.row
+                ))
+            })
+            .collect();
+        if !shifted.is_empty() {
+            eprintln!("{name}: palette-shifted objects: {}", shifted.join(" | "));
+        }
         let (placed, missing) = sprites.place(&ds1, &ObjectOptions::default());
         let multi_frame = placed
             .iter()

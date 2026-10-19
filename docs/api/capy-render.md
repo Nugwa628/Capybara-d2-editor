@@ -97,7 +97,7 @@ pub fn draw_list(ds1: &d2_formats::ds1::Ds1, tiles: &TileSet, vis: &Visibility) 
 pub fn map_screen_bounds(items: &[DrawItem], tiles: &TileSet) -> Option<(i32, i32, i32, i32)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Blend { Normal, Alpha25, Alpha50, Alpha75, Additive, Multiply, Screen }
+pub use d2_formats::blend::Blend; // enum Blend { Normal, Alpha25, Alpha50, Alpha75, Additive, Multiply, Screen, Darken(u8) }; defined in d2-formats
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderOptions { pub zoom_div: u32 /* 1..=16 */, pub gamma: f32, pub visibility: Visibility, pub background: [u8; 4] }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,5 +136,12 @@ Rules (`preview.c` line numbers in `order.rs` and `objects.rs`): object shadows 
 orderflag-1 objects (pass 3), then per tile the upper walls followed by that tile's
 orderflag-0/2 objects (pass 4, over every map tile), in `editobj_set_drawing_order` order.
 Anchor `((x-y+5)*16, 4+(x+y+1)*8)` at 1:1 (`object_anchor` does the zoomed integer maths).
-`capy-sprite::compose_cof_frame` is not used because `capy-sprite` depends on `capy-render`.
+Palette shifts (`ObjectInfo::colormap`): the layers with `trans_a == 0` have their visible pixel
+indices mapped through the shift's row as the sprites load (`cof.c:343-361`), so
+`FrameLayer::image` holds the shifted indices; a missing or short colormap draws unshifted.
+`capy-sprite::compose_cof_frame` is not used: the reference draws each layer as its own
+point-sampled bitmap, which a pre-composited frame cannot reproduce at zoom. The rules both
+share live in `d2-formats`: sprite paths and the last-record rule (`d2_formats::cof`), the
+`trans_a`/`trans_b` blend mapping (`Blend::for_cof_layer`). `capy-sprite` no longer depends
+on this crate.
 
