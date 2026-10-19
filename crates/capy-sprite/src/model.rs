@@ -182,7 +182,8 @@ impl RgbaFrame {
         Some([p[0], p[1], p[2], p[3]])
     }
 
-    pub(crate) fn put(&mut self, x: u32, y: u32, rgba: [u8; 4]) {
+    /// Sets `[r, g, b, a]` at `(x, y)`; a point outside the frame is ignored.
+    pub fn put(&mut self, x: u32, y: u32, rgba: [u8; 4]) {
         if x >= self.width || y >= self.height {
             return;
         }

@@ -345,14 +345,14 @@ fn progress_is_reported_per_item() {
 }
 
 #[test]
-fn cancel_stops_before_the_next_item() {
+fn cancel_stops_before_the_next_item_and_returns_the_partial_report() {
     let tmp = tempfile::tempdir().unwrap();
     let (input, out) = (tmp.path().join("in"), tmp.path().join("out"));
     sprite_tree(&input);
 
     // already cancelled: nothing is converted
     let cancel = AtomicBool::new(true);
-    let err = batch_convert(
+    let report = batch_convert(
         &input,
         &out,
         &BatchDirection::ToPng,
@@ -361,13 +361,16 @@ fn cancel_stops_before_the_next_item() {
         &mut |_, _, _| {},
         &cancel,
     )
-    .unwrap_err();
-    assert!(matches!(err, SpriteError::Cancelled));
+    .unwrap();
+    assert!(report.cancelled);
+    assert_eq!((report.converted, report.skipped), (0, 0));
+    assert!(report.failed.is_empty());
+    assert_eq!(report.log, ["cancelled after 0 of 3 items"]);
     assert!(!out.exists() || files_under(&out).is_empty());
 
     // cancelled from the progress callback after the first item
     let cancel = AtomicBool::new(false);
-    let err = batch_convert(
+    let report = batch_convert(
         &input,
         &out,
         &BatchDirection::ToPng,
@@ -380,13 +383,24 @@ fn cancel_stops_before_the_next_item() {
         },
         &cancel,
     )
-    .unwrap_err();
-    assert!(matches!(err, SpriteError::Cancelled));
+    .unwrap();
+    assert!(report.cancelled);
+    assert_eq!(report.converted, 1, "the partial report counts the done item");
+    assert_eq!(report.log.len(), 2);
+    assert_eq!(
+        report.log.last().map(String::as_str),
+        Some("cancelled after 1 of 3 items")
+    );
     let metas = files_under(&out)
         .iter()
         .filter(|p| p.ends_with(META_FILE))
         .count();
     assert_eq!(metas, 1, "exactly one item was converted before the cancel");
+
+    // an uncancelled run reports cancelled == false
+    let out2 = tmp.path().join("out2");
+    let report = run(&input, &out2, &BatchDirection::ToPng, &opts(true)).unwrap();
+    assert!(!report.cancelled);
 }
 
 #[test]

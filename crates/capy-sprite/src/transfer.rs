@@ -203,6 +203,13 @@ pub(crate) fn load_quantized(
 /// Reads a `sprite.json` exported folder when `dir` has one (every frame
 /// gets its exact offset back), otherwise all images in the folder in
 /// natural name order as one direction with [`center_offset`] anchors.
+///
+/// With a `sprite.json` the frames are known exports that already carry
+/// alpha, so colour keying is off for that import:
+/// [`QuantizeOptions::transparent_rgb`] is treated as `None` and opaque black
+/// stays opaque (it maps to the nearest non-zero index when
+/// `protect_transparent` is on). Transparency then comes from alpha only.
+/// Without a `sprite.json`, `opts` applies unchanged.
 pub fn import_frames(
     dir: &Path,
     palette: &Palette,
@@ -213,7 +220,11 @@ pub fn import_frames(
         let json = std::fs::read(&meta_path).map_err(|e| SpriteError::io(&meta_path, e))?;
         let meta: ExportMeta = serde_json::from_slice(&json)
             .map_err(|e| SpriteError::invalid(format!("{}: {e}", meta_path.display())))?;
-        let sprite = sprite_from_meta(dir, &meta, palette, opts)?;
+        let no_key = QuantizeOptions {
+            transparent_rgb: None,
+            ..opts.clone()
+        };
+        let sprite = sprite_from_meta(dir, &meta, palette, &no_key)?;
         return Ok((sprite, Some(meta)));
     }
     let files = list_images(dir)?;

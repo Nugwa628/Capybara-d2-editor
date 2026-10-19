@@ -67,6 +67,11 @@ impl Sprite {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RgbaFrame { pub width: u32, pub height: u32, pub offset_x: i32, pub offset_y: i32, pub pixels: Vec<u8> }
+impl RgbaFrame {
+    pub fn new(width: u32, height: u32, offset_x: i32, offset_y: i32) -> RgbaFrame;  // fully transparent
+    pub fn get(&self, x: u32, y: u32) -> Option<[u8; 4]>;                          // None outside
+    pub fn put(&mut self, x: u32, y: u32, rgba: [u8; 4]);                          // outside is ignored
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Dither { None, FloydSteinberg }
@@ -104,6 +109,9 @@ pub struct ExportMeta { pub version: u32, pub format: SpriteFormat, pub directio
 pub fn export_frames(sprite: &Sprite, format: SpriteFormat, palette: &d2_formats::palette::Palette, palette_name: &str, source: Option<&str>, dir: &std::path::Path) -> Result<ExportMeta>;
 /// Reads sprite.json when present (exact offsets); otherwise every image in
 /// natural sort order as one direction, offsets from `center_offset`.
+/// With sprite.json, colour keying is off for that import
+/// (`opts.transparent_rgb` treated as None): exported frames already carry
+/// alpha, so opaque black stays opaque. Without it, `opts` apply as given.
 pub fn import_frames(dir: &std::path::Path, palette: &d2_formats::palette::Palette, opts: &QuantizeOptions) -> Result<(Sprite, Option<ExportMeta>)>;
 /// One PNG: rows = directions, columns = frames, uniform cells of the union box.
 pub fn export_sheet(sprite: &Sprite, palette: &d2_formats::palette::Palette) -> Result<(Vec<u8>, ExportMeta)>;
@@ -114,10 +122,14 @@ pub enum BatchDirection { ToSprite(SpriteFormat), ToPng }
 #[derive(Clone, Debug, PartialEq)]
 pub struct BatchOptions { pub recursive: bool, pub quantize: QuantizeOptions, pub split: Option<(u32, u32)>, pub overwrite: bool }
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct BatchReport { pub converted: usize, pub skipped: usize, pub failed: Vec<(std::path::PathBuf, String)>, pub log: Vec<String> }
+pub struct BatchReport { pub converted: usize, pub skipped: usize, pub failed: Vec<(std::path::PathBuf, String)>, pub log: Vec<String>,
+                         pub cancelled: bool /* stopped early on `cancel`; counts cover the items done */ }
 /// Mirrors the input tree under `output`. ToPng: each sprite → a folder of
 /// frames + sprite.json. ToSprite: each folder with sprite.json (or a lone
-/// image) → one sprite file. Never writes inside `input`.
+/// image) → one sprite file. Never writes inside `input`. `cancel` is checked
+/// before each item; on cancel it returns Ok(partial report) with
+/// `cancelled = true` and a final "cancelled after N of M items" log line
+/// (not Err(SpriteError::Cancelled); the variant stays for other callers).
 pub fn batch_convert(input: &std::path::Path, output: &std::path::Path, direction: &BatchDirection, palette: &d2_formats::palette::Palette, opts: &BatchOptions,
                      progress: &mut dyn FnMut(usize, usize, &str), cancel: &std::sync::atomic::AtomicBool) -> Result<BatchReport>;
 

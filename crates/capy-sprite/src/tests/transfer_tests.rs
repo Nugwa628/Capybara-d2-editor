@@ -305,3 +305,34 @@ fn natural_order() {
     names.sort_by(|a, b| natural_cmp(a, b));
     assert_eq!(names, vec!["a", "f1", "f1a", "f2", "f02", "F3", "f10"]);
 }
+
+/// Exported frames carry alpha, so a `sprite.json` import never colour-keys:
+/// opaque pure black survives even with the default (black-keying) options.
+#[test]
+fn sprite_json_import_keeps_opaque_black() {
+    let mut pal = crate::testutil::synthetic_palette();
+    pal.colors[7] = [0, 0, 0];
+    let px = vec![7, 2, 0, 7, 7, 3];
+    let sprite = Sprite {
+        directions: vec![vec![crate::testutil::image(3, 2, -1, -2, px.clone())]],
+    };
+    let dir = tempfile::tempdir().unwrap();
+    export_frames(&sprite, SpriteFormat::Dc6, &pal, "", None, dir.path()).unwrap();
+    let keyed = QuantizeOptions::default();
+    assert_eq!(keyed.transparent_rgb, Some([0, 0, 0]));
+
+    let (back, meta) = import_frames(dir.path(), &pal, &keyed).unwrap();
+    assert!(meta.is_some());
+    assert_eq!(back, sprite, "black index 7 stays opaque");
+
+    // Without sprite.json the options apply as given: black is keyed out.
+    std::fs::remove_file(dir.path().join(META_FILE)).unwrap();
+    let (loose, meta) = import_frames(dir.path(), &pal, &keyed).unwrap();
+    assert!(meta.is_none());
+    let alpha = &loose.directions[0][0].alpha;
+    let expect: Vec<u8> = px
+        .iter()
+        .map(|&p| if p == 0 || p == 7 { 0 } else { 255 })
+        .collect();
+    assert_eq!(alpha, &expect);
+}
