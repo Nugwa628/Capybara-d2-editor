@@ -463,7 +463,9 @@ impl PaintSession {
             && cur.height == new.height
             && cur.offset_x == new.offset_x
             && cur.offset_y == new.offset_y
-            && cur.pixels.len() == new.pixels.len();
+            && cur.pixels.len() == new.pixels.len()
+            && cur.alpha.len() == cur.pixels.len()
+            && new.alpha.len() == new.pixels.len();
         let edit = if same_shape {
             let w = cur.width as usize;
             let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0usize, 0usize);

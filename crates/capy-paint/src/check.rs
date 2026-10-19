@@ -90,8 +90,17 @@ impl Rect {
     }
 }
 
+/// Index of pixel `(x, y)` in the buffers; `None` for a negative coordinate
+/// or an index that overflows.
+fn index(img: &IndexedImage, x: i32, y: i32) -> Option<usize> {
+    let (x, y) = (usize::try_from(x).ok()?, usize::try_from(y).ok()?);
+    y.checked_mul(img.width as usize)?.checked_add(x)
+}
+
 fn value(img: &IndexedImage, x: i32, y: i32) -> u8 {
-    let i = y as usize * img.width as usize + x as usize;
+    let Some(i) = index(img, x, y) else {
+        return 0;
+    };
     match (img.alpha.get(i), img.pixels.get(i)) {
         (Some(&a), Some(&p)) if a != 0 => p,
         _ => 0,
@@ -229,9 +238,13 @@ fn reduce_cell(img: &mut IndexedImage, r: Rect, colors: &[[u8; 3]; 256]) {
     }
     for y in r.y0..r.y1 {
         for x in r.x0..r.x1 {
-            let i = y as usize * img.width as usize + x as usize;
-            if img.alpha[i] != 0 {
-                img.pixels[i] = remap[usize::from(img.pixels[i])];
+            let Some(i) = index(img, x, y) else {
+                continue;
+            };
+            if let (Some(&a), Some(p)) = (img.alpha.get(i), img.pixels.get_mut(i))
+                && a != 0
+            {
+                *p = remap[usize::from(*p)];
             }
         }
     }

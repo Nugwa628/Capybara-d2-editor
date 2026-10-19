@@ -15,6 +15,14 @@ use proptest::prelude::*;
 
 type Pt = (i32, i32);
 
+/// `PROPTEST_CASES` when set, else `default`.
+fn cases(default: u32) -> u32 {
+    std::env::var("PROPTEST_CASES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
 /// A mask recipe, built against the target frame's size when applied.
 #[derive(Clone, Debug)]
 struct MaskSpec {
@@ -394,7 +402,7 @@ fn assert_shape(s: &PaintSession) {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(512))]
+    #![proptest_config(ProptestConfig::with_cases(cases(512)))]
 
     /// After every operation (successful or not) each pixel is transparent or
     /// a palette index 1..=255, with consistent buffers.
@@ -416,7 +424,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+    #![proptest_config(ProptestConfig::with_cases(cases(256)))]
 
     /// undo-all restores the original, redo-all reproduces the final state,
     /// and undo then redo is the identity at every step. Units are single

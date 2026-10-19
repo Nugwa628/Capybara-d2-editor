@@ -95,8 +95,10 @@ impl Mask {
     /// Rectangle with inclusive corners.
     pub fn rect(w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32) -> Mask {
         let mut m = Mask::none(w, h);
-        let (xa, xb) = (x0.min(x1).max(0), x0.max(x1).min(w as i32 - 1));
-        let (ya, yb) = (y0.min(y1).max(0), y0.max(y1).min(h as i32 - 1));
+        // Sides beyond i32 clip at i32::MAX - 1 instead of wrapping.
+        let last = |side: u32| i32::try_from(side).unwrap_or(i32::MAX) - 1;
+        let (xa, xb) = (x0.min(x1).max(0), x0.max(x1).min(last(w)));
+        let (ya, yb) = (y0.min(y1).max(0), y0.max(y1).min(last(h)));
         for y in ya..=yb {
             for x in xa..=xb {
                 m.set(x, y, true);
@@ -169,7 +171,7 @@ impl Mask {
 
     /// Grow by `px` pixels (square neighbourhood).
     pub fn grow(&self, px: u32) -> Mask {
-        let r = px.min(self.width.max(self.height)) as i32;
+        let r = self.radius(px);
         // Separable max filter: horizontal then vertical.
         let horiz = self.filter_axis(r, true, true);
         horiz.filter_axis(r, false, true)
@@ -178,9 +180,15 @@ impl Mask {
     /// Shrink by `px` pixels (square neighbourhood). The frame edge does not
     /// erode the selection.
     pub fn shrink(&self, px: u32) -> Mask {
-        let r = px.min(self.width.max(self.height)) as i32;
+        let r = self.radius(px);
         let horiz = self.filter_axis(r, true, false);
         horiz.filter_axis(r, false, false)
+    }
+
+    /// Filter radius: `px`, at most the longer side (beyond it the result
+    /// cannot change) and at most `i32::MAX`.
+    fn radius(&self, px: u32) -> i32 {
+        i32::try_from(px.min(self.width.max(self.height))).unwrap_or(i32::MAX)
     }
 
     /// One pass of a min (`grow == false`) or max (`grow == true`) filter of
@@ -191,7 +199,11 @@ impl Mask {
             for x in 0..self.width as i32 {
                 let mut hit = !grow;
                 for d in -r..=r {
-                    let (nx, ny) = if horizontal { (x + d, y) } else { (x, y + d) };
+                    let (nx, ny) = if horizontal {
+                        (x.saturating_add(d), y)
+                    } else {
+                        (x, y.saturating_add(d))
+                    };
                     if nx < 0 || ny < 0 || nx >= self.width as i32 || ny >= self.height as i32 {
                         continue;
                     }
