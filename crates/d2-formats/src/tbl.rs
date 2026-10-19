@@ -295,12 +295,29 @@ mod tests {
                 println!("skipped: {} missing", base.display());
                 continue;
             }
-            for path in crate::testutil::find_files(&base, "tbl") {
+            // data/local/font/*.tbl are glyph tables, a different format
+            let lng = base.join("data").join("local").join("lng");
+            for path in crate::testutil::find_files(&lng, "tbl") {
                 let bytes = std::fs::read(&path).expect("readable");
                 let t = StringTable::parse(&bytes)
                     .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
                 println!("{}: {} entries", path.display(), t.entries().len());
                 count += 1;
+                if dir == "vanilla" && path.ends_with("eng/expansionstring.tbl") {
+                    // worked example from the guide
+                    assert_eq!(t.get("qstsa5q1"), Some("Siege on Harrogath"));
+                    assert_eq!(t.entries().len(), 2818);
+                }
+                if dir == "vanilla"
+                    && path.ends_with("eng/string.tbl")
+                    && !path.to_string_lossy().contains("beta")
+                {
+                    assert_eq!(t.entries().len(), 5391);
+                }
+                if dir == "vanilla" && path.ends_with("eng/patchstring.tbl") {
+                    // 1,169 entries in 1.13c; the 1.14d install has more
+                    assert_eq!(t.get("AmaOnly"), Some("(Amazon Only)"));
+                }
             }
         }
         println!("tbl corpus: {count} files parsed");
