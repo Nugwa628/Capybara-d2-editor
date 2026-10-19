@@ -28,11 +28,14 @@ Perceptual hash via `image_hasher`.
   when it is not "flat" (`grass` is a colour+texture combination chosen from a
   small table: green+noisy → "grass", brown+noisy → "dirt", grey+edgy → "stone",
   blue+flat → "water", dark → "dark"; otherwise `<colour> <texture>`).
-- `dark` only when the mean opaque luma is below 25 (Median XL median luma is
-  40); otherwise the colour name. Colour names: nearest of a fixed 16-entry palette (black, grey, white, red,
-  orange, brown, yellow, olive, green, teal, cyan, blue, purple, magenta, pink,
-  tan) by squared RGB distance of the mean opaque colour, after act palette and
-  gamma 1.0.
+- Colour names (v2, lead decision 2026-10-19, replacing nearest-RGB, which
+  named half of all tiles "black"): from the mean opaque colour in HSV.
+  `dark` if luma < 25. Else if saturation < 0.15: `grey` (luma < 170) or
+  `white`. Else by hue: red [345,15), orange [15,45), yellow [45,70),
+  green [70,160), teal [160,185), cyan [185,200), blue [200,255),
+  purple [255,290), magenta [290,320), pink [320,345); then red/orange/yellow
+  with value < 0.55 become `brown`, and orange/yellow with saturation < 0.35
+  and value >= 0.55 become `tan`.
 - Texture class from edge density of the opaque pixels (Sobel magnitude mean):
   `flat` < 20, `noisy` < 60, `edgy` otherwise (recalibrated 2026-10-19 on the
   Median XL tile corpus: p10 = 22, p50 = 66, p90 = 110).
@@ -40,7 +43,7 @@ Perceptual hash via `image_hasher`.
 User aliases (user.db) are shown instead of, and searched alongside, generated names.
 
 ## Schema
-`index.db` (schema_version 1; any mismatch → drop and rebuild):
+`index.db` (schema_version 2; any mismatch → drop and rebuild):
 ```sql
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE profiles(id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, built_unix_ms INTEGER NOT NULL);
@@ -52,7 +55,9 @@ CREATE TABLE assets(id INTEGER PRIMARY KEY, profile TEXT NOT NULL, key TEXT NOT 
   path TEXT NOT NULL, act INTEGER, orientation INTEGER, main INTEGER, sub INTEGER,
   variant INTEGER, rarity INTEGER, width INTEGER, height INTEGER, class TEXT,
   gen_name TEXT NOT NULL, color TEXT, color_rgb INTEGER, texture TEXT, transparency REAL,
-  phash INTEGER, phash_mirror INTEGER, src TEXT NOT NULL,  -- winning source name (archive/folder)
+  phash INTEGER, phash_mirror INTEGER,
+  directions INTEGER, frames INTEGER,  -- sprites (DC6/DCC/COF): direction count, frames per direction
+  src TEXT NOT NULL,               -- winning source name (archive/folder)
   src_tag TEXT NOT NULL,           -- 'base' | 'mod' | 'saves'  (mod = any layer above the base MPQs)
   thumb BLOB,                      -- PNG, longest side <= 96 px
   UNIQUE(profile, key));
@@ -118,6 +123,9 @@ pub struct Query { pub text: String, pub filters: Vec<Filter> }
 #[error("bad query at {position}: {detail}")]
 pub struct QueryError { pub position: usize, pub detail: String }
 pub fn parse_query(input: &str) -> Result<Query, QueryError>;   // unknown `word:` stays free text
+// Ranking: every free-text token must match (AND). A token matches via an
+// alias/name/path prefix, substring or segment hit, or a fuzzy match scoring
+// at least 70% of the token's self-match score (no loose fuzzy wins).
 
 // index.rs
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -135,6 +143,7 @@ pub struct AssetRow {
     pub variant: Option<u32>, pub rarity: Option<i32>, pub width: Option<u32>, pub height: Option<u32>,
     pub class: Option<String>, pub gen_name: String, pub color: Option<String>, pub texture: Option<String>,
     pub transparency: Option<f32>, pub src: String, pub src_tag: String,
+    pub directions: Option<u32>, pub frames: Option<u32>,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hit { pub asset: AssetRow, pub score: f32, pub alias: Option<String> }
