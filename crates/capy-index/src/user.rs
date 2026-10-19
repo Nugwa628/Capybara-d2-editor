@@ -708,6 +708,58 @@ impl UserDb {
         })
     }
 
+    fn require_search(&self, id: i64) -> Result<()> {
+        let found = self
+            .conn
+            .query_row("SELECT 1 FROM saved_searches WHERE id = ?1", [id], |_| {
+                Ok(())
+            })
+            .optional()
+            .map_err(|e| self.sql(e))?;
+        match found {
+            Some(()) => Ok(()),
+            None => Err(IndexError::Other(format!("no saved search with id {id}"))),
+        }
+    }
+
+    /// Rename a saved search; its query, position and pin stay. Names are
+    /// trimmed and unique (renaming to its own name is a no-op).
+    pub fn rename_search(&self, id: i64, name: &str) -> Result<()> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(IndexError::Other(
+                "a search name cannot be empty".to_owned(),
+            ));
+        }
+        self.require_search(id)?;
+        match self.conn.execute(
+            "UPDATE saved_searches SET name = ?2 WHERE id = ?1",
+            params![id, name],
+        ) {
+            Ok(_) => Ok(()),
+            Err(e) if is_unique_violation(&e) => Err(IndexError::Other(format!(
+                "a saved search named {name:?} already exists"
+            ))),
+            Err(e) => Err(self.sql(e)),
+        }
+    }
+
+    /// Move a saved search to `new_position` (clamped to the end); the
+    /// others shift and positions stay dense. Positions are one order over
+    /// all searches; [`UserDb::saved_searches`] still lists pinned ones first.
+    pub fn move_search(&self, id: i64, new_position: i64) -> Result<()> {
+        self.require_search(id)?;
+        self.txn(|c| {
+            let mut ids = Self::ids(c, "SELECT id FROM saved_searches ORDER BY position, id", [])?;
+            reorder(&mut ids, id, new_position);
+            Self::write_positions(
+                c,
+                "UPDATE saved_searches SET position = ?2 WHERE id = ?1",
+                &ids,
+            )
+        })
+    }
+
     pub fn set_search_pinned(&self, id: i64, pinned: bool) -> Result<()> {
         self.conn
             .execute(
@@ -1006,5 +1058,89 @@ mod tests {
         db.delete_search(a.id).unwrap();
         let d = db.save_search("New", "q").unwrap();
         assert_eq!(d.position, 2);
+    }
+
+    #[test]
+    fn rename_and_move_saved_searches() {
+        let (dir, db) = open();
+        let a = db.save_search("Grass", "type:floor grass").unwrap();
+        let b = db.save_search("Walls", "type:wall").unwrap();
+        let c = db.save_search("Doors", "idx:8").unwrap();
+        let d = db.save_search("Roofs", "type:roof").unwrap();
+        let listed = |db: &UserDb| {
+            db.saved_searches()
+                .unwrap()
+                .into_iter()
+                .map(|s| (s.name, s.position))
+                .collect::<Vec<_>>()
+        };
+        let names = |db: &UserDb| {
+            db.saved_searches()
+                .unwrap()
+                .into_iter()
+                .map(|s| s.name)
+                .collect::<Vec<_>>()
+        };
+
+        // Rename keeps id, query, position and pin.
+        db.set_search_pinned(b.id, true).unwrap();
+        db.rename_search(b.id, "  Stone walls ").unwrap();
+        let renamed = db.saved_searches().unwrap();
+        assert_eq!(renamed[0].id, b.id);
+        assert_eq!(renamed[0].name, "Stone walls");
+        assert_eq!(renamed[0].query, "type:wall");
+        assert_eq!(renamed[0].position, 1);
+        assert!(renamed[0].pinned);
+        db.set_search_pinned(b.id, false).unwrap();
+        // Same name again is fine; empty, taken or unknown ids are errors.
+        db.rename_search(b.id, "Stone walls").unwrap();
+        assert!(db.rename_search(b.id, "  ").is_err());
+        let taken = db.rename_search(b.id, "Grass").unwrap_err();
+        assert!(taken.to_string().contains("already exists"), "{taken}");
+        assert!(db.rename_search(9999, "Nope").is_err());
+        assert_eq!(names(&db), ["Grass", "Stone walls", "Doors", "Roofs"]);
+        // Saving under the new name updates the renamed search.
+        let again = db.save_search("Stone walls", "type:wall act:3").unwrap();
+        assert_eq!(again.id, b.id);
+        assert_eq!(db.saved_searches().unwrap().len(), 4);
+
+        // Moves keep positions dense.
+        db.move_search(d.id, 0).unwrap();
+        assert_eq!(
+            listed(&db),
+            [
+                ("Roofs".to_owned(), 0),
+                ("Grass".to_owned(), 1),
+                ("Stone walls".to_owned(), 2),
+                ("Doors".to_owned(), 3)
+            ]
+        );
+        db.move_search(d.id, 99).unwrap();
+        assert_eq!(names(&db), ["Grass", "Stone walls", "Doors", "Roofs"]);
+        db.move_search(a.id, 2).unwrap();
+        assert_eq!(names(&db), ["Stone walls", "Doors", "Grass", "Roofs"]);
+        db.move_search(c.id, -5).unwrap();
+        assert_eq!(names(&db), ["Doors", "Stone walls", "Grass", "Roofs"]);
+        db.move_search(c.id, 0).unwrap();
+        assert_eq!(names(&db), ["Doors", "Stone walls", "Grass", "Roofs"]);
+        assert!(db.move_search(9999, 0).is_err());
+        // Pinned searches still list first; positions are unchanged by it.
+        db.set_search_pinned(a.id, true).unwrap();
+        assert_eq!(names(&db), ["Grass", "Doors", "Stone walls", "Roofs"]);
+        assert_eq!(db.saved_searches().unwrap()[0].position, 2);
+        db.set_search_pinned(a.id, false).unwrap();
+        // Deleting after a move stays dense, and the order survives reopening.
+        db.delete_search(c.id).unwrap();
+        drop(db);
+        let db = reopen(&dir);
+        assert_eq!(
+            listed(&db),
+            [
+                ("Stone walls".to_owned(), 0),
+                ("Grass".to_owned(), 1),
+                ("Roofs".to_owned(), 2)
+            ]
+        );
+        assert_eq!(db.save_search("New", "q").unwrap().position, 3);
     }
 }

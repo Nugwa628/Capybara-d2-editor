@@ -12,7 +12,7 @@ use d2_formats::ds1::{Cell, Ds1};
 
 use crate::error::Result;
 use crate::index::{BuildPhase, Index, IndexStatus};
-use crate::query::{AssetKind, parse_query};
+use crate::query::{AssetKind, Filter, parse_query};
 use crate::tiles::{
     Progress, Sink, TileBatch, TileCtx, TileKeys, TileOrigin, UsedInRow, record_from_rgba,
     resolve_used_in,
@@ -530,6 +530,66 @@ fn filters() {
         all("type:ds1 limit-not-a-token").len(),
         0,
         "free text must match"
+    );
+}
+
+/// Keys of a search with one programmatic filter added to a parsed query.
+fn keys_with(b: &Built, q: &str, extra: Filter) -> Vec<String> {
+    let mut query = parse_query(q).unwrap();
+    query.filters.push(extra);
+    b.idx
+        .search("test", &query, &b.user, 100)
+        .unwrap()
+        .into_iter()
+        .map(|h| h.asset.key)
+        .collect()
+}
+
+#[test]
+fn any_file_is_the_union_of_file_filters() {
+    let b = built();
+    let floor = r"data\global\tiles\act1\town\floor.dt1".to_owned();
+    let shire = r"data\global\tiles\mxl\zone\whimsy\shire.dt1".to_owned();
+    let any = |q: &str, files: &[&String]| {
+        keys_with(
+            &b,
+            q,
+            Filter::AnyFile(files.iter().map(|f| (*f).clone()).collect()),
+        )
+    };
+    let both = any("type:tile", &[&floor, &shire]);
+    assert_eq!(both.len(), 10, "5 tiles in each DT1");
+    // Same set (and order) as the two `file:` queries merged by path.
+    let mut separate = names(&b, &format!("type:tile file:{floor}"), 100);
+    separate.extend(names(&b, &format!("type:tile file:{shire}"), 100));
+    separate.sort();
+    let mut sorted = both.clone();
+    sorted.sort();
+    assert_eq!(sorted, separate);
+    assert_eq!(any("type:tile", &[&floor]).len(), 5);
+    // Case-insensitive, substrings, duplicates harmless.
+    let upper = floor.to_ascii_uppercase();
+    assert_eq!(any("type:tile", &[&upper, &upper]).len(), 5);
+    assert_eq!(any("", &[&"shire".to_owned()]).len(), 1 + 5 + 1);
+    // Combines with other filters and with free text.
+    assert_eq!(any("type:floor", &[&floor, &shire]).len(), 4);
+    assert_eq!(any("idx:0:5/2", &[&shire]).len(), 2);
+    assert_eq!(any("shire", &[&floor]).len(), 0);
+    assert!(!any("whimsy", &[&floor, &shire]).is_empty());
+    // An empty list matches nothing; its negation matches everything.
+    assert!(any("", &[]).is_empty());
+    assert_eq!(
+        keys_with(&b, "", Filter::Not(Box::new(Filter::AnyFile(Vec::new())))).len(),
+        14
+    );
+    assert_eq!(
+        keys_with(
+            &b,
+            "type:tile",
+            Filter::Not(Box::new(Filter::AnyFile(vec![floor.clone()])))
+        )
+        .len(),
+        5
     );
 }
 
