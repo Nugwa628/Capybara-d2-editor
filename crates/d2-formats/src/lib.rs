@@ -3,12 +3,19 @@
 //! Nothing here performs I/O beyond `&[u8]`, uses `unsafe`, or panics on
 //! malformed data. The public API is specified in `docs/api/d2-formats.md`.
 
+mod bytes;
 pub mod error;
 pub mod grid;
 pub mod image;
 
+pub mod animdata;
+pub mod cof;
+pub mod dc6;
+pub mod dcc;
 pub mod ds1;
+pub mod dt1;
 pub mod excel;
+pub mod palette;
 pub mod tables;
 pub mod tbl;
 pub mod txt;
