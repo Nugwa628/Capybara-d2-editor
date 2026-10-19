@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [1.0.0] - 2026-10-19
 
 ### Changed
 - Renamed to **Capybara's D2 Editor**; the exe is `CapybarasD2Editor.exe`
