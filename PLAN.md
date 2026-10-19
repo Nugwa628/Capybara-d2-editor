@@ -1,6 +1,6 @@
 # Capybara's D2 Editor (formerly Capybara Map Editor) — Plan
 
-Status: **Release 0.1.0 built** (2026-10-19): P0-P6, robustness audit and release round done; `dist\CapybarasD2Editor-0.1.0-win64.zip` (see `docs/release-checklist.md`). Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC.
+Status: **Release 1.0.0 published** (2026-10-19, github.com/Nugwa628/Capybara-d2-editor). **P7 palette tools in progress.** Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -247,6 +247,12 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
   - **Test:** every DC6 and DCC in both corpora re-encodes to the same frames (decode, encode, decode); a PNG import/export round trip preserves pixels and offsets; batch conversion of a sample tree both ways.
 - **P5 Extras.** Objects and NPC paths, animated DCC/DC6, a headless render CLI, and an importer for the legacy `assets/*.ini` files. (No MPQ writing; the user packs by hand.)
   - Stretch goal: offline CLIP text-to-image tile search. **Deferred by the user (2026-10-19)**; feasibility and plan in `docs/research/clip-search.md` (opt-in model download into `capybara\cache\clip\`, gated by a one-day quality check).
+
+- **P7 Palette tools (user request, 2026-10-19, from modder feedback).** Problems: tiles copied between acts show wrong colours (the act palettes differ only at indices 225-254; measured), and UI art made under the wrong palette glitches in game; users forget which palette a file belongs to.
+  - **Convert to palette** (manual only, never automatic): pick a source palette and a target (Act 1-5, units, loading, menu0-4, ..., or "All acts (shared colours only)" = skip 225-254), see a plan of every used colour (source swatch -> target swatch, error, pixel count), adjust it (distance OkLab/redmean/RGB, allowed targets, keep exact matches, lightness weight, brightness/contrast/saturation/hue, per-colour overrides from a candidate list or the palette grid), compare before/after, then Convert. Works on DC6, DCC and DT1, single files or a batch with one shared setting; output to the game path (saves, CHANGED.txt, snapshot) or Save As. Named presets in config.toml.
+  - **DT1 and DC6 are patched in place** (only pixel bytes change; everything else byte-identical), DCC is decoded/mapped/re-encoded. This revises the earlier "DT1 is read-only, no writer ever" decision: still no general DT1 writer, only index remapping.
+  - **Palette memory**: the Sprites tab remembers the palette per file (user.db), falls back to the folder's last palette, and shows it as a badge in the Viewer, Editor and Converter; save and import show the palette and warn when it differs from the file's remembered one; sprite.json records it. To be refined with the user's DC6 examples.
+  - Contracts: `docs/api/d2-formats.md` (remap), `capy-paint.md` (remap planner), `capy-index.md` (palette memory). Acceptance: act5 -> act1 DT1 conversion with overrides round-trips (only pixel bytes differ, output indices within the allowed set, identity table = identical file) on the full corpora; DCC conversions decode to the mapped frames; app e2e converts a real act5 DT1 and a DC6, saves, reopens, and the palette is remembered across restarts.
 
 ## Asset index (`capy-index`, built in P1, used by P3)
 1. **Crawl:**

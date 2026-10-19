@@ -251,3 +251,25 @@ pub const FLAT_BELOW: f32 = 20.0;  pub const NOISY_BELOW: f32 = 60.0;  pub const
 pub const GREY_BELOW_SATURATION: f32 = 0.15;  pub const WHITE_FROM_LUMA: f32 = 170.0;
 pub const BROWN_BELOW_VALUE: f32 = 0.55;  pub const TAN_BELOW_SATURATION: f32 = 0.35;
 ```
+
+## Sprite palette memory (`UserDb`, P7)
+
+The palette a user last viewed, edited, imported or saved a sprite or tile
+file with, so the Sprites tab reopens it with the same palette. Labels are
+the palette folder names: `act1`..`act5`, `units`, `loading`, `menu0`, ...,
+or `grey`. `key` is a game path (or a loose file path), matched
+case-insensitively. A schema bump adds
+`sprite_palettes(profile, key, palette, updated_unix_ms)` to existing
+databases.
+
+```rust
+impl UserDb {
+    pub fn sprite_palette(&self, profile: &str, key: &str) -> Result<Option<String>>;
+    /// None forgets the entry.
+    pub fn set_sprite_palette(&self, profile: &str, key: &str, palette: Option<&str>) -> Result<()>;
+    /// The most recently remembered palette of any file in the same folder
+    /// as `key` (its parent, case-insensitive), for a "used in this folder"
+    /// hint when the file itself has none.
+    pub fn folder_palette(&self, profile: &str, key: &str) -> Result<Option<String>>;
+}
+```

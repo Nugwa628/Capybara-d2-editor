@@ -159,3 +159,92 @@ pub fn animated_gif(frames: &[d2_formats::IndexedImage], palette: &d2_formats::p
 /// RGBA preview: `current` over faded `prev`/`next` (onion skin), uniform canvas.
 pub fn onion_composite(current: &d2_formats::IndexedImage, prev: Option<&d2_formats::IndexedImage>, next: Option<&d2_formats::IndexedImage>, palette: &d2_formats::palette::Palette, fade: f32) -> (u32, u32, Vec<u8>);
 ```
+
+## Palette conversion (`capy_paint::remap`, P7)
+
+Plans how the colours of one palette are carried into another. Nothing is
+automatic: the app shows the plan, lets the user adjust it, and applies the
+table only when asked.
+
+```rust
+/// Indices whose colour differs between the act palettes (and units/sky).
+/// Every other index is identical in act1-act5, units and sky.
+pub const ACT_SPECIFIC: std::ops::RangeInclusive<u8> = 225..=254;
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum ColorDistance { #[default] OkLab, Redmean, Rgb }
+
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum TargetSet {
+    /// Any target index except 0.
+    #[default] All,
+    /// Skip ACT_SPECIFIC: the result looks the same under every act palette.
+    SharedActColors,
+    /// Only these target indices (0 is ignored).
+    Only(Vec<u8>),
+}
+
+/// Applied to the source colours before matching; all zero = unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct Adjust {
+    pub brightness: f32,  // -1..=1, added to OkLab L
+    pub contrast: f32,    // -1..=1, scales L around 0.5
+    pub saturation: f32,  // -1..=1, scales OkLab chroma
+    pub hue_degrees: f32, // rotates OkLab hue
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RemapSettings {
+    pub distance: ColorDistance,
+    pub targets: TargetSet,
+    /// Keep index i when the target palette has the same colour at i and i
+    /// is allowed (default true; act1<->act5 then only touches 30 indices).
+    pub keep_exact: bool,
+    /// > 1 favours matching lightness over hue/chroma (OkLab L weight);
+    /// default 1.0. Ignored by Rgb/Redmean.
+    pub lightness_weight: f32,
+    pub adjust: Adjust,
+    /// Source index -> target index, wins over everything. Entries with 0 on
+    /// either side are ignored.
+    pub overrides: std::collections::BTreeMap<u8, u8>,
+}
+impl Default for RemapSettings { /* OkLab, All, keep_exact, 1.0, zero, empty */ }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatchKind { Kept, Nearest, Override }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RemapEntry {
+    pub source: u8,
+    pub target: u8,
+    pub source_rgb: [u8; 3],
+    pub target_rgb: [u8; 3],
+    /// OkLab distance x 100 between the (unadjusted) source colour and the
+    /// chosen target colour: ~0 identical, ~2 barely visible, > 10 obvious.
+    pub error: f32,
+    pub pixels: u64,
+    pub how: MatchKind,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RemapPlan {
+    /// Valid d2_formats::remap::IndexTable: [0] = 0, nothing else maps to 0;
+    /// unused indices map by the same rules.
+    pub table: [u8; 256],
+    /// Used source indices only (pixels > 0, excluding 0), worst error first.
+    pub entries: Vec<RemapEntry>,
+    /// Pixel-weighted mean error and the worst error over `entries`.
+    pub mean_error: f32,
+    pub worst_error: f32,
+}
+
+/// Deterministic; ties go to the lowest target index.
+pub fn plan(src: &Palette, dst: &Palette, used: &[u64; 256], settings: &RemapSettings) -> RemapPlan;
+
+/// The `k` best allowed targets for one source index, best first, with
+/// their errors (for the override picker).
+pub fn candidates(src: &Palette, dst: &Palette, source: u8, settings: &RemapSettings, k: usize) -> Vec<(u8, f32)>;
+
+/// Maps the pixels of an image (alpha unchanged), for previews.
+pub fn apply_to_image(img: &IndexedImage, table: &[u8; 256]) -> IndexedImage;
+```

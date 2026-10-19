@@ -402,3 +402,37 @@ pub struct AnimRecord { pub cof_name: String, pub frames_per_direction: u32, pub
 pub struct AnimData { /* records */ }
 impl AnimData { pub fn parse(bytes: &[u8]) -> Result<AnimData>; pub fn get(&self, cof_name: &str) -> Option<&AnimRecord>; pub fn records(&self) -> &[AnimRecord]; }
 ```
+
+## Palette index remapping (`d2_formats::remap`, P7)
+
+Rewrites the palette indices of a whole sprite or tile file without touching
+anything else, for the "Convert to palette" tool.
+
+```rust
+pub enum SpriteKind { Dt1, Dc6, Dcc }
+impl SpriteKind {
+    /// From the file extension of a game or file path (case-insensitive).
+    pub fn from_path(path: &str) -> Option<SpriteKind>;
+}
+
+/// `table[i]` is the new index for old index `i`. `table[0]` must be 0 and
+/// `table[i]` must not be 0 for `i != 0`: transparency is never created or
+/// removed. Anything else is `FormatError::Invalid`.
+pub type IndexTable = [u8; 256];
+
+/// How many pixels use each index. Transparent skips are not pixels; literal
+/// index-0 bytes count under 0.
+pub fn index_histogram(kind: SpriteKind, bytes: &[u8]) -> Result<[u64; 256]>;
+
+/// The file with every pixel index `i` replaced by `table[i]`.
+/// - DT1 and DC6 are patched in place: every byte that is not a pixel
+///   literal (headers, tile/frame tables, block headers, RLE control bytes,
+///   padding, trailing bytes) is identical to the input, so an identity
+///   table returns the input unchanged.
+/// - DCC is decoded, mapped and re-encoded with the existing encoder: the
+///   decoded frames equal the mapped input frames; the byte layout may
+///   change. A mapping never adds colours to a 4x4 cell, so the cell limit
+///   still holds.
+/// Files `parse` rejects (including the six DT1 4.1 files) are errors.
+pub fn remap_indices(kind: SpriteKind, bytes: &[u8], table: &IndexTable) -> Result<Vec<u8>>;
+```
