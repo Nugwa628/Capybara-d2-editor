@@ -198,16 +198,20 @@ pub struct RenderOutput {
     /// Objects that drew nothing (empty for [`render`]).
     pub missing_objects: Vec<MissingObject>,
     /// Map-space position (in output pixels, i.e. already divided by the zoom)
-    /// of the image's pixel (0, 0): the cell `(x, y)` has its top corner at
-    /// `((x - y) * 80 / div, (x + y) * 40 / div) - origin` in the image.
+    /// of the image's pixel (0, 0): the cell `(x, y)` has its origin (the left
+    /// edge of its 160x80 box, on the row of the diamond's top corner) at
+    /// `((x - y) * 80 / div, (x + y) * 40 / div) - origin` in the image; the
+    /// diamond's top corner is [`crate::CELL_DIAMOND_TOP_X`]` / div` right of it.
     pub origin: (i32, i32),
     /// Tiles that could not be rendered (skipped).
     pub warnings: Vec<String>,
 }
 
-/// Cell top corner in zoomed map space, with the reference's integer maths
-/// (`base_x = y * -tile_w / 2`, `mx = base_x + x * tile_w / 2`).
-pub(crate) fn cell_corner(x: u32, y: u32, div: i32) -> (i32, i32) {
+/// Cell origin `(mx, my)` in zoomed map space: the left edge of the cell's
+/// box on the row of its diamond's top corner (which is at `mx + tile_w / 2`),
+/// with the reference's integer maths (`base_x = y * -tile_w / 2`,
+/// `mx = base_x + x * tile_w / 2`).
+pub(crate) fn cell_origin(x: u32, y: u32, div: i32) -> (i32, i32) {
     let tile_w = TILE_W / div;
     let tile_h = TILE_H / div;
     let x = i64::from(i32::try_from(x).unwrap_or(i32::MAX / 4));
@@ -267,7 +271,7 @@ pub fn reference_bounds(ds1: &Ds1, tiles: &TileSet, div: u32) -> Option<(i32, i3
     let (map_w, map_h) = cell_extent(ds1);
     for y in 0..map_h {
         for x in 0..map_w {
-            let (mx, my) = cell_corner(x, y, div);
+            let (mx, my) = cell_origin(x, y, div);
             // Shadows: a hidden cell counts as unknown and is skipped.
             if let Some(cell) = ds1.shadow.get(x, y)
                 && !cell.is_empty()
@@ -448,7 +452,7 @@ fn draw_item(
         return Ok(());
     };
     let image = tiles.image(&item.tile)?;
-    let (mx, my) = cell_corner(item.x, item.y, div);
+    let (mx, my) = cell_origin(item.x, item.y, div);
     // Destination position of the bitmap's (0, 0).
     let ox = mx.saturating_sub(origin.0);
     let oy = my

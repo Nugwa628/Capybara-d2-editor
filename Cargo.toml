@@ -61,7 +61,7 @@ gif = "0.14"
 rfd = "0.17"
 # Console attach for the single-exe CLI on Windows (capy-app only).
 windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
-# Read-only lookup of the Diablo II install path (capy-app only, Windows).
+# Read-only lookup of the Diablo II install path (d2-assets and capy-app, Windows).
 windows-registry = "0.6"
 # Local time for the History panel and the autosave note (capy-app only).
 jiff = "0.2"

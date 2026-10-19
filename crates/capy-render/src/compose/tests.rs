@@ -206,10 +206,10 @@ fn canvas_bounds_follow_the_reference_integer_maths() {
 }
 
 #[test]
-fn cell_corner_matches_the_reference_for_odd_tile_heights() {
-    assert_eq!(cell_corner(0, 0, 1), (0, 0));
-    assert_eq!(cell_corner(2, 1, 1), (80, 120));
+fn cell_origin_matches_the_reference_for_odd_tile_heights() {
+    assert_eq!(cell_origin(0, 0, 1), (0, 0));
+    assert_eq!(cell_origin(2, 1, 1), (80, 120));
     // 1:16: tile_w 10, tile_h 5: (y * 5) / 2 + (x * 5) / 2 truncates twice.
-    assert_eq!(cell_corner(1, 1, 16), (0, 2 + 2));
-    assert_eq!(cell_corner(3, 0, 16), (15, 7));
+    assert_eq!(cell_origin(1, 1, 16), (0, 2 + 2));
+    assert_eq!(cell_origin(3, 0, 16), (15, 7));
 }

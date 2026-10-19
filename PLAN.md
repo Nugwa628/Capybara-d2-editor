@@ -309,13 +309,14 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 ## Pending small fixes (lead decisions, not yet implemented)
 - **Release:** `C:\games\median-xl` is only an auto-detect candidate on this machine; docs should not present it as the standard path.
 - **Release round (from the dry run, `docs/release-checklist.md`):**
+  - lead, after the app lane merges: update `docs/release-checklist.md` 4a (CLI now seeds profiles) and open issues 2-5, then run `scripts/build-release.ps1` for real (watch for `CARGO_MANIFEST_DIR` paths that `--remap-path-prefix` does not cover);
   - panic hook writing `capybara\crash.log` plus a message box (startup failures such as "no GPU" are silent today);
-  - `scripts/build-release.ps1`: `--target x86_64-pc-windows-msvc` with `RUSTFLAGS=-C target-feature=+crt-static --remap-path-prefix=...` (no VCRUNTIME140 dependency, no builder paths in the exe; tested in the dry run);
-  - profile seeding and install detection moved into a library so the CLI works before the GUI has ever run;
+  - DONE (release-cli lane): `scripts/build-release.ps1`: `--target x86_64-pc-windows-msvc` with `RUSTFLAGS=-C target-feature=+crt-static --remap-path-prefix=...` (no VCRUNTIME140 dependency, no builder paths in the exe; tested in the dry run);
+  - DONE (release-cli lane): profile seeding and install detection moved into `d2_assets::installs`; the CLI seeds default profiles on a clean folder (app adoption pending in the app lane);
   - rename the product to **Capybara's D2 Editor** (window title, loading screen, docs, exe `CapybarasD2Editor.exe`); app icon and the opening animation taken from the user's own MXL Capybara Editor (user, 2026-10-19); version resource;
   - README/user guide: remove stale "planned" notes, add system requirements (Windows 10/11 x64, Vulkan or DX12 driver), no machine-specific Median XL path;
   - ship `THIRD-PARTY-LICENSES.md` in the release zip.
-  - P5 follow-ups from the app round: `capy-render` public `ObjectSprites::frames_of_info` (animation delta + all frames of a direction) and an owned `ObjectSprites` (Arc overlay/catalog), so the app stops copying the delta rule; fix the `capy-render` doc on the cell origin (`(x-y)*80` is the bitmap's left edge, the diamond top is +80).
+  - DONE in the library (release-cli lane; app adoption pending): P5 follow-ups from the app round: `capy-render` public `ObjectSprites::frames_of_info` (animation delta + all frames of a direction) and an owned `ObjectSprites` (Arc overlay/catalog), so the app stops copying the delta rule; fix the `capy-render` doc on the cell origin (`(x-y)*80` is the bitmap's left edge, the diamond top is +80).
   - Minor/backlog: an interrupted index build restarts from scratch.
 - Release: one exe only, no separate console `capy.exe` (user, 2026-10-19). The GUI-subsystem exe attaches to the parent console; from cmd the prompt can return before CLI output finishes (documented; redirection and exit codes work).
 - `capy-render`: a mod colormap that maps a visible index to 0 makes that pixel transparent here; DS1Edit keeps it opaque. No vanilla row does this. Match DS1Edit later.

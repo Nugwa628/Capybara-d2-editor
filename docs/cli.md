@@ -1,12 +1,13 @@
 # Command line
 
-`CapybaraMapEditor.exe` is also a command-line tool. When the first argument
+`CapybarasD2Editor.exe`, the exe of Capybara's D2 Editor, is also a
+command-line tool. When the first argument
 is one of the verbs below, the exe runs it and exits without opening a
 window. With no arguments, or a first argument that isn't a verb, the editor
 starts as usual.
 
 ```
-CapybaraMapEditor.exe <verb> [options]
+CapybarasD2Editor.exe <verb> [options]
 ```
 
 | Verb | What it does |
@@ -17,9 +18,10 @@ CapybaraMapEditor.exe <verb> [options]
 | [`profiles`](#profiles) | List the profiles |
 | [`help`](#help) | Show help, for all verbs or one |
 
-All verbs only read game data. They write only the `--out` file you name and
-files in `capybara\cache\`. They read the editor's `capybara\config.toml`
-(for map overrides) but never change it.
+All verbs only read game data. They write only the `--out` file you name,
+files in `capybara\cache\` and, the first time on a clean folder, the
+default profiles in `capybara\profiles\` (see below). They read the
+editor's `capybara\config.toml` (for map overrides) but never change it.
 
 ## General rules
 
@@ -32,8 +34,8 @@ files in `capybara\cache\`. They read the editor's `capybara\config.toml`
   `--help render` shows the help of one verb, and so does a help flag
   anywhere after a verb (`render --help`, `maps -h`): it prints that verb's
   help and exits with 0.
-- Output goes to stdout. Errors go to stderr as `error: ...`, and warnings
-  as `warning: ...`.
+- Output goes to stdout. Errors go to stderr as `error: ...`, warnings
+  as `warning: ...` and notes as `note: ...`.
 
 ### Where the CLI looks for profiles
 
@@ -48,6 +50,25 @@ exe, or the folder in the `CAPY_HOME` environment variable when it is set.
 
 The profile's `saves` layer points at `capybara\saves\<id>\`, so maps you
 saved in the editor are used here too.
+
+### First run without the editor
+
+You don't have to start the editor before using the CLI. When a verb other
+than `help` finds no profile in `capybara\profiles\`, it first writes the
+same default profiles the editor writes on its first start, and prints a
+`note: wrote default profile <file>` line on stderr for each:
+
+- `vanilla.toml` for Diablo II in its default folder,
+  `C:\Program Files (x86)\Diablo II`, or else in the folder the Diablo II
+  registry key names (`InstallPath`, read only) when that folder holds
+  `d2data.mpq` and `d2exp.mpq`;
+- `mxl.toml` for Median XL when it is found in an auto-detected folder.
+
+Installs that aren't found get no profile; add your own `.toml` to
+`capybara\profiles\` (or use the editor's "Add game install...") for them.
+Existing profile files are never changed, and once the folder holds any
+profile nothing is written. If the folder can't be written, a warning is
+printed and the verb runs anyway.
 
 ### Exit codes
 
@@ -72,13 +93,13 @@ then appears after the prompt. The command still ran normally.
 Redirection and exit codes work:
 
 ```
-CapybaraMapEditor.exe maps list --profile vanilla > maps.txt
+CapybarasD2Editor.exe maps list --profile vanilla > maps.txt
 ```
 
 To make an interactive cmd prompt wait and then read the exit code:
 
 ```
-start "" /wait CapybaraMapEditor.exe profiles list
+start "" /wait CapybarasD2Editor.exe profiles list
 echo %ERRORLEVEL%
 ```
 
@@ -175,20 +196,20 @@ for `--lvltype`.
 Render a vanilla town map at 1:2:
 
 ```
-CapybaraMapEditor.exe render data\global\tiles\act1\town\towne1.ds1 --profile vanilla --zoom 1:2 --out towne1.png
+CapybarasD2Editor.exe render data\global\tiles\act1\town\towne1.ds1 --profile vanilla --zoom 1:2 --out towne1.png
 ```
 
 Render a map with every animated object at its third frame:
 
 ```
-CapybaraMapEditor.exe render data\global\tiles\act2\town\lutw.ds1 --profile vanilla --zoom 1:4 --object-frame 2 --out lutw.png
+CapybarasD2Editor.exe render data\global\tiles\act2\town\lutw.ds1 --profile vanilla --zoom 1:4 --object-frame 2 --out lutw.png
 ```
 
 Render a map file from disk with an explicit LvlType and Def, floors and
 walls only (no objects):
 
 ```
-CapybaraMapEditor.exe render C:\work\mymap.ds1 --profile mxl --lvltype 2 --def 40 --layers floors,walls --out mymap.png
+CapybarasD2Editor.exe render C:\work\mymap.ds1 --profile mxl --lvltype 2 --def 40 --layers floors,walls --out mymap.png
 ```
 
 ---
@@ -223,8 +244,8 @@ index build  --profile <id|path.toml>
 ### Example
 
 ```
-CapybaraMapEditor.exe index status --profile mxl
-CapybaraMapEditor.exe index build --profile mxl
+CapybarasD2Editor.exe index status --profile mxl
+CapybarasD2Editor.exe index build --profile mxl
 ```
 
 ---
@@ -253,7 +274,7 @@ are faster.
 ### Example
 
 ```
-CapybaraMapEditor.exe maps list --profile vanilla --filter town
+CapybarasD2Editor.exe maps list --profile vanilla --filter town
 ```
 
 ---
@@ -273,9 +294,11 @@ example:
 vanilla	1.14d	Diablo II 1.14d
 ```
 
-The version is printed as in the profile file: `1.13c`, `1.14d` or `d2r`. With no profiles it
-prints `no profiles in <folder>`. A profile file that can't be read is an
-error (exit code 1).
+The version is printed as in the profile file: `1.13c`, `1.14d` or `d2r`.
+On a clean folder the default profiles are written first (see
+[First run without the editor](#first-run-without-the-editor)). With no
+profiles and no install found it prints `no profiles in <folder>`. A
+profile file that can't be read is an error (exit code 1).
 
 ---
 

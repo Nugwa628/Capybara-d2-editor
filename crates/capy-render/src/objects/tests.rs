@@ -293,6 +293,91 @@ fn a_missing_cof_is_reported_not_drawn() {
     let (placed, missing) = sprites.place(&ds1, &ObjectOptions::default());
     assert!(placed.is_empty());
     assert!(matches!(missing[0].reason, MissingReason::CofNotFound(_)));
+    // frames_of_info reports the same reason.
+    let info = catalog.resolve(ds1.effective_act(), ds1.version, &ds1.objects[0]);
+    assert!(matches!(
+        sprites.frames_of_info(&info, 0),
+        Err(MissingReason::CofNotFound(_))
+    ));
+}
+
+#[test]
+fn frames_of_info_holds_every_frame_and_the_animation_speed() {
+    let dir = tempfile::tempdir().unwrap();
+    let overlay = game(dir.path());
+    let (catalog, _) = ObjectCatalog::build(&overlay, GameVersion::V113c).unwrap();
+    let sprites = ObjectSprites::new(&overlay, &catalog);
+    let ds1 = ds1_with(&[(7, 3)]);
+    let mut info = catalog.resolve(ds1.effective_act(), ds1.version, &ds1.objects[0]);
+    let (frames, delta) = sprites.frames_of_info(&info, 0).unwrap();
+    assert_eq!(frames.len(), 2, "the COF's frames per direction");
+    assert_eq!(frames[0].layers[0].image.pixels[0], 10);
+    assert_eq!(frames[1].layers[0].image.pixels[0], 20);
+    assert_eq!(
+        delta,
+        info.frame_delta.filter(|d| *d != 0).unwrap_or(256),
+        "no AnimData here: the Objects.txt FrameDelta, else 256"
+    );
+    // The same cached frames, and the speed frame_of_info animates with.
+    for (f, frame) in (0u8..).zip(&frames) {
+        let one = sprites
+            .frame_of_info(&info, &ObjectOptions::default(), Some(f), 0)
+            .unwrap();
+        assert!(Arc::ptr_eq(&one, frame));
+    }
+    for tick in 0..40 {
+        let opts = ObjectOptions {
+            animation_tick: Some(tick),
+            ..ObjectOptions::default()
+        };
+        let one = sprites.frame_of_info(&info, &opts, None, 0).unwrap();
+        let k = usize::from(frame_index(Some(tick), delta, 2));
+        assert!(Arc::ptr_eq(&one, &frames[k]), "tick {tick}");
+    }
+    // A slower FrameDelta is reported as is; 0 means 256.
+    info.frame_delta = Some(64);
+    assert_eq!(sprites.frames_of_info(&info, 0).unwrap().1, 64);
+    info.frame_delta = Some(0);
+    assert_eq!(sprites.frames_of_info(&info, 0).unwrap().1, 256);
+    // An object without a sprite.
+    info.token = None;
+    assert!(sprites.frames_of_info(&info, 0).is_err());
+}
+
+fn assert_static_send_sync<T: Send + Sync + 'static>(_: &T) {}
+
+#[test]
+fn owned_sprites_keep_their_cache_across_threads() {
+    let dir = tempfile::tempdir().unwrap();
+    let overlay = Arc::new(game(dir.path()));
+    let (catalog, _) = ObjectCatalog::build(&overlay, GameVersion::V113c).unwrap();
+    let catalog = Arc::new(catalog);
+    let owned: OwnedObjectSprites =
+        ObjectSprites::new_shared(Arc::clone(&overlay), Arc::clone(&catalog));
+    assert_static_send_sync(&owned);
+    assert!(owned.uses(&overlay, &catalog));
+    let (other, _) = ObjectCatalog::build(&overlay, GameVersion::V113c).unwrap();
+    assert!(!owned.uses(&overlay, &other));
+
+    let ds1 = ds1_with(&[(7, 3)]);
+    let (placed, missing) = owned.place(&ds1, &ObjectOptions::default());
+    assert!(missing.is_empty(), "{missing:?}");
+    // Same results as the borrowing variant.
+    let borrowed = ObjectSprites::new(&overlay, &catalog);
+    assert!(borrowed.uses(&overlay, &catalog));
+    let (again, _) = borrowed.place(&ds1, &ObjectOptions::default());
+    assert_eq!(placed[0].frame, again[0].frame);
+
+    // The cache lives with the value: another thread gets the same Arcs.
+    let owned = Arc::new(owned);
+    let first = Arc::clone(&placed[0].frame);
+    let info = catalog.resolve(ds1.effective_act(), ds1.version, &ds1.objects[0]);
+    let worker = {
+        let owned = Arc::clone(&owned);
+        std::thread::spawn(move || owned.frames_of_info(&info, 0).unwrap().0)
+    };
+    let frames = worker.join().unwrap();
+    assert!(Arc::ptr_eq(&frames[0], &first));
 }
 
 fn tiles() -> crate::tileset::TileSet {
