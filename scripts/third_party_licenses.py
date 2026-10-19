@@ -203,6 +203,16 @@ SOFTWARE."""
 
 # Repo-relative files that a shipped crate embeds with include_str!/include_bytes!.
 ASSETS = {
+    "assets/branding/capybara.ico": {
+        "title": "Program icon (`assets/branding/capybara.ico`)",
+        "license": "project's own artwork, same license as the program",
+        "body": (
+            "The capybara icon of the author's earlier MXL Capybara Editor, used as "
+            "the exe, window and loading-screen icon. It is the project's own "
+            "artwork and is covered by this program's license."
+        ),
+        "text": None,
+    },
     "assets/editor/obj.txt": {
         "title": "DS1 object table (`assets/editor/obj.txt`)",
         "license": "MIT (DS1Edit), over an unlicensed original by Paul Siramy",
@@ -626,7 +636,7 @@ def render(meta, use_tree):
 
     w("# Third-party licenses")
     w("")
-    w("Capybara Map Editor is MIT licensed (see [LICENSE](LICENSE)). Its release "
+    w("Capybara's D2 Editor is MIT licensed (see [LICENSE](LICENSE)). Its release "
       "exe, built with `cargo build --release -p capy-app` for "
       f"`{TARGET}`, statically links the third-party Rust packages listed "
       "here and embeds the data files and fonts described in section 3. This "

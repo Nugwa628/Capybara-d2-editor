@@ -1,4 +1,4 @@
-//! Pure-Rust map rendering for the Capybara Map Editor (no Bevy).
+//! Pure-Rust map rendering for Capybara's D2 Editor (no Bevy).
 //!
 //! * [`TileSet`]: DT1 tiles, key index, the reference's variant rule and
 //!   fallbacks.

@@ -1,4 +1,4 @@
-# Capybara Map Editor — Plan
+# Capybara's D2 Editor (formerly Capybara Map Editor) — Plan
 
 Status: **P0-P6 done** (2026-10-19). Robustness audit merged. Next: release round (rename to "Capybara's D2 Editor", icon and opening animation, packaging).
 
@@ -12,7 +12,7 @@ Status: **P0-P6 done** (2026-10-19). Robustness audit merged. Next: release roun
 - **Game profiles** (TOML): *Vanilla* is the vanilla install's base MPQs. *Median XL* is the medianxl-* archives on top of Median XL's **own** base MPQs (never the vanilla ones). Users can add their own profiles.
 - **Portable layout:** everything the editor writes lives next to the exe. Game install folders are **read-only and never written**. Copying or zipping the folder moves the whole setup.
   ```
-  CapybaraMapEditor.exe
+  CapybarasD2Editor.exe
   capybara\
     config.toml                  settings
     saves\<profile>\data\global\tiles\...\*.ds1

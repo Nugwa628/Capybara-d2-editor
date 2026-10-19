@@ -1,7 +1,7 @@
 NOTICE
 ======
 
-Capybara Map Editor is an independent, from-scratch Rust implementation of a
+Capybara's D2 Editor is an independent, from-scratch Rust implementation of a
 Diablo II DS1 map editor. It contains no code copied from the projects below,
 but it owes them its understanding of the file formats and of how an editor
 for them should behave.
@@ -34,7 +34,7 @@ Provenance: this table originates in Paul Siramy's win_ds1edit (section 1),
 which was published without a license text. DS1Edit's NOTICE states that its
 MIT license covers Ben Ethington's modifications and additions and is not a
 relicensing of Paul Siramy's original work, which DS1Edit uses with
-attribution. Capybara Map Editor uses the table on the same basis: with
+attribution. Capybara's D2 Editor uses the table on the same basis: with
 attribution to both authors, and under DS1Edit's MIT license for the parts it
 covers.
 

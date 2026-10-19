@@ -1,4 +1,4 @@
-//! Game data access for the Capybara Map Editor.
+//! Game data access for Capybara's D2 Editor.
 //!
 //! Everything here is read-only with respect to game folders: archives are
 //! opened with plain `File::open` and read with positional reads, nothing is

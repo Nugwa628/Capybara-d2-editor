@@ -78,7 +78,7 @@ fn init_commit_log_noop_and_deletions() {
     let repo = gix::open(&saves).unwrap();
     let head = repo.head_commit().unwrap();
     let author = head.author().unwrap();
-    assert_eq!(author.name, "Capybara Map Editor");
+    assert_eq!(author.name, "Capybara's D2 Editor");
 }
 
 #[test]

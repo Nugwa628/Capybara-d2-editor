@@ -11,7 +11,7 @@ use gix::objs::tree::{Entry, EntryKind};
 
 use crate::error::{HistoryError, Result};
 
-const AUTHOR_NAME: &str = "Capybara Map Editor";
+const AUTHOR_NAME: &str = "Capybara's D2 Editor";
 const AUTHOR_EMAIL: &str = "capybara@localhost";
 /// Deepest folder nesting a milestone follows (saves mirror game paths, a
 /// handful of levels deep); deeper trees are an error instead of unbounded
@@ -48,7 +48,7 @@ impl Milestones {
     }
 
     /// Commits the full current content of `saves_root` (every file, including
-    /// deletions since the last milestone). Author "Capybara Map Editor".
+    /// deletions since the last milestone). Author "Capybara's D2 Editor".
     /// Returns the commit id. No-op (returns the previous id) if nothing changed.
     pub fn commit(&self, message: &str) -> Result<String> {
         let workdir = self

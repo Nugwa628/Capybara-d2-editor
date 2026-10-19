@@ -119,7 +119,7 @@ pub struct Milestones { /* repo */ }
 impl Milestones {
     pub fn open_or_init(saves_root: &std::path::Path) -> Result<Milestones>;
     /// Commits the full current content of `saves_root` (every file, including
-    /// deletions since the last milestone). Author "Capybara Map Editor".
+    /// deletions since the last milestone). Author "Capybara's D2 Editor".
     /// Returns the commit id. No-op (returns the previous id) if nothing changed.
     pub fn commit(&self, message: &str) -> Result<String>;
     pub fn log(&self, limit: usize) -> Result<Vec<MilestoneInfo>>;            // newest first
