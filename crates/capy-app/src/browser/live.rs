@@ -24,6 +24,9 @@ pub struct LiveQuery {
     /// The key whose answer is on screen.
     shown: Option<String>,
     next_id: u64,
+    /// `flush` came before the edit it is meant for (the query text was
+    /// set this frame and is only turned into a key on the next tick).
+    flush_next: bool,
 }
 
 impl Default for LiveQuery {
@@ -40,6 +43,7 @@ impl LiveQuery {
             in_flight: None,
             shown: None,
             next_id: 1,
+            flush_next: false,
         }
     }
 
@@ -55,16 +59,23 @@ impl LiveQuery {
     /// The query (with everything that changes its answer) is now `key`.
     /// Restarts the timer when it changed; same key is a no-op.
     pub fn edit(&mut self, key: &str, now: f64) {
+        let flush = std::mem::take(&mut self.flush_next);
         if self.target() == Some(key) {
+            if flush && let Some((_, due)) = self.wanted.as_mut() {
+                *due = now.min(*due);
+            }
             return;
         }
-        self.wanted = Some((key.to_owned(), now + self.delay));
+        let due = if flush { now } else { now + self.delay };
+        self.wanted = Some((key.to_owned(), due));
     }
 
-    /// Run the wanted query now (Enter, a scope click, a script).
+    /// Run the wanted query now (Enter, a scope click, a script). With
+    /// nothing waiting, the next [`edit`](Self::edit) is run without delay.
     pub fn flush(&mut self, now: f64) {
-        if let Some((_, due)) = self.wanted.as_mut() {
-            *due = now.min(*due);
+        match self.wanted.as_mut() {
+            Some((_, due)) => *due = now.min(*due),
+            None => self.flush_next = true,
         }
     }
 
@@ -118,6 +129,7 @@ impl LiveQuery {
         self.wanted = None;
         self.in_flight = None;
         self.shown = None;
+        self.flush_next = false;
     }
 }
 
@@ -195,5 +207,22 @@ mod tests {
         q.edit("z", 18.0);
         q.edit("y", 18.1);
         assert_eq!(q.poll(30.0).map(|(_, k)| k), Some("y".to_owned()));
+    }
+
+    #[test]
+    fn a_flush_before_the_edit_applies_to_that_edit_only() {
+        let mut q = LiveQuery::new(10.0);
+        q.edit("a", 0.0);
+        let (id, _) = q.poll(10.0).expect("a");
+        assert!(q.complete(id));
+        // A script sets the text and flushes; the key appears next tick.
+        q.flush(11.0);
+        q.edit("b", 11.0);
+        assert_eq!(q.poll(11.0).map(|(_, k)| k), Some("b".to_owned()));
+        // A flush with an unchanged query does not leak into later typing.
+        q.flush(12.0);
+        q.edit("b", 12.0);
+        q.edit("bc", 12.5);
+        assert_eq!(q.poll(13.0), None, "typing is debounced again");
     }
 }

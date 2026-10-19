@@ -10,12 +10,15 @@ use std::time::Instant;
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy_egui::egui;
 use capy_edit::{CellRect, CellValue, SelectOp};
 use d2_assets::GamePath;
 
 use capy_paint::{GradientShape, OutlineSide};
 use capy_sprite::SpriteFormat;
 
+use crate::browser::scope::Scope;
+use crate::browser::{SearchStatus, THUMB_MAX, THUMB_MIN};
 use crate::config::AppMode;
 use crate::doc::RenderState;
 use crate::edit::ops::EditOp;
@@ -23,6 +26,7 @@ use crate::edit::paste::PasteSession;
 use crate::edit::script::GradientSpec;
 use crate::edit::script::{Cmd, Line, parse_script};
 use crate::edit::state::MoveDialog;
+use crate::index_task::IndexState;
 use crate::iso::ZOOM_STEPS;
 use crate::sprites::convert::Layout;
 use crate::sprites::dialog::Purpose;
@@ -35,6 +39,10 @@ use crate::state::AppState;
 const SETTLE_SECS: f32 = 4.0;
 /// Give up on a screenshot or a profile that never appears.
 const GIVE_UP_FRAMES: u32 = 3600;
+/// Give up on a command that keeps waiting (an index build included).
+const GIVE_UP_RETRY_SECS: u64 = 30 * 60;
+/// Where `tile-menu` opens the tile menu (screen points).
+const TILE_MENU_AT: (f32, f32) = (360.0, 220.0);
 
 enum Wait {
     Frames(u32),
@@ -58,6 +66,8 @@ pub struct ScriptRunner {
     keep_open: bool,
     idle_frames: u32,
     started: bool,
+    /// When the command at the front started waiting (`Step::Retry`).
+    retry_since: Option<Instant>,
 }
 
 impl ScriptRunner {
@@ -174,9 +184,24 @@ pub fn run_script(
     }
 
     while let Some((line, cmd)) = runner.cmds.pop_front() {
-        match step(&mut state, &cmd) {
+        let result = step(&mut state, &cmd);
+        if !matches!(result, Step::Retry) {
+            runner.retry_since = None;
+        }
+        match result {
             Step::Next => {}
             Step::Retry => {
+                let since = *runner.retry_since.get_or_insert_with(Instant::now);
+                if since.elapsed().as_secs() > GIVE_UP_RETRY_SECS {
+                    fail(
+                        &mut runner,
+                        &mut state,
+                        &mut exit,
+                        Some(line),
+                        "timed out waiting".to_owned(),
+                    );
+                    return;
+                }
                 runner.cmds.push_front((line, cmd));
                 return;
             }
@@ -213,6 +238,9 @@ fn step(state: &mut AppState, cmd: &Cmd) -> Step {
         return Step::Wait(Wait::Frames(*n));
     }
     if let Some(step) = sprite_step(state, cmd) {
+        return step;
+    }
+    if let Some(step) = browser_step(state, cmd) {
         return step;
     }
     // Screenshots also work without a map (Sprites mode).
@@ -395,6 +423,37 @@ fn step(state: &mut AppState, cmd: &Cmd) -> Step {
         | Cmd::PaintSelect { .. }
         | Cmd::PaintOnion(_)
         | Cmd::PaintUndo => Step::Next,
+        // Handled by `browser_step`.
+        Cmd::Search(_)
+        | Cmd::AssertSearchTop { .. }
+        | Cmd::BrushFrom(_)
+        | Cmd::AssertBrush { .. }
+        | Cmd::AssertRecent(_)
+        | Cmd::FavoriteAdd { .. }
+        | Cmd::Alias { .. }
+        | Cmd::CtrlK(_)
+        | Cmd::CtrlKClose
+        | Cmd::BrowserScope(_)
+        | Cmd::ThumbSize(_)
+        | Cmd::TileMenu(_)
+        | Cmd::TilesTab => Step::Next,
+        Cmd::PaintBrush { x, y } => {
+            let Some(layer) = state.edit.current_layer else {
+                return Step::Fail("paint-brush: there is no brush (use brush-from)".to_owned());
+            };
+            let value = state.edit.current;
+            let ok = state.exec_upgrading(
+                index,
+                EditOp::Paint {
+                    layer,
+                    cells: vec![(*x, *y, value)],
+                },
+            );
+            if ok {
+                state.note_paint(index, layer, value);
+            }
+            done_or_fail(state, ok, "paint-brush")
+        }
         Cmd::Zoom(divisor) => {
             let doc = &mut state.docs[index];
             if !doc.fitted {
@@ -588,6 +647,156 @@ fn sprite_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
                 Err("nothing to undo".to_owned())
             }
         }),
+        _ => return None,
+    };
+    Some(match result {
+        Ok(()) => Step::Next,
+        Err(e) => Step::Fail(e),
+    })
+}
+
+/// Where the asset index stands for a browser command: `Ok(true)` when it
+/// can be searched, `Ok(false)` while it is being checked or built.
+fn index_ready(state: &AppState) -> Result<bool, String> {
+    if state.index_disabled {
+        return Err("the asset index is off (CAPY_NO_INDEX)".to_owned());
+    }
+    match &state.index.state {
+        IndexState::Ready(_) => Ok(true),
+        IndexState::Idle | IndexState::Checking | IndexState::Building(_) => Ok(false),
+        IndexState::Cancelled => Err("the asset index build was cancelled".to_owned()),
+        IndexState::Failed(e) => Err(format!("the asset index failed: {e}")),
+    }
+}
+
+/// `assert-search-top`: `key` is among the first `n` results.
+fn check_search_top(state: &AppState, n: usize, key: &str) -> Result<(), String> {
+    let hits = &state.browser.results.hits;
+    let wanted = key.to_ascii_lowercase();
+    match hits.iter().position(|h| h.asset.key == wanted) {
+        Some(i) if i < n => Ok(()),
+        found => {
+            let top: Vec<String> = hits
+                .iter()
+                .take(n)
+                .map(|h| format!("{} ({:.2})", h.asset.key, h.score))
+                .collect();
+            let place = found.map_or_else(|| "not one".to_owned(), |i| format!("number {}", i + 1));
+            Err(format!(
+                "assert-search-top {n}: {key} is {place} of {} results for {:?}; the top is:\n  {}",
+                hits.len(),
+                state.browser.query,
+                top.join("\n  ")
+            ))
+        }
+    }
+}
+
+/// Runs an asset-browser command; `None` for every other command.
+fn browser_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
+    let needs_index = matches!(
+        cmd,
+        Cmd::Search(_)
+            | Cmd::AssertSearchTop { .. }
+            | Cmd::BrushFrom(_)
+            | Cmd::CtrlK(_)
+            | Cmd::TileMenu(_)
+    );
+    if needs_index {
+        match index_ready(state) {
+            Ok(true) => {}
+            Ok(false) => return Some(Step::Retry),
+            Err(e) => return Some(Step::Fail(e)),
+        }
+    }
+    let result: Result<(), String> = match cmd {
+        Cmd::Search(query) => {
+            state.browser.set_query(query);
+            state.browser.focus_tiles = true;
+            Ok(())
+        }
+        Cmd::AssertSearchTop { n, key } => match state.browser_search_status() {
+            SearchStatus::Pending => return Some(Step::Retry),
+            SearchStatus::Failed(e) => Err(format!("assert-search-top: {e}")),
+            SearchStatus::Done => check_search_top(state, *n, key),
+        },
+        Cmd::BrushFrom(key) => {
+            let lower = key.to_ascii_lowercase();
+            match state.browser.asset(&lower) {
+                None => return Some(Step::Retry), // being looked up
+                Some(None) => Err(format!("brush-from: {key} is not in the index")),
+                Some(Some(_)) => state.set_brush_from_key(&lower),
+            }
+        }
+        Cmd::AssertBrush {
+            layer,
+            cell,
+            orientation,
+        } => {
+            let (have_layer, have) = (state.edit.current_layer, state.edit.current);
+            let orientation_ok = orientation.is_none_or(|o| o == have.orientation);
+            if have_layer == Some(*layer) && have.cell == *cell && orientation_ok {
+                Ok(())
+            } else {
+                Err(format!(
+                    "assert-brush: the brush is {} cell {:#010x} orientation {}",
+                    have_layer.map_or_else(|| "nothing".to_owned(), crate::doc::layer_label),
+                    have.cell,
+                    have.orientation
+                ))
+            }
+        }
+        Cmd::AssertRecent(key) => {
+            let wanted = key.to_ascii_lowercase();
+            state.recent_keys().and_then(|keys| {
+                if keys.contains(&wanted) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "assert-recent: {key} is not among the {} recent key(s): {keys:?}",
+                        keys.len()
+                    ))
+                }
+            })
+        }
+        Cmd::FavoriteAdd { group, key } => state
+            .favorite_add_named(group, &key.to_ascii_lowercase())
+            .map_err(|e| format!("favorite-add: {e}")),
+        Cmd::Alias { key, text } => state
+            .set_alias(&key.to_ascii_lowercase(), text)
+            .map_err(|e| format!("alias: {e}")),
+        Cmd::CtrlK(query) => {
+            state.open_palette_with(query);
+            Ok(())
+        }
+        Cmd::CtrlKClose => {
+            state.browser.palette.open = false;
+            Ok(())
+        }
+        Cmd::BrowserScope(scope) => {
+            if *scope == Scope::MapTileSet && state.map_dt1s().is_empty() {
+                Err("browser-scope map: no open map with a known tile set".to_owned())
+            } else {
+                state.browser.scope = *scope;
+                state.browser.focus_tiles = true;
+                Ok(())
+            }
+        }
+        Cmd::ThumbSize(size) => {
+            state.config.browser_thumb = size.clamp(THUMB_MIN, THUMB_MAX);
+            state.browser.focus_tiles = true;
+            Ok(())
+        }
+        Cmd::TileMenu(key) => {
+            let lower = key.to_ascii_lowercase();
+            state.browser.selected = Some(lower.clone());
+            state.open_tile_menu(&lower, egui::pos2(TILE_MENU_AT.0, TILE_MENU_AT.1));
+            Ok(())
+        }
+        Cmd::TilesTab => {
+            state.browser.focus_tiles = true;
+            Ok(())
+        }
         _ => return None,
     };
     Some(match result {

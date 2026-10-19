@@ -52,6 +52,17 @@ pub enum ThumbSlot {
     Missing,
 }
 
+/// Where a live search stands (scripts wait on it).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SearchStatus {
+    /// Waiting for the debounce or the worker.
+    Pending,
+    /// The answer for the current query is on screen.
+    Done,
+    /// The query does not parse, or the search failed.
+    Failed(String),
+}
+
 /// What one search shows.
 #[derive(Default)]
 pub struct SearchResults {
@@ -281,6 +292,12 @@ impl BrowserState {
         self.lists.dirty = true;
     }
 
+    /// Puts `query` in the query box and searches it without the debounce.
+    pub fn set_query(&mut self, query: &str) {
+        self.query = query.to_owned();
+        self.live.flush(self.now);
+    }
+
     fn invalidate_searches(&mut self) {
         let now = self.now;
         self.live.invalidate(now);
@@ -390,12 +407,46 @@ impl AppState {
         }
     }
 
-    fn send_browser_search(&mut self, profile: &str, now: f64) {
-        let dt1s = if self.browser.scope == Scope::MapTileSet {
+    /// The DT1s the browser's scope narrows to (empty unless "this map").
+    fn scope_dt1s(&self) -> Vec<String> {
+        if self.browser.scope == Scope::MapTileSet {
             self.map_dt1s()
         } else {
             Vec::new()
+        }
+    }
+
+    /// Where the Tiles browser's search for its current query stands.
+    pub fn browser_search_status(&self) -> SearchStatus {
+        let Some(profile) = self.browser_profile() else {
+            return SearchStatus::Failed("no profile is open".to_owned());
         };
+        if let Err(e) = parse_query(&self.browser.query) {
+            return SearchStatus::Failed(format!("query {:?}: {e}", self.browser.query));
+        }
+        let key = search_key(
+            &profile,
+            self.browser.scope.slug(),
+            &self.scope_dt1s(),
+            &self.browser.query,
+        );
+        if !self.browser.live.settled_on(&key) {
+            return SearchStatus::Pending;
+        }
+        match &self.browser.results.failed {
+            Some(e) => SearchStatus::Failed(format!("search failed: {e}")),
+            None => SearchStatus::Done,
+        }
+    }
+
+    /// The open profile's recently used keys, newest first, from user.db.
+    pub fn recent_keys(&mut self) -> Result<Vec<String>, String> {
+        let profile = self.browser_profile().ok_or("no profile is open")?;
+        self.user(|db| db.recents(&profile, RECENT_LIMIT))
+    }
+
+    fn send_browser_search(&mut self, profile: &str, now: f64) {
+        let dt1s = self.scope_dt1s();
         let query = match parse_query(&self.browser.query) {
             Ok(q) => {
                 self.browser.results.parse_error = None;
@@ -873,6 +924,7 @@ impl AppState {
             self.browser.query = format!("file:{name}");
             self.browser.scope = Scope::Profile;
             self.browser.live.flush(self.browser.now);
+            self.browser.focus_tiles = true;
             return Ok(());
         }
         Err(format!("{key} cannot be used here"))
