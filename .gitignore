@@ -2,3 +2,4 @@
 /target/
 /testdata/private/
 /.claude/worktrees/
+/.cargo/
