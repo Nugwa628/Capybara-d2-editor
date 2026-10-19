@@ -88,6 +88,13 @@ Status: **P0 in progress** (2026-10-19). Step 0 bootstrap done: workspace skelet
 - A prebuilt `ds1edit.exe` already exists at `C:\Users\ZF\Desktop\sugma\ds1edit-v2.1.1-windows-x86\DS1Edit-2.1.1-win32\`. **Copy that folder** to a scratch location before use; never edit the user's ini there.
 - Embeddable editor data under MIT: `assets/editor/obj.txt` (DS1 object → COF token) and `ds1edit.dt1` (marker tiles).
 
+### Our MPQ reader (2026-10-19, measured)
+- Reads every listed file in all 11 vanilla and 68 Median XL archives with 0 failures (~69,000 files, 4.1 GB); every length matches the block table.
+- Cross-checked against an independent pure-Python extractor (`scripts/extract_fixtures.py`): the 15,122 files both extracted are byte-identical.
+- No archive in either install uses bzip2 (covered by synthetic tests only). Vanilla uses PKWARE via the compression mask; Median XL also uses the IMPLODE block flag.
+- `Patch_D2.mpq` holds 209 files; names from the other listfiles cover 114. Vanilla has no `objpreset` table in any archive; Median XL ships `objpreset.bin`.
+- Private corpus: `testdata\private\extracted\{vanilla,mxl}\` (6,458 and 8,681 files, with `_manifest.tsv`).
+
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
 |---|---|---|
@@ -184,6 +191,10 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **DCC pixel-buffer fill pops decoded colours in reverse order, with zero fill** (`dcc.c:989-1001`). This is the standard DCC algorithm, not a quirk.
 - **Loaders are as lenient as the game but always bounds-checked**: no signature-strictness the game lacks, and no crash or over-allocation on bad data. No `.dcc`→`.dc6` fallback on decode failure (the reference does this, the game does not); a failed sprite is reported as missing.
 - **AnimData lookup** ignores case and a trailing `.cof`.
+- **Open, to settle against the oracle in P1** (from `docs/specs/palette.md`, `dt1.md`):
+  - PL2/pal byte order: the reference reads R from byte 0 (`palette.c:27-29`) while the guide says byte 0 is B. Settle by rendering one vanilla map both ways against the oracle.
+  - DT1 variant choice: the reference never compares the group head's rarity (`misc.c:156-187`), so on ties or a higher-rarity head it can pick a different variant than "first highest rarity wins". We implement the documented rule and record any oracle mismatches it causes.
+  - COF blend row names (`structs.h:92-97`) are inverted against the guide's percentages; confirm with one composited sprite.
 - **`.tbl` strings** decode as Latin-1 for classic profiles (UTF-8 is a D2R concern); a missing key returns `None`.
 
 ## API contracts
