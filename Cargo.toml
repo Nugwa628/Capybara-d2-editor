@@ -6,6 +6,7 @@ members = [
     "crates/capy-index",
     "crates/capy-edit",
     "crates/capy-history",
+    "crates/capy-render",
     "crates/capy-app",
 ]
 
@@ -30,6 +31,7 @@ d2-assets = { path = "crates/d2-assets" }
 capy-index = { path = "crates/capy-index" }
 capy-edit = { path = "crates/capy-edit" }
 capy-history = { path = "crates/capy-history" }
+capy-render = { path = "crates/capy-render" }
 thiserror = "2"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
@@ -39,6 +41,8 @@ bzip2 = "0.6"
 explode = "0.1"
 tempfile = "3"
 proptest = "1"
+png = "0.18"
+serde_json = "1"
 
 # UI stack, pinned together: bevy_egui 0.43.1 and egui_dock 0.21.1 both
 # require egui 0.36.2. `cargo tree -d` showed a single egui with this set.
@@ -56,6 +60,9 @@ opt-level = 2
 opt-level = 2
 
 [profile.dev.package.d2-assets]
+opt-level = 2
+
+[profile.dev.package.capy-render]
 opt-level = 2
 
 [profile.release]
