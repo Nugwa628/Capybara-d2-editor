@@ -223,6 +223,7 @@ fn begin_startup_profile(
     state.index_disabled = hooks.no_index;
     if hooks.map_only {
         render.force_div = Some(hooks.map_only_div());
+        render.hide_outlines = true;
     }
     let wanted = hooks
         .profile

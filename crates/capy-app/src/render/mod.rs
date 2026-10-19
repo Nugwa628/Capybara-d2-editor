@@ -313,6 +313,9 @@ pub struct MapRender {
     /// Lay the map out for this divisor whatever the view says (the
     /// map-only screenshot hook, which may ask for any `1:N`).
     pub force_div: Option<u32>,
+    /// Do not draw the missing-tile outlines (map-only screenshots, which are
+    /// compared with the CPU compositor's output).
+    pub hide_outlines: bool,
 }
 
 impl MapRender {
@@ -325,6 +328,7 @@ impl MapRender {
             tilesets: HashMap::new(),
             next_ticket: 1,
             force_div: None,
+            hide_outlines: false,
         }
     }
 
@@ -770,7 +774,7 @@ fn sync_outlines(
     for (outline, mut mesh2d, mut visibility) in &mut outlines {
         let active = state
             .active_doc()
-            .filter(|d| d.id == outline.doc && d.render.is_ready());
+            .filter(|d| d.id == outline.doc && d.render.is_ready() && !render.hide_outlines);
         let wanted = if active.is_some() {
             Visibility::Inherited
         } else {

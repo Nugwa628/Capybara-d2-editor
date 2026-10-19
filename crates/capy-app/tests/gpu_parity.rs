@@ -11,6 +11,7 @@
 //! manifest of LvlType/Def values), so it only runs with `CAPY_GPU_TESTS=1`.
 //!
 //! * `CAPY_GPU_MAPS=<n>|all`  how many manifest maps (default 6, spread evenly)
+//! * `CAPY_GPU_ONLY=<text>`   only maps whose name contains it
 //! * `CAPY_GPU_ZOOM=<n>`      zoom divisor (default 4)
 //! * `CAPY_PRIVATE_DIR`, `CAPY_VANILLA_DIR`  as for the `capy-render` tests
 //!
@@ -81,7 +82,7 @@ fn cpu_render(
     version: d2_assets::GameVersion,
     entry: &Entry,
     zoom: u32,
-) -> RgbaImage {
+) -> (RgbaImage, usize) {
     let path = GamePath::new(&entry.ds1);
     let (catalog, _) = MapCatalog::build(overlay, version, std::slice::from_ref(&path)).unwrap();
     let info = catalog
@@ -102,23 +103,16 @@ fn cpu_render(
         ..RenderOptions::default()
     };
     let (image, missing) = render_rgba(&ds1, &tiles, &palette, &opts).unwrap();
-    assert!(
-        missing.is_empty(),
-        "{}: CPU render misses tiles",
-        entry.name
-    );
-    image
+    (image, missing.len())
 }
 
-/// Black pixels of the GPU image are background: make them transparent so the
-/// comparison skips them like it skips the CPU image's transparent ones.
+/// Black pixels of the GPU image are background (the map-only shot has no
+/// outlines for missing tiles): make them transparent so the comparison skips
+/// them like it skips the CPU image's transparent ones.
 fn black_to_transparent(mut img: RgbaImage) -> RgbaImage {
     for p in img.pixels.as_chunks_mut::<4>().0 {
-        p[3] = if p[0] == 0 && p[1] == 0 && p[2] == 0 {
-            0
-        } else {
-            255
-        };
+        let background = p[0] == 0 && p[1] == 0 && p[2] == 0;
+        p[3] = if background { 0 } else { 255 };
     }
     img
 }
@@ -155,12 +149,16 @@ fn gpu_render_matches_the_cpu_compositor() {
     let overlay = profile.open(saves.path()).unwrap();
 
     eprintln!(
-        "{:<28} {:>11} {:>8} {:>8} {:>8} {:>9}",
-        "map", "size", "tol0", "tol16", "shift", "compared"
+        "{:<28} {:>11} {:>8} {:>8} {:>8} {:>8}",
+        "map", "size", "tol0", "tol16", "shift", "missing"
     );
     let mut failures = Vec::new();
+    let only = std::env::var("CAPY_GPU_ONLY").ok();
     for i in spread(entries.len(), count) {
         let entry = &entries[i];
+        if only.as_deref().is_some_and(|o| !entry.name.contains(o)) {
+            continue;
+        }
         let shot = out_dir.join(format!("{}_gpu.png", entry.name));
         let _ = std::fs::remove_file(&shot);
         let status = Command::new(env!("CARGO_BIN_EXE_CapybaraMapEditor"))
@@ -183,7 +181,7 @@ fn gpu_render_matches_the_cpu_compositor() {
         let gpu = black_to_transparent(
             RgbaImage::from_png(&std::fs::read(&shot).expect("screenshot")).unwrap(),
         );
-        let cpu = cpu_render(&overlay, version, entry, zoom);
+        let (cpu, missing) = cpu_render(&overlay, version, entry, zoom);
         std::fs::write(
             out_dir.join(format!("{}_cpu.png", entry.name)),
             cpu.to_png().unwrap(),
@@ -193,7 +191,7 @@ fn gpu_render_matches_the_cpu_compositor() {
         let d16 = compare_images(&gpu, &cpu, 16, 4);
         let d0 = compare_images(&gpu, &cpu, 0, 0);
         eprintln!(
-            "{:<28} {:>5}x{:<5} {:>8.4} {:>8.4} {:>3},{:<4} {}",
+            "{:<28} {:>5}x{:<5} {:>8.4} {:>8.4} {:>3},{:<4} {:>8} {}",
             entry.name,
             gpu.width,
             gpu.height,
@@ -201,6 +199,7 @@ fn gpu_render_matches_the_cpu_compositor() {
             d16.within_tolerance,
             d16.best_shift.0,
             d16.best_shift.1,
+            missing,
             if size_ok { "" } else { "SIZE DIFFERS" }
         );
         if d16.within_tolerance < MIN_FRACTION || !size_ok {
