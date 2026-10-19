@@ -197,8 +197,9 @@ fn collect(
     missing: &mut Vec<MissingTile>,
 ) -> Vec<Entry> {
     let mut entries: Vec<Entry> = Vec::new();
-    for y in 0..ds1.height {
-        for x in 0..ds1.width {
+    let (map_w, map_h) = crate::compose::cell_extent(ds1);
+    for y in 0..map_h {
+        for x in 0..map_w {
             // Wall layers (and roofs, special tiles).
             for (i, layer) in ds1.walls.iter().enumerate() {
                 if !layer_on(&vis.walls, i) {
@@ -398,8 +399,8 @@ pub fn draw_list_with_objects(
             let image = tiles.image(tile)?;
             let x = i32::try_from(e.x).unwrap_or(i32::MAX);
             let y = i32::try_from(e.y).unwrap_or(i32::MAX);
-            let mx = (x - y).saturating_mul(TILE_W / 2);
-            let my = (x + y).saturating_mul(TILE_H / 2);
+            let mx = x.saturating_sub(y).saturating_mul(TILE_W / 2);
+            let my = x.saturating_add(y).saturating_mul(TILE_H / 2);
             out.push(DrawEntry::Tile(DrawItem {
                 pass,
                 order: u32::try_from(out.len()).unwrap_or(u32::MAX),
@@ -407,8 +408,10 @@ pub fn draw_list_with_objects(
                 x: e.x,
                 y: e.y,
                 tile: tile.clone(),
-                screen_x: mx + image.offset_x,
-                screen_y: my + geom.bitmap_top(1) + image.offset_y,
+                screen_x: mx.saturating_add(image.offset_x),
+                screen_y: my
+                    .saturating_add(geom.bitmap_top(1))
+                    .saturating_add(image.offset_y),
             }));
             Ok(())
         };

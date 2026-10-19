@@ -109,9 +109,12 @@ impl TileGeometry {
         if class == TileClass::Special {
             width = 160; // dt1.c:380
         }
-        let mut size_y = tile.height;
+        // In i64: the DT1 height is any i32, and negating or offsetting it
+        // must not overflow. Results that leave i32 saturate (such a tile has
+        // no bitmap anyway, see below).
+        let mut size_y = i64::from(tile.height);
         let mut height = -size_y;
-        let mut y_add = 96; // dt1.c:387: lower wall by default
+        let mut y_add: i64 = 96; // dt1.c:387: lower wall by default
         if orientation == 0 || orientation == 15 {
             if size_y != 0 {
                 size_y = -80;
@@ -128,11 +131,16 @@ impl TileGeometry {
             TileClass::Shadow | TileClass::Special | TileClass::UpperWall => -size_y,
             TileClass::LowerWall => 96,
         };
+        let saturate = |v: i64| i32::try_from(v).unwrap_or(if v < 0 { i32::MIN } else { i32::MAX });
+        let (y_add, zero_line) = (saturate(y_add), saturate(zero_line));
         let roof_y = if class == TileClass::Roof {
             i32::from(tile.roof_height)
         } else {
             0
         };
+        // A height beyond i32 (only from i32::MIN in the file) has no bitmap,
+        // as when the reference's int arithmetic wraps it negative.
+        let height = i32::try_from(height).map_or(-1, i64::from);
         let (width, height) = match (u32::try_from(width), u32::try_from(height)) {
             (Ok(w), Ok(h)) if w > 0 && h > 0 => (w, h),
             _ => (0, 0),
@@ -167,12 +175,14 @@ impl TileGeometry {
     pub fn bitmap_top(&self, div: i32) -> i32 {
         let div = div.max(1);
         let tile_h = TILE_H / div;
-        let mut top = -(self.zero_line / div);
+        // Saturating: `zero_line` comes from the file (i32::MIN would not
+        // negate).
+        let mut top = (self.zero_line / div).saturating_neg();
         if self.wall_like() {
-            top += tile_h;
+            top = top.saturating_add(tile_h);
         }
         if self.class == TileClass::Roof {
-            top -= self.roof_y / div; // preview.c:1367
+            top = top.saturating_sub(self.roof_y / div); // preview.c:1367
         }
         top
     }

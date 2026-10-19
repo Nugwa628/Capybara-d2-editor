@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 98af2608f4d509851c548bc27c1b8f720e1d53870039088011201be74d19a9ac # shrinks to layers = [((1, 1), (0, 0), (0, 0), [], 0, None), ((1, 1), (0, -2147483647), (0, 0), [], 0, None)], offset = (0, 0), pos = (0, 0), origin = (0, 0), div = 1, shadow_pass = false
