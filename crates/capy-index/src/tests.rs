@@ -518,7 +518,7 @@ fn filters() {
     assert_eq!(all("idx:13:0/0").len(), 2);
     assert_eq!(all("idx:1:5/2").len(), 0);
     assert_eq!(all("color:green").len(), 4);
-    assert_eq!(all("color:black").len(), 2);
+    assert_eq!(all("color:dark").len(), 2);
     assert_eq!(
         all("used-in:towne1").len(),
         3,
@@ -1004,7 +1004,7 @@ fn sprites_get_sizes_counts_and_thumbnails() {
         .unwrap();
     assert_eq!((dc6.width, dc6.height), (Some(4), Some(2)));
     assert_eq!(
-        (dc6.rarity, dc6.variant),
+        (dc6.directions, dc6.frames),
         (Some(2), Some(1)),
         "2 directions, 1 frame"
     );
@@ -1019,7 +1019,7 @@ fn sprites_get_sizes_counts_and_thumbnails() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        (cof.rarity, cof.variant),
+        (cof.directions, cof.frames),
         (Some(4), Some(3)),
         "4 directions, 3 frames"
     );
@@ -1031,7 +1031,7 @@ fn sprites_get_sizes_counts_and_thumbnails() {
         .asset("spr", "data\\global\\items\\inv\\broken.dc6")
         .unwrap()
         .unwrap();
-    assert_eq!((broken.width, broken.rarity), (None, None));
+    assert_eq!((broken.width, broken.directions), (None, None));
 }
 
 #[test]
@@ -1112,7 +1112,7 @@ fn schema_mismatch_and_garbage_are_recreated() {
         let idx = Index::open(cache.path()).unwrap();
         idx.conn
             .execute(
-                "UPDATE meta SET value = '0' WHERE key = 'schema_version'",
+                "UPDATE meta SET value = '1' WHERE key = 'schema_version'",
                 [],
             )
             .unwrap();
@@ -1135,7 +1135,7 @@ fn schema_mismatch_and_garbage_are_recreated() {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(v, "1");
+        assert_eq!(v, "2");
     }
     std::fs::write(
         cache.path().join("index.db"),

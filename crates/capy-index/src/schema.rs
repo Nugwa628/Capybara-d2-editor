@@ -1,12 +1,12 @@
-//! `index.db` schema (version 1). The tables are the contract in
+//! `index.db` schema (version 2). The tables are the contract in
 //! `docs/api/capy-index.md`; the indexes below are additions for speed.
 
 /// Bump when the tables change. Any mismatch drops the file and rebuilds.
-pub(crate) const SCHEMA_VERSION: i64 = 1;
+pub(crate) const SCHEMA_VERSION: i64 = 2;
 
 /// Bump when naming, thumbnails or hashing change what a build produces.
 /// It is part of every profile's fingerprint, so profiles go stale.
-pub(crate) const GENERATOR_VERSION: u32 = 1;
+pub(crate) const GENERATOR_VERSION: u32 = 2;
 
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -19,7 +19,9 @@ CREATE TABLE assets(id INTEGER PRIMARY KEY, profile TEXT NOT NULL, key TEXT NOT 
   path TEXT NOT NULL, act INTEGER, orientation INTEGER, main INTEGER, sub INTEGER,
   variant INTEGER, rarity INTEGER, width INTEGER, height INTEGER, class TEXT,
   gen_name TEXT NOT NULL, color TEXT, color_rgb INTEGER, texture TEXT, transparency REAL,
-  phash INTEGER, phash_mirror INTEGER, src TEXT NOT NULL,
+  phash INTEGER, phash_mirror INTEGER,
+  directions INTEGER, frames INTEGER,
+  src TEXT NOT NULL,
   src_tag TEXT NOT NULL,
   thumb BLOB,
   UNIQUE(profile, key));
