@@ -179,6 +179,13 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
    - Thumbnails update live as you type. Enter picks the result as the brush; Shift+Enter shows it in the browser.
 6. **Recents** are recorded automatically. **Favorites** are stars in named, reorderable groups. **Saved searches** work as smart folders, so custom tiles can be pinned to the top.
 
+## Format decisions (lead)
+- **COF layer priority uses the file direction**, the same index as the sprite frames. The reference viewer indexes priority by the raw user direction while sprites go through the dir8/dir16 remap (`cof.c:103-110`, `preview.c:2095`), which looks like a bug; its compose path (`compose_render.c:470`) is consistent and is what we follow. See `docs/specs/cof.md`.
+- **DCC pixel-buffer fill pops decoded colours in reverse order, with zero fill** (`dcc.c:989-1001`). This is the standard DCC algorithm, not a quirk.
+- **Loaders are as lenient as the game but always bounds-checked**: no signature-strictness the game lacks, and no crash or over-allocation on bad data. No `.dcc`→`.dc6` fallback on decode failure (the reference does this, the game does not); a failed sprite is reported as missing.
+- **AnimData lookup** ignores case and a trailing `.cof`.
+- **`.tbl` strings** decode as Latin-1 for classic profiles (UTF-8 is a D2R concern); a missing key returns `None`.
+
 ## API contracts
 - `docs/api/d2-formats.md` and `docs/api/d2-assets.md` are the public APIs, owned by the lead. Agents implement against them and ask before changing them.
 
