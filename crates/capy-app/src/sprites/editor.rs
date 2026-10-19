@@ -111,7 +111,7 @@ impl PaintTool {
             .find(|t| t.key().eq_ignore_ascii_case(&c))
     }
 
-    fn is_selection(self) -> bool {
+    pub fn is_selection(self) -> bool {
         matches!(
             self,
             PaintTool::SelectRect | PaintTool::SelectEllipse | PaintTool::Lasso | PaintTool::Wand
@@ -216,8 +216,8 @@ pub struct EditorState {
     /// Texture cache of the canvas: (key, texture, canvas origin in frame px).
     pub canvas_tex: Option<(u64, egui::TextureHandle, (i32, i32))>,
     pub thumbs: HashMap<(usize, usize), (u64, egui::TextureHandle)>,
-    /// Pending "Reduce all" confirmation result etc.
-    pub last_message: Option<String>,
+    /// Size typed in the "Canvas" box.
+    pub canvas_size: (u32, u32),
 }
 
 fn first_opaque(palette: &Palette, prefer: [u8; 3]) -> u8 {
@@ -292,7 +292,7 @@ impl EditorState {
             violations: None,
             canvas_tex: None,
             thumbs: HashMap::new(),
-            last_message: None,
+            canvas_size: (0, 0),
         })
     }
 
@@ -350,6 +350,7 @@ impl EditorState {
     /// Selects a frame; the selection survives when the size matches.
     pub fn go_to(&mut self, dir: usize, frame: usize) {
         self.cancel_gesture();
+        self.canvas_size = (0, 0);
         self.cur = FrameRef {
             dir: dir.min(self.directions().saturating_sub(1)),
             frame: frame.min(self.frames().saturating_sub(1)),
@@ -994,9 +995,21 @@ impl EditorState {
         self.run(r).map(|_| ())
     }
 
-    pub fn resize_canvas(&mut self, w: u32, h: u32, anchor: Pt) -> Result<(), String> {
-        let r = self.session.resize_canvas(self.cur, w, h, anchor);
-        self.run(r)
+    /// Resizes the current frame (or every frame of the direction); the
+    /// bottom-centre stays in place, so the anchor does not move.
+    pub fn resize_canvas(&mut self, w: u32, h: u32) -> Result<(), String> {
+        let frames = self.frames_to_touch();
+        self.session.begin_group("Resize canvas");
+        let mut result = Ok(());
+        for f in frames {
+            if let Err(e) = self.session.resize_canvas(f, w, h, (0, 1)) {
+                result = Err(e.to_string());
+                break;
+            }
+        }
+        self.session.end_group();
+        self.after_change();
+        result
     }
 
     // ───────── DCC check ─────────

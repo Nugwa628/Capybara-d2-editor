@@ -130,6 +130,9 @@ fn cof_panel(ui: &mut Ui, state: &mut AppState) {
     let variants = c.variants.clone();
     let kind = crate::sprites::cof::folder(c.kind);
     ui.strong(format!("COF {token}{mode}{class}"));
+    if let Some(p) = &c.path {
+        ui.weak(p.as_str());
+    }
     ui.weak(format!("{kind}\\{token}, {} directions x {} frames", c.directions(), c.frames()));
     let mut variant = None;
     ui.horizontal(|ui| {
@@ -258,7 +261,9 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
     let painter = ui.painter_at(rect);
     match state.sprites.viewer.background {
         Background::Checker => paint_checker(&painter, rect, 8.0),
-        Background::Solid([r, g, b]) => painter.rect_filled(rect, 0.0, Color32::from_rgb(r, g, b)),
+        Background::Solid([r, g, b]) => {
+            painter.rect_filled(rect, 0.0, Color32::from_rgb(r, g, b));
+        }
     }
     if state.sprites.viewer.loaded.is_none() {
         painter.text(
@@ -275,15 +280,21 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
         state.sprites.viewer.pan += response.drag_delta();
     }
     if response.hovered() {
-        let scroll = ui.input(|i| i.raw_scroll_delta.y);
-        if scroll != 0.0 {
-            let v = &mut state.sprites.viewer;
-            v.zoom = if scroll > 0.0 {
+        // One zoom step per wheel notch (or Ctrl+wheel / pinch).
+        let (scroll, zoom) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+        let id = egui::Id::new("viewer_scroll_accum");
+        let mut acc: f32 = ui.ctx().data(|d| d.get_temp(id)).unwrap_or(0.0);
+        acc += scroll + (zoom - 1.0) * 400.0;
+        let v = &mut state.sprites.viewer;
+        while acc.abs() >= 40.0 {
+            v.zoom = if acc > 0.0 {
                 (v.zoom + 1).min(MAX_ZOOM)
             } else {
                 v.zoom.saturating_sub(1).max(1)
             };
+            acc -= 40.0 * acc.signum();
         }
+        ui.ctx().data_mut(|d| d.insert_temp(id, acc));
     }
     if response.double_clicked() {
         state.sprites.viewer.pan = Vec2::ZERO;

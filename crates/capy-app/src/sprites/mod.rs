@@ -94,6 +94,7 @@ pub struct SavePrompt {
 pub enum Focus {
     Viewer,
     Editor,
+    Converter,
 }
 
 /// The sprites list of the open profile.
@@ -143,6 +144,8 @@ pub struct SpritesState {
     pub quit_prompt: bool,
     pub quit_confirmed: bool,
     pub focus: Option<Focus>,
+    /// Scripts ask for the map editor's Sprite preview panel.
+    pub show_preview_panel: bool,
     /// The panel under the pointer (keyboard shortcuts go there).
     pub hot: Option<Focus>,
     /// Use the OS clipboard (off in scripted runs).
@@ -171,6 +174,7 @@ impl Default for SpritesState {
             quit_confirmed: false,
             focus: None,
             hot: None,
+            show_preview_panel: false,
             use_os_clipboard: true,
             animdata: None,
         }
@@ -253,11 +257,6 @@ pub struct TargetData {
 impl AppState {
     pub fn sprite_overlay(&self) -> Option<Arc<Overlay>> {
         self.session.as_ref().map(|s| s.overlay.clone())
-    }
-
-    /// The sprite names of the open profile.
-    pub fn sprite_names(&self) -> &[GamePath] {
-        self.session.as_ref().map_or(&[], |s| s.sprites.as_slice())
     }
 
     /// The raw palette sprites are matched against.

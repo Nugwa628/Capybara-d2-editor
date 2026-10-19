@@ -20,13 +20,37 @@
 //! Extra commands for screenshots and checks: `preview-paste x y mode` (show
 //! the floating preview without committing), `move-dialog from to [mode]`
 //! (open the layer-move dialog), `zoom <divisor>`, `assert-selection <n>`,
-//! `wait <frames>`.
+//! `wait <frames>`, `select-object <index>` (Objects tool selection),
+//! `sprite-preview` (show the Sprite preview panel).
+//!
+//! Sprites mode:
+//!
+//! ```text
+//! mode sprites                          # or: mode map
+//! sprite-open data\global\monsters\zm\cof\zmnuhth.cof
+//! sprite-dir 2
+//! sprite-frame 5
+//! sprite-play on                        # on | off
+//! sprite-import a.png b.png dirs 1 frames 2 dcc   # or one folder with sprite.json
+//! sprite-save-game data\global\items\invfoo.dc6  # the editor's sprite when open
+//! sprite-export-frames C:\out\frames
+//! sprite-edit                           # open the viewer's sprite in the editor
+//! sprite-tab converter                  # viewer | editor | converter
+//! paint-pencil 3 4 120                  # frame pixel, palette index (never 0)
+//! paint-gradient 0 0 20 20 ramp 140 bayer [radial]   # or: two 120 140 none|bayer|fs
+//! paint-outline auto outside 1          # or: paint-outline 37 inside 2
+//! paint-select 2 2 20 30                # rectangle selection
+//! paint-onion on
+//! paint-undo
+//! ```
+//!
+//! Paint commands open the viewer's sprite in the editor when none is open.
 
 use std::path::PathBuf;
 
 use capy_edit::{LayerRef, MoveMode, PasteMode};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Cmd {
     Open(String),
     SelectBox {
@@ -72,6 +96,96 @@ pub enum Cmd {
     Zoom(u32),
     AssertSelection(usize),
     Wait(u32),
+    SelectObject(usize),
+    SpritePreview,
+    /// `true` = Sprites mode.
+    Mode(bool),
+    SpriteOpen(String),
+    SpriteDir(usize),
+    SpriteFrame(usize),
+    SpritePlay(bool),
+    SpriteImport {
+        files: Vec<PathBuf>,
+        dirs: u32,
+        frames: u32,
+        dcc: bool,
+    },
+    SpriteSaveGame(String),
+    SpriteExportFrames(PathBuf),
+    SpriteEdit,
+    SpriteTab(String),
+    PaintPencil {
+        x: i32,
+        y: i32,
+        index: u8,
+    },
+    PaintGradient {
+        from: (f32, f32),
+        to: (f32, f32),
+        colors: GradientSpec,
+        dither: capy_paint::Dither,
+        radial: bool,
+    },
+    PaintOutline {
+        /// `None` = auto-darker.
+        color: Option<u8>,
+        inside: bool,
+        thickness: u32,
+    },
+    PaintSelect {
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+    },
+    PaintOnion(bool),
+    PaintUndo,
+}
+
+/// Colours of `paint-gradient`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GradientSpec {
+    /// The ramp of this palette index.
+    Ramp(u8),
+    Two(u8, u8),
+}
+
+fn parse_index(text: &str) -> Result<u8, String> {
+    let n = parse_u32(text, "index")?;
+    match u8::try_from(n) {
+        Ok(0) => Err("index 0 is the transparent key, not a colour".to_owned()),
+        Ok(i) => Ok(i),
+        Err(_) => Err(format!("index {n} is not 1..255")),
+    }
+}
+
+fn parse_dither(text: &str) -> Result<capy_paint::Dither, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "none" => Ok(capy_paint::Dither::None),
+        "bayer" | "bayer4" => Ok(capy_paint::Dither::Bayer4),
+        "fs" | "floyd" | "floyd-steinberg" => Ok(capy_paint::Dither::FloydSteinberg),
+        _ => Err(format!("dither {text:?} must be none, bayer or fs")),
+    }
+}
+
+fn parse_on(text: &str) -> Result<bool, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        other => parse_bool(other),
+    }
+}
+
+fn parse_f32(text: &str, what: &str) -> Result<f32, String> {
+    text.trim()
+        .parse::<f32>()
+        .ok()
+        .filter(|v| v.is_finite())
+        .ok_or_else(|| format!("{what}: {text:?} is not a number"))
+}
+
+fn parse_usize(text: &str, what: &str) -> Result<usize, String> {
+    parse_u32(text, what).map(|n| n as usize)
 }
 
 /// A command and the 1-based line it came from.
@@ -284,6 +398,167 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
             need(1, "<frames>")?;
             Cmd::Wait(parse_u32(args[0], "frames")?)
         }
+        "select-object" => {
+            need(1, "<object index>")?;
+            Cmd::SelectObject(parse_usize(args[0], "index")?)
+        }
+        "sprite-preview" => {
+            need(0, "no arguments")?;
+            Cmd::SpritePreview
+        }
+        "mode" => {
+            need(1, "sprites|map")?;
+            match args[0].to_ascii_lowercase().as_str() {
+                "sprites" | "sprite" => Cmd::Mode(true),
+                "map" => Cmd::Mode(false),
+                other => return Err(format!("mode {other:?} must be sprites or map")),
+            }
+        }
+        "sprite-open" => {
+            if rest.is_empty() {
+                return Err("sprite-open: expected <game path>".to_owned());
+            }
+            Cmd::SpriteOpen(rest.to_owned())
+        }
+        "sprite-dir" => {
+            need(1, "<direction>")?;
+            Cmd::SpriteDir(parse_usize(args[0], "direction")?)
+        }
+        "sprite-frame" => {
+            need(1, "<frame>")?;
+            Cmd::SpriteFrame(parse_usize(args[0], "frame")?)
+        }
+        "sprite-play" => {
+            need(1, "on|off")?;
+            Cmd::SpritePlay(parse_on(args[0])?)
+        }
+        "sprite-import" => {
+            let usage = "sprite-import: expected <image>... dirs N frames M dcc|dc6";
+            let pos = args
+                .iter()
+                .position(|a| a.eq_ignore_ascii_case("dirs"))
+                .ok_or(usage)?;
+            let (files, tail) = args.split_at(pos);
+            if files.is_empty() || tail.len() != 5 || !tail[2].eq_ignore_ascii_case("frames") {
+                return Err(usage.to_owned());
+            }
+            let dcc = match tail[4].to_ascii_lowercase().as_str() {
+                "dcc" => true,
+                "dc6" => false,
+                _ => return Err(usage.to_owned()),
+            };
+            Cmd::SpriteImport {
+                files: files.iter().map(PathBuf::from).collect(),
+                dirs: parse_u32(tail[1], "dirs")?,
+                frames: parse_u32(tail[3], "frames")?,
+                dcc,
+            }
+        }
+        "sprite-save-game" => {
+            need(1, "<game path>")?;
+            Cmd::SpriteSaveGame(args[0].to_owned())
+        }
+        "sprite-export-frames" => {
+            if rest.is_empty() {
+                return Err("sprite-export-frames: expected <folder>".to_owned());
+            }
+            Cmd::SpriteExportFrames(PathBuf::from(rest))
+        }
+        "sprite-edit" => {
+            need(0, "no arguments")?;
+            Cmd::SpriteEdit
+        }
+        "sprite-tab" => {
+            need(1, "viewer|editor|converter")?;
+            let t = args[0].to_ascii_lowercase();
+            if !["viewer", "editor", "converter"].contains(&t.as_str()) {
+                return Err(format!(
+                    "sprite-tab {t:?} must be viewer, editor or converter"
+                ));
+            }
+            Cmd::SpriteTab(t)
+        }
+        "paint-pencil" => {
+            need(3, "x y <index>")?;
+            Cmd::PaintPencil {
+                x: parse_i32(args[0], "x")?,
+                y: parse_i32(args[1], "y")?,
+                index: parse_index(args[2])?,
+            }
+        }
+        "paint-gradient" => {
+            let usage = "paint-gradient: expected x0 y0 x1 y1 ramp <index> <dither> [radial] \
+                         or x0 y0 x1 y1 two <a> <b> <dither> [radial]";
+            if args.len() < 7 {
+                return Err(usage.to_owned());
+            }
+            let from = (parse_f32(args[0], "x0")?, parse_f32(args[1], "y0")?);
+            let to = (parse_f32(args[2], "x1")?, parse_f32(args[3], "y1")?);
+            let (colors, next) = match args[4].to_ascii_lowercase().as_str() {
+                "ramp" => (GradientSpec::Ramp(parse_index(args[5])?), 6),
+                "two" if args.len() >= 8 => (
+                    GradientSpec::Two(parse_index(args[5])?, parse_index(args[6])?),
+                    7,
+                ),
+                _ => return Err(usage.to_owned()),
+            };
+            let dither = parse_dither(args.get(next).ok_or(usage)?)?;
+            let radial = match args.get(next + 1) {
+                None => false,
+                Some(s) if s.eq_ignore_ascii_case("radial") => true,
+                Some(s) if s.eq_ignore_ascii_case("linear") => false,
+                Some(_) => return Err(usage.to_owned()),
+            };
+            if args.len() > next + 2 {
+                return Err(usage.to_owned());
+            }
+            Cmd::PaintGradient {
+                from,
+                to,
+                colors,
+                dither,
+                radial,
+            }
+        }
+        "paint-outline" => {
+            need(3, "auto|<index> outside|inside <thickness>")?;
+            let color = if args[0].eq_ignore_ascii_case("auto") {
+                None
+            } else {
+                Some(parse_index(args[0])?)
+            };
+            let inside = match args[1].to_ascii_lowercase().as_str() {
+                "inside" => true,
+                "outside" => false,
+                other => return Err(format!("side {other:?} must be outside or inside")),
+            };
+            let thickness = parse_u32(args[2], "thickness")?;
+            if !(1..=8).contains(&thickness) {
+                return Err("thickness must be 1..8".to_owned());
+            }
+            Cmd::PaintOutline {
+                color,
+                inside,
+                thickness,
+            }
+        }
+        "paint-select" => {
+            need(4, "x0 y0 x1 y1")?;
+            Cmd::PaintSelect {
+                x0: parse_i32(args[0], "x0")?,
+                y0: parse_i32(args[1], "y0")?,
+                x1: parse_i32(args[2], "x1")?,
+                y1: parse_i32(args[3], "y1")?,
+            }
+        }
+        "paint-onion" => {
+            need(1, "on|off")?;
+            Cmd::PaintOnion(parse_on(args[0])?)
+        }
+        "paint-undo" => {
+            need(0, "no arguments")?;
+            Cmd::PaintUndo
+        }
         other => return Err(format!("unknown command {other:?}")),
     };
     Ok(Some(cmd))
@@ -449,6 +724,106 @@ wait 30
             "assert-dirty maybe",
             "screenshot",
             "zoom fast",
+        ] {
+            assert!(parse_line(bad).is_err(), "{bad:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn sprite_commands_parse() {
+        let text = r"
+mode sprites
+sprite-open data\global\monsters\zm\cof\zmnuhth.cof
+sprite-dir 2
+sprite-frame 5
+sprite-import a.png b.png dirs 1 frames 2 dcc
+sprite-import out dirs 8 frames 0 dc6
+sprite-save-game data\global\items\inv.dc6
+sprite-export-frames C:\out dir
+paint-pencil 3 4 120
+paint-gradient 0 0 20 20 ramp 140 bayer
+paint-gradient 0 0 20 20 two 1 2 fs radial
+paint-outline auto outside 1
+paint-outline 37 inside 2
+paint-undo
+mode map
+";
+        let lines = parse_script(text).expect("parses");
+        let cmds: Vec<&Cmd> = lines.iter().map(|(_, c)| c).collect();
+        assert_eq!(cmds[0], &Cmd::Mode(true));
+        assert_eq!(cmds[2], &Cmd::SpriteDir(2));
+        assert_eq!(
+            cmds[4],
+            &Cmd::SpriteImport {
+                files: vec![PathBuf::from("a.png"), PathBuf::from("b.png")],
+                dirs: 1,
+                frames: 2,
+                dcc: true
+            }
+        );
+        assert!(matches!(
+            cmds[5],
+            Cmd::SpriteImport {
+                dcc: false,
+                dirs: 8,
+                ..
+            }
+        ));
+        assert_eq!(cmds[7], &Cmd::SpriteExportFrames(PathBuf::from(r"C:\out dir")));
+        assert_eq!(
+            cmds[8],
+            &Cmd::PaintPencil {
+                x: 3,
+                y: 4,
+                index: 120
+            }
+        );
+        assert!(matches!(
+            cmds[9],
+            Cmd::PaintGradient {
+                colors: GradientSpec::Ramp(140),
+                dither: capy_paint::Dither::Bayer4,
+                radial: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            cmds[10],
+            Cmd::PaintGradient {
+                colors: GradientSpec::Two(1, 2),
+                radial: true,
+                ..
+            }
+        ));
+        assert_eq!(
+            cmds[11],
+            &Cmd::PaintOutline {
+                color: None,
+                inside: false,
+                thickness: 1
+            }
+        );
+        assert_eq!(
+            cmds[12],
+            &Cmd::PaintOutline {
+                color: Some(37),
+                inside: true,
+                thickness: 2
+            }
+        );
+        assert_eq!(cmds[13], &Cmd::PaintUndo);
+        assert_eq!(cmds[14], &Cmd::Mode(false));
+        for bad in [
+            "mode paint",
+            "sprite-import a.png dc6",
+            "sprite-import dirs 1 frames 1 dcc",
+            "sprite-import a.png dirs 1 frames 1 png",
+            "paint-pencil 1 2 0",
+            "paint-pencil 1 2 300",
+            "paint-gradient 0 0 1 1 ramp 5",
+            "paint-gradient 0 0 1 1 ramp 5 sparkle",
+            "paint-outline auto sideways 1",
+            "paint-outline auto outside 9",
         ] {
             assert!(parse_line(bad).is_err(), "{bad:?} must be rejected");
         }

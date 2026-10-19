@@ -257,6 +257,7 @@ mod tests {
             frame_count: None,
             frame_delta: None,
             source: "obj.txt",
+            colormap: None,
         };
         assert_eq!(
             cof_path(&info).map(|p| p.as_str().to_owned()),

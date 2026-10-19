@@ -13,7 +13,16 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use capy_edit::{CellRect, CellValue, SelectOp};
 use d2_assets::GamePath;
 
+use capy_paint::{GradientShape, OutlineSide};
+use capy_sprite::SpriteFormat;
+
+use crate::config::AppMode;
 use crate::doc::RenderState;
+use crate::edit::script::GradientSpec;
+use crate::sprites::convert::Layout;
+use crate::sprites::dialog::Purpose;
+use crate::sprites::editor::{EditorState, GradientMode, Mods, PaintTool};
+use crate::sprites::{Focus, Target};
 use crate::edit::ops::EditOp;
 use crate::edit::paste::PasteSession;
 use crate::edit::script::{Cmd, Line, parse_script};
@@ -142,6 +151,7 @@ pub fn run_script(
     if !runner.started {
         runner.started = true;
         state.edit.use_os_clipboard = false; // never disturb the user's clipboard
+        state.sprites.use_os_clipboard = false;
     }
 
     // A command that is still settling.
@@ -201,6 +211,9 @@ fn step(state: &mut AppState, cmd: &Cmd) -> Step {
     }
     if let Cmd::Wait(n) = cmd {
         return Step::Wait(Wait::Frames(*n));
+    }
+    if let Some(step) = sprite_step(state, cmd) {
+        return step;
     }
     let Some(index) = state.active else {
         return Step::Fail("no map is open (use `open <game path>` first)".to_owned());
@@ -344,6 +357,35 @@ fn step(state: &mut AppState, cmd: &Cmd) -> Step {
             });
             Step::Next
         }
+        Cmd::SelectObject(i) => {
+            let doc = &mut state.docs[index];
+            if *i >= doc.ds1.objects.len() {
+                return Step::Fail(format!(
+                    "select-object {i}: the map has {} objects",
+                    doc.ds1.objects.len()
+                ));
+            }
+            doc.object_sel = vec![*i];
+            Step::Next
+        }
+        // Handled by `sprite_step`.
+        Cmd::SpritePreview
+        | Cmd::Mode(_)
+        | Cmd::SpriteOpen(_)
+        | Cmd::SpriteDir(_)
+        | Cmd::SpriteFrame(_)
+        | Cmd::SpritePlay(_)
+        | Cmd::SpriteImport { .. }
+        | Cmd::SpriteSaveGame(_)
+        | Cmd::SpriteExportFrames(_)
+        | Cmd::SpriteEdit
+        | Cmd::SpriteTab(_)
+        | Cmd::PaintPencil { .. }
+        | Cmd::PaintGradient { .. }
+        | Cmd::PaintOutline { .. }
+        | Cmd::PaintSelect { .. }
+        | Cmd::PaintOnion(_)
+        | Cmd::PaintUndo => Step::Next,
         Cmd::Zoom(divisor) => {
             let doc = &mut state.docs[index];
             if !doc.fitted {
@@ -358,6 +400,203 @@ fn step(state: &mut AppState, cmd: &Cmd) -> Step {
             }
         }
     }
+}
+
+/// The editor, opened from the viewer's sprite when there is none.
+fn script_editor(state: &mut AppState) -> Result<&mut EditorState, String> {
+    if state.sprites.editor.is_none() {
+        state.edit_viewer_sprite(None)?;
+    }
+    state
+        .sprites
+        .editor
+        .as_mut()
+        .ok_or_else(|| "no sprite is open in the editor".to_owned())
+}
+
+/// Where sprite saves and exports come from: the editor when it is open.
+fn script_target(state: &AppState) -> Target {
+    if state.sprites.editor.is_some() {
+        Target::Editor
+    } else {
+        Target::Viewer
+    }
+}
+
+/// Runs a Sprites-mode command; `None` for every other command.
+fn sprite_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
+    let result: Result<(), String> = match cmd {
+        Cmd::Mode(sprites) => {
+            state.config.mode = if *sprites { AppMode::Sprites } else { AppMode::Map };
+            Ok(())
+        }
+        Cmd::SpritePreview => {
+            state.sprites.show_preview_panel = true;
+            Ok(())
+        }
+        Cmd::SpriteOpen(path) => state.open_sprite(&GamePath::new(path)),
+        Cmd::SpriteDir(d) => {
+            let dirs = state.sprites.viewer.directions();
+            if *d >= dirs {
+                Err(format!("sprite-dir {d}: the sprite has {dirs} directions"))
+            } else {
+                state.sprites.viewer.set_dir(*d);
+                if let Some(e) = state.sprites.editor.as_mut() {
+                    let frame = e.cur.frame;
+                    e.go_to(*d, frame);
+                }
+                Ok(())
+            }
+        }
+        Cmd::SpriteFrame(f) => {
+            let frames = state.sprites.viewer.frames();
+            if *f >= frames {
+                Err(format!("sprite-frame {f}: the sprite has {frames} frames"))
+            } else {
+                state.sprites.viewer.playing = false;
+                state.sprites.viewer.set_frame(*f);
+                if let Some(e) = state.sprites.editor.as_mut() {
+                    let dir = e.cur.dir;
+                    e.go_to(dir, *f);
+                }
+                Ok(())
+            }
+        }
+        Cmd::SpritePlay(on) => {
+            state.sprites.viewer.playing = *on;
+            Ok(())
+        }
+        Cmd::SpriteImport {
+            files,
+            dirs,
+            frames,
+            dcc,
+        } => {
+            let s = &mut state.sprites.converter.import;
+            s.layout = Layout::Frames;
+            s.directions = (*dirs).max(1);
+            s.frames = *frames;
+            s.format = if *dcc { SpriteFormat::Dcc } else { SpriteFormat::Dc6 };
+            s.files = match files.as_slice() {
+                // A folder: its images in name order (sprite.json gives offsets).
+                [dir] if dir.is_dir() => list_images(dir),
+                many => many.to_vec(),
+            };
+            // The import replaces what the editor showed.
+            state.sprites.editor = None;
+            state.sprite_import()
+        }
+        Cmd::SpriteSaveGame(path) => {
+            let target = script_target(state);
+            state.sprite_save_game(target, path).map(|_| ())
+        }
+        Cmd::SpriteExportFrames(dir) => {
+            let target = script_target(state);
+            state
+                .sprite_export(Purpose::ExportFrames, dir, target)
+                .map(|_| ())
+        }
+        Cmd::SpriteEdit => {
+            let r = state.edit_viewer_sprite(None);
+            if state.sprites.pending_editor.is_some() {
+                state.answer_pending_editor(true);
+            }
+            r
+        }
+        Cmd::SpriteTab(t) => {
+            state.sprites.focus = Some(match t.as_str() {
+                "editor" => Focus::Editor,
+                "converter" => Focus::Converter,
+                _ => Focus::Viewer,
+            });
+            Ok(())
+        }
+        Cmd::PaintPencil { x, y, index } => script_editor(state).and_then(|e| {
+            e.tool = PaintTool::Pencil;
+            e.set_primary(*index);
+            let p = (*x as f32 + 0.5, *y as f32 + 0.5);
+            e.press(p, false, Mods::default())?;
+            e.release(p)
+        }),
+        Cmd::PaintGradient {
+            from,
+            to,
+            colors,
+            dither,
+            radial,
+        } => script_editor(state).and_then(|e| {
+            e.gradient.dither = *dither;
+            e.gradient.shape = if *radial {
+                GradientShape::Radial
+            } else {
+                GradientShape::Linear
+            };
+            match colors {
+                GradientSpec::Ramp(i) => {
+                    e.gradient.mode = GradientMode::Ramp;
+                    e.set_primary(*i);
+                }
+                GradientSpec::Two(a, b) => {
+                    e.gradient.mode = GradientMode::Two;
+                    e.set_primary(*a);
+                    e.set_secondary(*b);
+                }
+            }
+            e.apply_gradient(*from, *to)
+        }),
+        Cmd::PaintOutline {
+            color,
+            inside,
+            thickness,
+        } => script_editor(state).and_then(|e| {
+            e.outline.side = if *inside {
+                OutlineSide::Inside
+            } else {
+                OutlineSide::Outside
+            };
+            e.outline.thickness = *thickness;
+            e.outline.auto = color.is_none();
+            e.apply_outline(*color)
+        }),
+        Cmd::PaintSelect { x0, y0, x1, y1 } => script_editor(state).and_then(|e| {
+            e.tool = PaintTool::SelectRect;
+            e.press((*x0 as f32, *y0 as f32), false, Mods::default())?;
+            e.release((*x1 as f32, *y1 as f32))
+        }),
+        Cmd::PaintOnion(on) => script_editor(state).map(|e| e.onion = *on),
+        Cmd::PaintUndo => script_editor(state).and_then(|e| {
+            if e.undo() {
+                Ok(())
+            } else {
+                Err("nothing to undo".to_owned())
+            }
+        }),
+        _ => return None,
+    };
+    Some(match result {
+        Ok(()) => Step::Next,
+        Err(e) => Step::Fail(e),
+    })
+}
+
+/// The images directly inside `dir`, in natural name order.
+fn list_images(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.is_file()
+                        && p.extension()
+                            .and_then(|x| x.to_str())
+                            .and_then(capy_sprite::ImageKind::from_extension)
+                            .is_some()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort_by(|a, b| crate::sprites::natural_cmp(&a.to_string_lossy(), &b.to_string_lossy()));
+    out
 }
 
 fn done_or_fail(state: &AppState, ok: bool, what: &str) -> Step {
@@ -389,13 +628,15 @@ fn poll_shot(commands: &mut Commands, state: &mut AppState, mut shot: Shot) -> S
         }
         return ShotPoll::Waiting(shot);
     }
-    let drawn = state.active_doc().is_some_and(|d| {
-        d.fitted
-            && matches!(
-                d.render.state,
-                RenderState::Ready | RenderState::Failed(_) | RenderState::ProfileClosed
-            )
-    });
+    // The Sprites mode draws through egui only: it is ready once settled.
+    let drawn = state.config.mode == AppMode::Sprites
+        || state.active_doc().is_some_and(|d| {
+            d.fitted
+                && matches!(
+                    d.render.state,
+                    RenderState::Ready | RenderState::Failed(_) | RenderState::ProfileClosed
+                )
+        });
     let settled = shot.started.elapsed().as_secs_f32() >= SETTLE_SECS && shot.frames >= 30;
     if drawn && settled {
         if let Some(dir) = shot.file.parent() {

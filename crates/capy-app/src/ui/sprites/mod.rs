@@ -46,6 +46,7 @@ pub fn show(ui: &mut Ui, panel: SpritesPanel, state: &mut AppState) {
         SpritesPanel::Viewer => viewer::show(ui, state),
         SpritesPanel::Editor => editor::show(ui, state),
         SpritesPanel::Converter => converter::show(ui, state),
+        SpritesPanel::Log => super::log::show(ui, state),
     }
 }
 

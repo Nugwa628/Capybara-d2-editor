@@ -5,7 +5,7 @@
 //! A layer whose sprite cannot be found or decoded is listed as missing with
 //! the reason; it never fails the whole COF.
 
-use capy_sprite::cof::COMPONENT_CODES;
+use d2_formats::cof::COMPONENT_CODES;
 use capy_sprite::{CofLayerSprite, RgbaFrame, Sprite, SpriteFormat, UnitKind, compose_cof_frame};
 use d2_assets::{GamePath, Overlay};
 use d2_formats::cof::Cof;

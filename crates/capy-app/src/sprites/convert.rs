@@ -129,7 +129,7 @@ pub fn frame_layout(count: usize, directions: u32, frames: u32) -> Result<(usize
         return Err("pick at least one image".to_owned());
     }
     let per = if frames == 0 {
-        if count % dirs != 0 {
+        if !count.is_multiple_of(dirs) {
             return Err(format!("{count} images cannot be split into {dirs} directions"));
         }
         count / dirs
@@ -561,7 +561,7 @@ mod tests {
 
     fn rgba_png(w: u32, h: u32, color: [u8; 4]) -> Vec<u8> {
         let mut f = capy_sprite::RgbaFrame::new(w, h, 0, 0);
-        for px in f.pixels.chunks_exact_mut(4) {
+        for px in f.pixels.as_chunks_mut::<4>().0 {
             px.copy_from_slice(&color);
         }
         export_png(&f).expect("png")
