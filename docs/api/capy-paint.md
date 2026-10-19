@@ -18,6 +18,7 @@ pub mod session;  pub use session::{PaintSession, FrameRef, Paint, Brush, BrushS
 pub mod tools;    // methods on PaintSession (below)
 pub mod check;    pub use check::{dcc_cell_violations, reduce_dcc_cells, CellViolation};
 pub mod export;   pub use export::{palette_gpl, palette_act, palette_jasc, indexed_png, animated_gif, onion_composite};
+pub mod remap;    // palette conversion planner (P7), used as capy_paint::remap::*
 
 #[derive(Debug, thiserror::Error)] #[non_exhaustive]
 pub enum PaintError {
@@ -180,8 +181,13 @@ pub enum TargetSet {
     #[default] All,
     /// Skip ACT_SPECIFIC: the result looks the same under every act palette.
     SharedActColors,
-    /// Only these target indices (0 is ignored).
+    /// Only these target indices (0 is ignored). With no usable index
+    /// (empty, or only 0) the matcher falls back to All.
     Only(Vec<u8>),
+}
+impl TargetSet {
+    /// The set actually used: ascending, deduplicated, never empty, never 0.
+    pub fn effective(&self) -> Vec<u8>;
 }
 
 /// Applied to the source colours before matching; all zero = unchanged.
@@ -248,3 +254,31 @@ pub fn candidates(src: &Palette, dst: &Palette, source: u8, settings: &RemapSett
 /// Maps the pixels of an image (alpha unchanged), for previews.
 pub fn apply_to_image(img: &IndexedImage, table: &[u8; 256]) -> IndexedImage;
 ```
+
+Implementation notes (as built):
+
+- **Order per source index `s` (1..=255, used or not):** override (`t != 0`,
+  wins even outside the allowed set) > kept (`keep_exact`, `s` allowed and
+  `src[s] == dst[s]` on the raw colours, so `Adjust` never un-keeps an
+  identical colour) > nearest allowed target (ties: lowest index).
+- **Colour maths:** sRGB -> linear -> OkLab (Ottosson's matrices; cube roots
+  by the crate's platform-exact Newton root), both palettes prepared once per
+  call; a 255-index plan takes ~0.1 ms in a debug build.
+  `lightness_weight` multiplies the L difference (OkLab only; negative or
+  non-finite = 1.0). Redmean/Rgb compare sRGB values (fractional after an
+  adjustment).
+- **Adjust** (OkLab, source only): `L' = 0.5 + (L - 0.5)(1 + contrast) +
+  brightness`, clamped to 0..=1; hue rotates (a, b); chroma scales by
+  `1 + saturation`. A result outside sRGB keeps L and hue and loses chroma
+  until it fits. Brightness/contrast/saturation are clamped to -1..=1,
+  non-finite values count as 0.
+- **`error`** is always the unweighted OkLab distance x 100 between the
+  unadjusted source and the chosen target, for every metric and setting.
+- **`candidates`** ranks all allowed targets by the matching distance (with
+  adjust and weight; overrides and `keep_exact` play no part), reports the
+  same `error`, and returns nothing for source 0 or `k == 0`. The plan's
+  `Nearest` choice is always `candidates(.., 1)[0]`.
+- **`entries`** ties on error are ordered by source index; `mean_error` and
+  `worst_error` are 0 when no index is used.
+- **`apply_to_image`** maps every pixel through the table, transparent ones
+  included (index 0 stays 0).

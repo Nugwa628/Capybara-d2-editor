@@ -40,6 +40,7 @@ pub mod error;
 pub mod export;
 pub mod mask;
 pub mod ramps;
+pub mod remap;
 pub mod session;
 pub mod tools;
 
