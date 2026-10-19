@@ -114,6 +114,7 @@ Status: **P0 done** (2026-10-19; all acceptance tests pass, full corpus). In par
 - Headless exit code is 0 even on failure; success is detected from stdout and the PNG.
 
 ### Renderer vs oracle (2026-10-19, measured)
+- **User visual check passed (2026-10-19):** the 5 Median XL renders (scosglen town, uldy tri_town4, talrasha, heaven charismatic_base, dunc bonehexerx) look correct.
 - `capy-render` matches all 18 oracle maps: canvas sizes equal, best shift (0,0), `within_tolerance(16)` 0.9915–1.0000 with objects masked; the five object-free maps are pixel-exact. All 8 Median XL test maps render with 0 missing tiles (`testdata\private\mxl-renders\`).
 - Rules measured against the oracle (they refine the first draft of `docs/api/capy-render.md`):
   - Pass 1 is a single per-cell loop: lower walls, floors, shadows for each cell (`preview.c:3688`). Within a cell, layers of one family sort by `prop1` (orientation 10 = 255).
