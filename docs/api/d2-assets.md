@@ -202,7 +202,8 @@ impl KnownNames {
 }
 
 // ───────────── tables.rs (wave 2) ─────────────
-/// `data\global\excel\<stem>.bin` (decoded with `version`) if present in the
-/// overlay, otherwise `<stem>.txt` — the retail game's own preference.
+/// 1.13c profiles read `<stem>.bin` first (the 1.13c loader's default), then
+/// `<stem>.txt`; 1.14d profiles read `.txt` first, then `.bin`. Levels from
+/// .bin needs both levels.bin and leveldefs.bin (`excel::decode_levels_bin`).
 pub fn load_excel(overlay: &Overlay, kind: d2_formats::excel::ExcelTableKind, version: GameVersion) -> Result<d2_formats::txt::TxtTable>;
 ```

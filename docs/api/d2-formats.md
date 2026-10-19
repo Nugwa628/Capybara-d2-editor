@@ -149,15 +149,17 @@ pub struct Ds1 {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Ds1Report { pub missing_bytes: usize, pub trailing_bytes: usize, pub warnings: Vec<String> }
 
+/// Zero-padding past EOF is tolerated only in the object/group/NPC blocks, up to this many bytes.
+pub const MAX_MISSING_BYTES: usize = 256;
 impl Ds1 {
-    pub fn parse(bytes: &[u8]) -> Result<Ds1>;
+    pub fn parse(bytes: &[u8]) -> Result<Ds1>;   // header and cell layers must be complete
     pub fn parse_with_report(bytes: &[u8]) -> Result<(Ds1, Ds1Report)>;
     /// Writes `self.version`'s layout. parse→to_bytes is byte-identical.
     pub fn to_bytes(&self) -> Result<Vec<u8>>;
     pub fn new(width: u32, height: u32, act: i32) -> Ds1; // v18, 1 wall, 1 floor, no tag
     pub fn effective_act(&self) -> u8;                    // act clamped to 0..=4
     /// Effective orientation (DIR_LOOKUP applied when version < 7).
-    pub fn orientation(&self, wall: usize, x: u32, y: u32) -> Option<u8>;
+    pub fn orientation(&self, wall: usize, x: u32, y: u32) -> Option<u8>; // None for v<7 raw values >= 25
     pub fn workspace_entries(&self) -> impl Iterator<Item = &[u8]>; // files starting with WORKSPACE_PREFIX
     pub fn tileset_refs(&self) -> impl Iterator<Item = &[u8]>;      // the other files
     pub fn add_wall_layer(&mut self) -> Result<usize>;  // NotRepresentable past MAX or for v<4
@@ -198,13 +200,22 @@ impl ExcelTableKind {
     pub fn file_stem(self) -> &'static str;       // "lvltypes", ...
     pub fn all() -> &'static [ExcelTableKind];
 }
-pub fn record_size(kind: ExcelTableKind, version: ExcelVersion) -> usize;
+pub fn record_size(kind: ExcelTableKind, version: ExcelVersion) -> usize; // identical for 1.13c and 1.14d
+/// Levels is split across two files: levels.bin (0x220) and leveldefs.bin
+/// (0x9C, no .txt of its own; holds DrlgType, LevelType, sizes, Vis, Warp...).
+pub fn decode_levels_bin(version: ExcelVersion, levels_bin: &[u8], leveldefs_bin: &[u8]) -> Result<TxtTable>;
+pub fn leveldefs_record_size(version: ExcelVersion) -> usize;
 /// `.bin` = u32 record count + fixed-size records. Output uses the `.txt`
 /// column names; columns the record does not store are omitted. A layout may
 /// decode only a subset of columns (documented per table).
 pub fn decode_bin(kind: ExcelTableKind, version: ExcelVersion, bytes: &[u8]) -> Result<TxtTable>;
-/// The version whose record size fits the file, if exactly one does.
+/// V113c for any file whose size fits (1.13c and 1.14d layouts are identical,
+/// so V114d is never returned); None otherwise.
 pub fn detect_version(kind: ExcelTableKind, bytes: &[u8]) -> Option<ExcelVersion>;
+// Not stored in .bin, so absent from decoded tables: Name (LvlTypes, LvlPrest,
+// LvlWarp), Beta (LvlTypes, LvlPrest, LvlWarp, Levels), Objects
+// "description - not loaded", Flicker, ShrineFunction. ObjPreset (Median XL
+// only) decodes to Act, Id, ObjectsId: table[act*150 + id].
 
 // ───────────── tables.rs ─────────────
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -241,13 +252,15 @@ pub struct LvlPrest {
     pub expansion: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// `name` is LevelName (the only name a .bin stores), falling back to Name.
+/// `LvlType.act` and `Level.act` are both 0-based (Act 1 = 0). Names are empty for decoded bins.
 pub struct Level { pub row: usize, pub id: u32, pub name: String, pub act: u8, pub pal: u8, pub level_type: u32, pub drlg_type: u32 }
 pub fn lvl_types(table: &TxtTable) -> Result<Vec<LvlType>>;
 pub fn lvl_prests(table: &TxtTable) -> Result<Vec<LvlPrest>>;
 pub fn levels(table: &TxtTable) -> Result<Vec<Level>>;
 impl LvlPrest {
     /// DT1 files of `lvl_type` selected by `dt1_mask` (bit i = File(i+1)), in slot order.
-    pub fn dt1_files<'a>(&self, lvl_type: &'a LvlType) -> impl Iterator<Item = &'a str>;
+    pub fn dt1_files<'a>(&self, lvl_type: &'a LvlType) -> impl Iterator<Item = &'a str> + use<'a>;
 }
 
 // ───────────── tbl.rs ─────────────
