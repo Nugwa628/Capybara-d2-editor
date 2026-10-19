@@ -751,6 +751,8 @@ fn parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec
 #[derive(Default)]
 struct FileStats {
     frames: usize,
+    pixels: u64,
+    max_box: (u32, u32),
     directions: usize,
     problems: Vec<String>,
 }
@@ -782,6 +784,9 @@ fn corpus_dcc_files_decode() {
                     let b = dir.bbox;
                     for (i, f) in dir.frames.iter().enumerate() {
                         stats.frames += 1;
+                        stats.pixels += u64::from(f.width) * u64::from(f.height);
+                        stats.max_box =
+                            (stats.max_box.0.max(b.width), stats.max_box.1.max(b.height));
                         let inside = f.offset_x >= b.x
                             && f.offset_y >= b.y
                             && i64::from(f.offset_x) + i64::from(f.width)
@@ -807,6 +812,10 @@ fn corpus_dcc_files_decode() {
     let files = results.len();
     let frames: usize = results.iter().map(|r| r.frames).sum();
     let directions: usize = results.iter().map(|r| r.directions).sum();
+    let max_pixels = results.iter().map(|r| r.pixels).max().unwrap_or(0);
+    let max_w = results.iter().map(|r| r.max_box.0).max().unwrap_or(0);
+    let max_h = results.iter().map(|r| r.max_box.1).max().unwrap_or(0);
+    println!("largest file: {max_pixels} decoded pixels; largest direction box {max_w}x{max_h}");
     let problems: Vec<&String> = results.iter().flat_map(|r| &r.problems).collect();
     println!(
         "dcc corpus: {files} files, {directions} directions, {frames} frames, {} problems",
@@ -854,4 +863,157 @@ fn corpus_dcc_mutations_never_panic() {
         let _ = Dcc::parse(&bytes[..cut]);
     }
     println!("mutated corpus files: {decoded} still decoded");
+}
+
+// ---------------------------------------------------------------------------
+// Cross-check against the reference editor's stage 2 (dcc.c:1064-1249), which
+// keeps one direction-sized bitmap alive across frames and copies "unchanged"
+// cells between positions with alpha blending (transparent source pixels do
+// not overwrite). Our decoder keeps pixels per buffer cell instead; this
+// re-implements the reference model from the same stage-1 output and compares.
+
+/// Frames of `dir` as the reference stage 2 would produce them, cropped to
+/// each frame box.
+fn reference_stage2(dir: &mut Direction<'_>, entries: &[Entry]) -> Vec<Vec<u8>> {
+    let (dw, dh) = (dir.width as usize, dir.height as usize);
+    let mut bmp = vec![0u8; dw * dh];
+    // last (w, h, x0, y0) per buffer cell
+    let mut last: Vec<Option<(usize, usize, usize, usize)>> = vec![None; dir.buf_cells];
+    let mut cursor = 0usize;
+    let mut out = Vec::new();
+    for f in 0..dir.headers.len() {
+        let h = &dir.headers[f];
+        let grid = &dir.grids[f];
+        let columns = grid.cols.len();
+        let mut frm = vec![0u8; dw * dh];
+        for (cy, &(ry, ch)) in grid.rows.iter().enumerate() {
+            for (cx, &(rx, cw)) in grid.cols.iter().enumerate() {
+                let slot = dir.buffer_slot(f, cx, cy).unwrap();
+                let (x0, y0) = (rx as usize, ry as usize);
+                let (cw, ch) = (cw as usize, ch as usize);
+                let hit = entries
+                    .get(cursor)
+                    .filter(|e| e.frame == f as u32 && e.cell == (cx + cy * columns) as u32);
+                if let Some(e) = hit {
+                    cursor += 1;
+                    let val = e.val;
+                    let mut px = vec![0u8; cw * ch];
+                    if val[0] == val[1] {
+                        px.fill(val[0]);
+                    } else {
+                        let nb = if val[1] == val[2] { 1 } else { 2 };
+                        for p in &mut px {
+                            *p = val[dir.pcd.read(nb).unwrap() as usize];
+                        }
+                    }
+                    for y in 0..ch {
+                        for x in 0..cw {
+                            let v = px[y * cw + x];
+                            bmp[(y0 + y) * dw + x0 + x] = v;
+                            if v != 0 {
+                                frm[(y0 + y) * dw + x0 + x] = v;
+                            }
+                        }
+                    }
+                } else if let Some(Some((lw, lh, lx, ly))) = last.get(slot).copied()
+                    && lw == cw
+                    && lh == ch
+                {
+                    // copy the old cell to its new position, blended
+                    let src: Vec<u8> = (0..ch)
+                        .flat_map(|y| (0..cw).map(move |x| (x, y)))
+                        .map(|(x, y)| bmp[(ly + y) * dw + lx + x])
+                        .collect();
+                    for y in 0..ch {
+                        for x in 0..cw {
+                            let v = src[y * cw + x];
+                            if v != 0 {
+                                bmp[(y0 + y) * dw + x0 + x] = v;
+                            }
+                        }
+                    }
+                    for y in 0..ch {
+                        for x in 0..cw {
+                            let v = bmp[(y0 + y) * dw + x0 + x];
+                            if v != 0 {
+                                frm[(y0 + y) * dw + x0 + x] = v;
+                            }
+                        }
+                    }
+                } else {
+                    for y in 0..ch {
+                        for x in 0..cw {
+                            bmp[(y0 + y) * dw + x0 + x] = 0;
+                        }
+                    }
+                }
+                last[slot] = Some((cw, ch, x0, y0));
+            }
+        }
+        // crop to the frame box
+        let (fx, fy) = ((h.xmin - dir.x0) as usize, (h.ymin - dir.y0) as usize);
+        let (fw, fh) = (h.width as usize, h.height as usize);
+        let mut crop = Vec::with_capacity(fw * fh);
+        for y in 0..fh {
+            for x in 0..fw {
+                crop.push(frm[(fy + y) * dw + fx + x]);
+            }
+        }
+        out.push(crop);
+    }
+    out
+}
+
+#[test]
+fn corpus_dcc_matches_reference_stage2_model() {
+    let mut paths = Vec::new();
+    for profile in ["vanilla", "mxl"] {
+        let Some(root) = testutil::extracted(profile) else {
+            println!("skipped: extracted/{profile} missing");
+            continue;
+        };
+        let all = testutil::find_files(&root, "dcc");
+        paths.extend(all.into_iter().step_by(50));
+    }
+    let results = parallel(&paths, |path| {
+        let bytes = std::fs::read(path).unwrap();
+        let Ok(dcc) = Dcc::parse(&bytes) else {
+            return (0usize, 0usize, 0usize);
+        };
+        let dir_count = usize::from(bytes[2]);
+        let offsets: Vec<usize> = (0..dir_count)
+            .map(|i| u32_at(&bytes, 15 + 4 * i).unwrap() as usize)
+            .collect();
+        let (mut frames, mut differing, mut dirs_differing) = (0usize, 0usize, 0usize);
+        for (d, &start) in offsets.iter().enumerate() {
+            let end = offsets.get(d + 1).copied().unwrap_or(bytes.len());
+            let mut budget = MAX_TOTAL_PIXELS;
+            let mut dir = read_direction(&bytes[start..end], dcc.frames_per_direction, &mut budget)
+                .unwrap()
+                .unwrap();
+            let entries = stage1(&mut dir).unwrap();
+            let reference = reference_stage2(&mut dir, &entries);
+            let mut any = false;
+            for (mine, theirs) in dcc.directions[d].frames.iter().zip(&reference) {
+                frames += 1;
+                if &mine.pixels != theirs {
+                    differing += 1;
+                    any = true;
+                }
+            }
+            dirs_differing += usize::from(any);
+        }
+        (frames, differing, dirs_differing)
+    });
+    let frames: usize = results.iter().map(|r| r.0).sum();
+    let differing: usize = results.iter().map(|r| r.1).sum();
+    let dirs: usize = results.iter().map(|r| r.2).sum();
+    println!(
+        "stage-2 cross-check: {} files sampled, {frames} frames, {differing} differ from the \
+         reference model ({dirs} directions)",
+        paths.len()
+    );
+    // The two models agree except where the reference's shared bitmap keeps
+    // stale pixels (a handful per frame); that is rare.
+    assert!(differing * 100 <= frames.max(1), "{differing} of {frames}");
 }

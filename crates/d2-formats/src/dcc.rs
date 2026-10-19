@@ -29,6 +29,15 @@
 //! previous frame when its size is unchanged, and is cleared otherwise.
 //! Palette index 0 is the transparent key (alpha 0).
 //!
+//! The reference editor instead keeps one direction-sized bitmap alive across
+//! frames and copies unchanged cells between positions with alpha blending,
+//! which leaves stale pixels behind when a transparent source pixel meets old
+//! data. On a 1-in-50 sample of both corpora (144,064 frames) the two models
+//! agree on 99.85% of frames; the rest differ by 1 to 9 stale pixels at frame
+//! edges (the dozen inspected are Assassin animations), where this decoder shows the clean
+//! cell. The `corpus_dcc_matches_reference_stage2_model` test re-implements
+//! the reference model and measures this.
+//!
 //! # Frames and boxes
 //!
 //! Every frame is returned cropped to its own box, with `offset_x` /
@@ -43,8 +52,9 @@
 //! unconsumed bitstream tails are tolerated (the strictness the reference
 //! applies to those is available to tests via `parse_checked`). Everything is
 //! bounds-checked, and: at most 32 directions and 1024 frames per direction;
-//! a direction box of at most 2048x2048; at most 64 Mi decoded pixels per
-//! file; at most 1 Mi pixel-buffer entries per direction.
+//! a direction box of at most 2048x2048; at most 32 Mi decoded pixels per
+//! file (the largest shipped file decodes to 7.2 Mi, its largest box is
+//! 445x324); at most 1 Mi pixel-buffer entries per direction.
 
 use crate::bytes::u32_at;
 use crate::{FormatError, IndexedImage, Result};
@@ -56,7 +66,7 @@ const POPCOUNT: [usize; 16] = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4];
 const MAX_DIRECTIONS: usize = 32;
 const MAX_FRAMES: u32 = 1024;
 const MAX_BOX_DIM: i64 = 2048;
-const MAX_TOTAL_PIXELS: u64 = 64 << 20;
+const MAX_TOTAL_PIXELS: u64 = 32 << 20;
 const MAX_PB_ENTRIES: usize = 1 << 20;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
