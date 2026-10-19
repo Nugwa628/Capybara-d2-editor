@@ -1,6 +1,6 @@
 # Capybara Map Editor — Plan
 
-Status: **P0 in progress** (2026-10-19). Step 0 done. P0 wave 1 merged: MPQ reader + overlay + profiles (`d2-assets`), DS1/txt/excel-bin/tables/tbl (`d2-formats`), spec cross-checks, known-names seed. Wave 2 (graphics formats; known-names harvest + P0 acceptance tests) running.
+Status: **P0 done** (2026-10-19; all acceptance tests pass, full corpus). In parallel at the user's request: capy-history merged (P4 library); capy-edit, capy-index, capy-render, map catalog and the capy-app shell in progress.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -100,6 +100,18 @@ Status: **P0 in progress** (2026-10-19). Step 0 done. P0 wave 1 merged: MPQ read
 - **The `.bin` layouts are confirmed** against vanilla `.txt` on every decoded cell: LvlTypes 0x788, LvlPrest 0x1B0, LvlWarp 0x30, Objects 0x1C0 (157 columns), Levels 0x220 **plus `leveldefs.bin` 0x9C**. 1.13c and 1.14d layouts are identical. Median XL decodes: 52 LvlTypes, 1,212 LvlPrest, 280 Levels, 589 Objects, and `objpreset.bin` (750 x i32, the `[act*150+id]` object remap vanilla compiles into the DLL).
 - Vanilla's live excel tables come from `Patch_D2.mpq` in **both** `.txt` and `.bin` form, and they decode identically.
 - `.bin` files do not store `Name` (LvlTypes, LvlPrest, LvlWarp) or `Beta`; display names come from Levels `LevelName` and string tables.
+
+### Graphics formats (2026-10-19, measured)
+- DT1: 655 files, 42,718 tiles, 926,942 blocks parse and render (both profiles). Six vanilla act1 files (`barracks`, `gargtrap`, `catacombs`, `cathedrl`, `court`, `outdoor1`) are an undocumented version 4.1 and are rejected; no LvlTypes slot names them (asserted in the P0 acceptance test).
+- DC6: 4,065 files, 61,068 frames. DCC: 47,939 files, 7.1 M frames, 0 failures, every frame inside its direction box. COF: 8,817 files; `amblxbow.cof` (both profiles) is 72 bytes of noise, 3 Median XL COFs are short and zero-filled. AnimData: vanilla 3,558 records, Median XL 6,057.
+- **Palette byte order settled:** `pal.dat` is BGR on disk; the PL2 base palette is RGB + pad (= `pal.dat` reversed) in every pair of both installs. The reference reads PL2 correctly; the guide's description is inverted. Act palettes: index 0 black, 255 white.
+- COF priority tables hold component ids, not layer indices.
+- DCC decode keeps per-cell state; the reference's shared-bitmap model differs on 0.15% of sampled frames (1-9 edge pixels, stale-pixel artefacts on the reference side). Confirm against the oracle when objects render.
+
+### Oracle (2026-10-19)
+- `testdata\private\oracle-renders\`: 18 vanilla maps at `--zoom=1:4`, gamma 1.30, each rendered twice, all byte-identical. Includes LvlTypes 35 (`act5_lava`).
+- **There is no terrain-only switch** in the reference CLI or ini; the headless render always includes objects and object shadows. The P1 comparison therefore masks a box around every DS1 object (see `capy-render` tests) instead of rendering terrain-only.
+- Headless exit code is 0 even on failure; success is detected from stdout and the PNG.
 
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
@@ -220,6 +232,10 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **DS1 parse limits**: the header and cell layers must be complete; zero-padding past EOF is tolerated only in the object/group/NPC blocks, up to 256 bytes (the shipped short files need 12 and 4). `to_bytes` refuses any model the file's version cannot store, rather than silently dropping data.
 - **Phases overlap at the user's request (2026-10-19: "need this done fast").** While P0 wave 2 finishes, `capy-history` (P4), `capy-edit` (P2), `capy-index` (P1/P3 groundwork) and the `capy-app` shell (P1) are built in parallel against the API contracts in `docs/api/`. Each phase's acceptance tests must still pass before that phase is declared done, and each phase still ends with a summary to the user.
 - Repo-local git identity `ZF <112085691+Nugwa628@users.noreply.github.com>` was set because none existed.
+
+## Known gaps
+- `Patch_D2.mpq`: 77 of 209 files (vanilla) and 53 of Median XL's copy remain unnamed after the harvest; every map, tile set and table the game references is named. A COF-derived name pass (objects/monsters) can recover sprite names later.
+- `scripts/` tools (Python extractor, oracle renders) are dev-only and not shipped.
 
 ## Open questions
 - None currently. Answered on 2026-10-19:

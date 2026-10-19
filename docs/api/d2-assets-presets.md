@@ -5,6 +5,12 @@ which Level and LvlType they belong to, the act, the palette, and the ordered,
 Dt1Mask-filtered DT1 list. Also imports DS1Edit's legacy `assets/*.ini`
 (`<LvlTypesId> <LvlPrestDef> <path>` per line) as overrides.
 
+Guessing rule (lead decision, 2026-10-19): wherever a LvlType must be guessed
+(LvlPrest rows with LevelId 0 or an empty LvlType, PathGuess, TileCoverage),
+candidates rank by tile coverage, then overlap with the DS1's own tileset
+list, then directory match, then lowest id. `build` may read DS1 bytes for
+these candidates.
+
 ```rust
 // lib.rs: pub mod presets; pub use presets::{MapCatalog, MapInfo, MapInfoSource, LegacyEntry, parse_legacy_ini};
 
@@ -17,6 +23,9 @@ pub enum MapInfoSource {
     /// No LvlPrest row; LvlType chosen because its File slots share the DS1's
     /// directory (most shared DT1s wins; ties → lowest id). All File slots used.
     PathGuess,
+    /// No LvlPrest row and no directory candidate: the LvlType whose DT1 set
+    /// resolves the most of the DS1's cells, accepted at coverage >= 0.90.
+    TileCoverage,
     /// Nothing matched: act from the DS1 header, no DT1s.
     Ds1Header,
 }
@@ -39,6 +48,9 @@ pub struct MapInfo {
     pub dt1_files: Vec<GamePath>,
     /// DT1s named above that do not resolve in the overlay.
     pub missing_dt1: Vec<GamePath>,
+    /// Fraction of visible non-empty cells whose tile key resolves in
+    /// `dt1_files`, when it was computed (guessed LvlTypes).
+    pub coverage: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
