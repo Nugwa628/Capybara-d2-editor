@@ -215,7 +215,7 @@ impl AssetSource for FolderSource {
         let files = self.walk()?;
         Ok(SourceFingerprint {
             path: self.root.clone(),
-            size: files.iter().map(|f| f.1).sum(),
+            size: files.iter().fold(0u64, |sum, f| sum.saturating_add(f.1)),
             modified_unix_ms: files.iter().map(|f| f.2).max().unwrap_or(0),
             entries: files.len() as u64,
         })

@@ -406,8 +406,12 @@ fn parse_objpreset(table: &TxtTable) -> Vec<u32> {
     let total = ACTS * OBJECTS_PER_ACT as usize;
     let mut out = vec![0u32; total];
     for row in table.rows() {
+        // Huge `Act`/`Id` cells overflow to "no slot" rather than panicking.
         let index = match (row.get_i64("Act"), row.get_i64("Id")) {
-            (Some(act), Some(id)) => act * OBJECTS_PER_ACT + id,
+            (Some(act), Some(id)) => act
+                .checked_mul(OBJECTS_PER_ACT)
+                .and_then(|base| base.checked_add(id))
+                .unwrap_or(-1),
             _ => i64::try_from(row.index()).unwrap_or(-1),
         };
         if let Some(slot) = usize::try_from(index).ok().and_then(|i| out.get_mut(i)) {
@@ -525,7 +529,7 @@ fn parse_mon_tables(
     for (flat, row) in preset.rows().enumerate() {
         let act = row
             .get_i64("Act")
-            .and_then(|a| usize::try_from(a - 1).ok())
+            .and_then(|a| usize::try_from(a.checked_sub(1)?).ok())
             .filter(|a| *a < ACTS);
         if let Some(act) = act {
             if let Some(seen) = act_seen.get_mut(act)

@@ -136,10 +136,14 @@ fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> std::io::Result<()
         let Some(rest) = buf.get_mut(done..) else {
             break;
         };
+        // Offsets come from archive fields; one past `u64::MAX` is simply unreadable.
+        let at = offset
+            .checked_add(done as u64)
+            .ok_or(std::io::ErrorKind::UnexpectedEof)?;
         #[cfg(windows)]
-        let n = std::os::windows::fs::FileExt::seek_read(file, rest, offset + done as u64)?;
+        let n = std::os::windows::fs::FileExt::seek_read(file, rest, at)?;
         #[cfg(unix)]
-        let n = std::os::unix::fs::FileExt::read_at(file, rest, offset + done as u64)?;
+        let n = std::os::unix::fs::FileExt::read_at(file, rest, at)?;
         if n == 0 {
             return Err(std::io::ErrorKind::UnexpectedEof.into());
         }
@@ -163,7 +167,7 @@ impl MpqArchive {
             .ok_or_else(|| bad("no MPQ header found".into()))?;
 
         // Header.
-        let avail = file_len - archive_offset;
+        let avail = file_len.saturating_sub(archive_offset);
         if avail < HEADER_MIN as u64 {
             return Err(bad(format!(
                 "truncated header at offset {archive_offset:#x}"
@@ -212,7 +216,9 @@ impl MpqArchive {
                     "{what} ({entries} entries at {start:#x}) extends past the end of the file ({file_len:#x} bytes)"
                 )));
             }
-            let mut buf = vec![0u8; size as usize];
+            // `size` is bounded by the file length checked above.
+            let len = usize::try_from(size).map_err(|_| bad(format!("{what} is too large")))?;
+            let mut buf = vec![0u8; len];
             read_exact_at(&file, &mut buf, start).map_err(io)?;
             Ok(buf)
         };
@@ -416,7 +422,7 @@ impl MpqArchive {
             return Ok(None);
         }
         let mut head = [0u8; 4];
-        read_exact_at(&self.file, &mut head, start + u64::from(from)).map_err(io)?;
+        read_exact_at(&self.file, &mut head, start.saturating_add(u64::from(from))).map_err(io)?;
         if encrypted {
             decrypt_bytes(&mut head, key);
         }
