@@ -31,11 +31,11 @@ pub use compose::{
 pub use error::{RenderError, Result};
 pub use objects::{
     FrameLayer, MissingObject, MissingReason, ObjectFrame, ObjectOptions, ObjectSprites,
-    PlacedObject, file_direction, frame_index, object_anchor,
+    OwnedObjectSprites, PlacedObject, file_direction, frame_index, object_anchor,
 };
 pub use order::{
     DrawEntry, DrawItem, DrawList, DrawPass, MissingTile, ObjectDrawItem, Visibility, draw_list,
     draw_list_with_objects, map_screen_bounds,
 };
 pub use palette::{palette_act, tileset_act};
-pub use tileset::{TileClass, TileGeometry, TileRef, TileSet, VariantRule};
+pub use tileset::{CELL_DIAMOND_TOP_X, TileClass, TileGeometry, TileRef, TileSet, VariantRule};

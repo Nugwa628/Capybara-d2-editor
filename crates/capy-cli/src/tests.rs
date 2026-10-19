@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use capy_render::{VariantRule, Visibility};
 
 use crate::args::{Command, RenderArgs, parse};
-use crate::{root_from, run_in};
+use d2_assets::installs::{Candidate, InstallSearch};
+
+use crate::{root_from, run_in_with};
 
 fn os(args: &[&str]) -> Vec<OsString> {
     args.iter().map(OsString::from).collect()
@@ -192,14 +194,116 @@ fn run_text(args: &[&str]) -> (Option<u8>, String, String) {
     run_text_in(tmp.path(), args)
 }
 
+/// An install search that finds nothing (no registry, no default folders).
+fn no_installs() -> InstallSearch {
+    let nowhere = std::env::temp_dir().join("capy-cli-tests-no-such-install");
+    InstallSearch {
+        default_vanilla: nowhere.join("d2"),
+        default_mxl: nowhere.join("mxl"),
+        registry: Vec::new(),
+    }
+}
+
 fn run_text_in(root: &std::path::Path, args: &[&str]) -> (Option<u8>, String, String) {
+    run_text_with(root, &no_installs, args)
+}
+
+fn run_text_with(
+    root: &std::path::Path,
+    installs: &dyn Fn() -> InstallSearch,
+    args: &[&str],
+) -> (Option<u8>, String, String) {
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = run_in(&os(args), root.to_path_buf(), &mut out, &mut err);
+    let code = run_in_with(&os(args), root.to_path_buf(), installs, &mut out, &mut err);
     (
         code,
         String::from_utf8_lossy(&out).into_owned(),
         String::from_utf8_lossy(&err).into_owned(),
     )
+}
+
+#[test]
+fn a_clean_folder_gets_the_default_profiles() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("capybara");
+    let installs = tmp.path().join("games");
+    // A vanilla install named only by the registry, and the default Median
+    // XL folder.
+    let d2 = installs.join("Diablo II");
+    let mxl = installs.join("median-xl");
+    for (dir, files) in [
+        (&d2, &["d2data.mpq", "d2exp.mpq"][..]),
+        (&mxl, &["medianxl-dGlsZXM.mpq"][..]),
+    ] {
+        std::fs::create_dir_all(dir).unwrap();
+        for f in files {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+    }
+    let calls = std::cell::Cell::new(0);
+    let search = || {
+        calls.set(calls.get() + 1);
+        InstallSearch {
+            default_vanilla: installs.join("not-here"),
+            default_mxl: mxl.clone(),
+            registry: vec![Candidate {
+                path: d2.clone(),
+                source: "registry (HKLM)".into(),
+            }],
+        }
+    };
+
+    // `help` never touches the folder.
+    let (code, _, _) = run_text_with(&root, &search, &["help"]);
+    assert_eq!(code, Some(0));
+    assert!(!root.exists());
+    assert_eq!(calls.get(), 0);
+
+    let (code, out, err) = run_text_with(&root, &search, &["profiles", "list"]);
+    assert_eq!(code, Some(0), "{err}");
+    assert_eq!(
+        out,
+        "mxl\t1.13c\tMedian XL\nvanilla\t1.14d\tDiablo II 1.14d\n"
+    );
+    assert_eq!(
+        err.matches("note: wrote default profile").count(),
+        2,
+        "{err}"
+    );
+    let profiles = d2_assets::Profile::load_dir(&root.join("profiles")).unwrap();
+    assert_eq!(
+        profiles,
+        vec![
+            d2_assets::Profile::median_xl(&mxl),
+            d2_assets::Profile::vanilla(&d2)
+        ]
+    );
+    assert_eq!(calls.get(), 1);
+
+    // Once profiles exist the search is not run again.
+    let (code, _, err) = run_text_with(&root, &search, &["profiles", "list"]);
+    assert_eq!(code, Some(0));
+    assert!(err.is_empty(), "{err}");
+    assert_eq!(calls.get(), 1);
+}
+
+#[test]
+fn a_failed_seeding_is_a_warning() {
+    let tmp = tempfile::tempdir().unwrap();
+    let d2 = tmp.path().join("d2");
+    std::fs::create_dir_all(&d2).unwrap();
+    // `profiles` is a file, so the folder cannot be created.
+    std::fs::write(tmp.path().join("profiles"), b"").unwrap();
+    let search = || InstallSearch {
+        default_vanilla: d2.clone(),
+        ..no_installs()
+    };
+    let (code, _, err) = run_text_with(tmp.path(), &search, &["profiles", "list"]);
+    assert!(
+        err.contains("warning: cannot write the default profiles"),
+        "{err}"
+    );
+    assert_eq!(code, Some(1), "reading the profiles folder fails: {err}");
 }
 
 #[test]

@@ -152,6 +152,77 @@ After the runs above, the game install folders must have no new or changed
 files (the editor opens MPQs read-only). Spot-check the folder's newest
 `LastWriteTime`.
 
+## 7. Packaging (`scripts/build-release.ps1`)
+
+One script builds, checks and zips the release. It runs in Windows
+PowerShell 5.1 from any folder:
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1            # build, check, zip
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1 -SkipBuild # check + zip the last build
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1 -DryRun    # print the plan, read-only checks only
+```
+
+What it does, in order (any failed check stops it with exit code 1 and a
+list of the failures):
+
+1. `python -I scripts/third_party_licenses.py --check`: a stale
+   `THIRD-PARTY-LICENSES.md` fails before anything is compiled.
+2. Checks that `README.md`, `LICENSE*`, `NOTICE`, `THIRD-PARTY-LICENSES.md`,
+   `docs\user-guide.md` and `docs\cli.md` exist.
+3. Builds the static-CRT, path-remapped exe (open issues 2 and 4):
+   ```
+   RUSTFLAGS = -C target-feature=+crt-static
+               --remap-path-prefix=<repo>=.
+               --remap-path-prefix=<CARGO_HOME>=cargo
+               --remap-path-prefix=<RUSTUP_HOME>=rustup
+   cargo build --release -p capy-app --target x86_64-pc-windows-msvc --target-dir target\release-dist
+   ```
+   `CARGO_HOME`/`RUSTUP_HOME` default to `%USERPROFILE%\.cargo` and
+   `\.rustup`. The separate target folder keeps these flags from
+   invalidating the normal `target\release` and dev builds; a cold build
+   takes about 12-15 minutes. `RUSTFLAGS` is restored afterwards and
+   `CARGO_ENCODED_RUSTFLAGS` (which would override it) is cleared for the
+   build. The exe is `target\release-dist\x86_64-pc-windows-msvc\release\`
+   `CapybarasD2Editor.exe` (the old bin name `CapybaraMapEditor.exe` is
+   accepted too).
+4. Checks the exe without external tools (the PE headers are parsed in the
+   script):
+   - PE32+ x86-64 and subsystem 2 (Windows GUI);
+   - no `VCRUNTIME*`, `MSVCP*`, `ucrtbase` or `api-ms-win-crt-*` in the
+     import or delay-import tables (the import list is printed, compare it
+     with step 2's list of system DLLs);
+   - no occurrence of the builder's user folder (`%USERPROFILE%`), the
+     repository, `CARGO_HOME` or `RUSTUP_HOME` in the exe's bytes, as ASCII or
+     UTF-16, with `\`, `/` or `\\` separators, ignoring case;
+   - prints the size (expect about 58 MB).
+5. Writes `dist\CapybarasD2Editor-<version>-win64.zip` (`dist\` is
+   gitignored; `<version>` is `[workspace.package] version` from
+   `Cargo.toml`, or `-Version`). The zip has one top folder,
+   `CapybarasD2Editor-<version>-win64\`, holding `CapybarasD2Editor.exe`,
+   `README.md`, `LICENSE*`, `NOTICE`, `THIRD-PARTY-LICENSES.md`,
+   `docs\user-guide.md` and `docs\cli.md`. Entry names use `/`
+   (`Compress-Archive` in 5.1 writes `\`, which other unzip tools mis-read).
+   The script re-opens the zip to count the entries and prints its SHA-256.
+
+Options: `-SkipBuild` checks and packages the existing build; `-ExePath
+<exe>` checks and packages another exe (implies `-SkipBuild`; it is renamed
+to `CapybarasD2Editor.exe` in the zip); `-DryRun` builds and writes nothing
+but still runs steps 1, 2 and 4 (when an exe exists); `-Version` and
+`-OutDir` override the zip name and folder.
+
+After the script, run sections 4-6 on the exe from the zip (unzipped into an
+empty folder).
+
+Tested on 2026-10-19 without the Bevy build: `-DryRun`; `-SkipBuild` with a
+small static-CRT GUI exe built with the same flags (all checks pass, zip of 7
+entries); a console exe with a dynamic CRT (fails on subsystem and
+`VCRUNTIME140.dll` / `api-ms-win-crt-*`); an exe with an absolute source path
+(fails on the user folder); the debug `CapybaraMapEditor.exe` (fails all
+three, 8,060 `C:\Users\<name>\.cargo` paths); the old bin name in the release
+folder (picked up and renamed); a stale `THIRD-PARTY-LICENSES.md` (fails at
+step 1).
+
 ---
 
 ## Results of the dry run (2026-10-19, main at 20a108d)

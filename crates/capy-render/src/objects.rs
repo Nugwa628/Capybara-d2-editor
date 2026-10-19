@@ -44,6 +44,7 @@
 //! composite `compose_cof_frame` does.
 
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use d2_assets::objects::{ObjectCatalog, ObjectInfo, PaletteShift, SpriteBase};
@@ -361,14 +362,37 @@ struct AssetSpec<'s> {
     shift: Option<&'s [u8; 256]>,
 }
 
+/// A borrowed or shared (`Arc`) handle to the overlay or the catalog.
+enum Handle<'a, T> {
+    Borrowed(&'a T),
+    Shared(Arc<T>),
+}
+
+impl<T> Deref for Handle<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        match self {
+            Handle::Borrowed(t) => t,
+            Handle::Shared(t) => t,
+        }
+    }
+}
+
 /// Loads object sprites through an overlay and caches them.
 ///
 /// Composites are cached per (sprite key, direction, frame): the sprite key is
 /// base, token, mode, class, skins and palette shift, so objects sharing a
-/// sprite share one decode.
+/// sprite share one decode. The cache hands out the same `Arc<ObjectFrame>`
+/// for the same frame for as long as the `ObjectSprites` lives.
+///
+/// [`ObjectSprites::new`] borrows the overlay and catalog;
+/// [`ObjectSprites::new_shared`] holds `Arc`s instead, giving an
+/// [`OwnedObjectSprites`] (`'static`, `Send + Sync`) whose cache can live in a
+/// resource or across threads without a dedicated owner thread.
 pub struct ObjectSprites<'a> {
-    overlay: &'a Overlay,
-    catalog: &'a ObjectCatalog,
+    overlay: Handle<'a, Overlay>,
+    catalog: Handle<'a, ObjectCatalog>,
     animdata: OnceLock<Option<AnimData>>,
     assets: Mutex<HashMap<String, AssetResult>>,
     /// Colormap files by lower-case path (`None` when absent).
@@ -440,8 +464,25 @@ fn box_origin(frames: &[IndexedImage]) -> (i32, i32) {
     origin.unwrap_or((0, 0))
 }
 
+/// [`ObjectSprites`] that owns its overlay and catalog through `Arc`s
+/// ([`ObjectSprites::new_shared`]).
+pub type OwnedObjectSprites = ObjectSprites<'static>;
+
+impl ObjectSprites<'static> {
+    /// Sprites holding shared handles to `overlay` and `catalog`, so the
+    /// value (and its cache) is `'static` and can be kept across builds.
+    pub fn new_shared(overlay: Arc<Overlay>, catalog: Arc<ObjectCatalog>) -> OwnedObjectSprites {
+        ObjectSprites::with(Handle::Shared(overlay), Handle::Shared(catalog))
+    }
+}
+
 impl<'a> ObjectSprites<'a> {
+    /// Sprites borrowing `overlay` and `catalog`.
     pub fn new(overlay: &'a Overlay, catalog: &'a ObjectCatalog) -> ObjectSprites<'a> {
+        ObjectSprites::with(Handle::Borrowed(overlay), Handle::Borrowed(catalog))
+    }
+
+    fn with(overlay: Handle<'a, Overlay>, catalog: Handle<'a, ObjectCatalog>) -> ObjectSprites<'a> {
         ObjectSprites {
             overlay,
             catalog,
@@ -449,6 +490,17 @@ impl<'a> ObjectSprites<'a> {
             assets: Mutex::new(HashMap::new()),
             colormaps: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The overlay sprites are read from.
+    pub fn overlay(&self) -> &Overlay {
+        &self.overlay
+    }
+
+    /// Whether these sprites read `overlay` with `catalog` (the same objects,
+    /// compared by address), i.e. whether the cache can be reused for them.
+    pub fn uses(&self, overlay: &Overlay, catalog: &ObjectCatalog) -> bool {
+        std::ptr::eq(self.overlay(), overlay) && std::ptr::eq(self.catalog(), catalog)
     }
 
     /// The row of a palette shift, `None` when its file is missing or too
@@ -467,8 +519,9 @@ impl<'a> ObjectSprites<'a> {
         shift.row_in(&file).copied()
     }
 
+    /// The catalog objects are resolved with.
     pub fn catalog(&self) -> &ObjectCatalog {
-        self.catalog
+        &self.catalog
     }
 
     fn read(&self, path: &str) -> Option<Vec<u8>> {
@@ -556,7 +609,10 @@ impl<'a> ObjectSprites<'a> {
         self.frame_of_info(&info, opts, forced_frame, direction)
     }
 
-    /// The frame of an already resolved object.
+    /// The frame of an already resolved object, at user `direction`: frame
+    /// `forced_frame` (modulo the COF's frame count) when given, else the
+    /// frame of `opts.animation_tick` at the object's speed (the rule of
+    /// [`ObjectSprites::frames_of_info`]).
     pub fn frame_of_info(
         &self,
         info: &ObjectInfo,
@@ -564,6 +620,57 @@ impl<'a> ObjectSprites<'a> {
         forced_frame: Option<u8>,
         direction: u8,
     ) -> std::result::Result<Arc<ObjectFrame>, MissingReason> {
+        let (asset, label) = self.asset_of_info(info, direction)?;
+        let count = u32::from(asset.cof.frames_per_direction.max(1));
+        let frame = match forced_frame {
+            Some(f) => u8::try_from(u32::from(f) % count).unwrap_or(0),
+            None => frame_index(opts.animation_tick, frame_delta(info, &asset), count),
+        };
+        let cached = cached_frame(&asset, frame, info);
+        if cached.layers.is_empty() {
+            return Err(MissingReason::NoLayers(label));
+        }
+        Ok(cached)
+    }
+
+    /// Every frame of one direction of an already resolved object, frame 0
+    /// first (`frames_per_direction` of them, so frame `n` of the animation
+    /// is `frames[n % len]`), and its animation speed: the frame delta that
+    /// [`frame_index`] takes, in 1/256 frames per 25 Hz tick.
+    ///
+    /// The speed is the Objects.txt `FrameDelta` for objects
+    /// ([`ObjectInfo::frame_delta`], 0 already mapped to 256) or the AnimData
+    /// speed of `{token}{mode}{class}` for monsters (`cof.c:385-400,472-477`);
+    /// a missing or zero speed is 256 (one frame per tick). It is the rule
+    /// [`ObjectSprites::frame_of_info`] animates with, and the frames are the
+    /// same cached `Arc`s it returns.
+    ///
+    /// A frame whose layers are all missing is kept with empty `layers` (it
+    /// draws nothing; `frame_of_info` reports it as
+    /// [`MissingReason::NoLayers`]). The error is the reason the object has
+    /// no sprite at all, or `NoLayers` when no frame has a layer.
+    pub fn frames_of_info(
+        &self,
+        info: &ObjectInfo,
+        direction: u8,
+    ) -> std::result::Result<(Vec<Arc<ObjectFrame>>, u32), MissingReason> {
+        let (asset, label) = self.asset_of_info(info, direction)?;
+        let frames: Vec<Arc<ObjectFrame>> = (0..asset.cof.frames_per_direction.max(1))
+            .map(|f| cached_frame(&asset, f, info))
+            .collect();
+        if frames.iter().all(|f| f.layers.is_empty()) {
+            return Err(MissingReason::NoLayers(label));
+        }
+        Ok((frames, frame_delta(info, &asset)))
+    }
+
+    /// The cached COF and sprites of `info` at user `direction`, with the
+    /// `{token}{mode}{class}` label of [`MissingReason::NoLayers`].
+    fn asset_of_info(
+        &self,
+        info: &ObjectInfo,
+        direction: u8,
+    ) -> std::result::Result<(Arc<Asset>, String), MissingReason> {
         let (Some(base), Some(token)) = (info.sprite_base, info.token.as_deref()) else {
             return Err(if info.source == "unresolved" {
                 MissingReason::Unresolved
@@ -613,27 +720,7 @@ impl<'a> ObjectSprites<'a> {
                 })
                 .clone()
         }?;
-        // Frame choice: objects use their Objects.txt FrameDelta (0 already
-        // mapped to 256); monsters the AnimData speed (cof.c:385-400,472-477).
-        let count = u32::from(asset.cof.frames_per_direction.max(1));
-        let delta = info
-            .frame_delta
-            .or(asset.animdata_speed)
-            .filter(|d| *d != 0)
-            .unwrap_or(256);
-        let frame = match forced_frame {
-            Some(f) => u8::try_from(u32::from(f) % count).unwrap_or(0),
-            None => frame_index(opts.animation_tick, delta, count),
-        };
-        let mut frames = asset.frames.lock().unwrap_or_else(PoisonError::into_inner);
-        let cached = frames
-            .entry((frame, info.offset, info.order_flag))
-            .or_insert_with(|| Arc::new(build_frame(&asset, frame, info.offset, info.order_flag)))
-            .clone();
-        if cached.layers.is_empty() {
-            return Err(MissingReason::NoLayers(format!("{token}{mode}{class}")));
-        }
-        Ok(cached)
+        Ok((asset, format!("{token}{mode}{class}")))
     }
 
     fn load_asset(&self, spec: &AssetSpec<'_>) -> AssetResult {
@@ -740,6 +827,26 @@ impl<'a> ObjectSprites<'a> {
             .map(|f| dc6.frame(u32::from(dir), f)?.render().ok())
             .collect()
     }
+}
+
+/// The animation speed of `info` with `asset`: objects use their Objects.txt
+/// FrameDelta (0 already mapped to 256), monsters the AnimData speed
+/// (`cof.c:385-400,472-477`); none or 0 is 256.
+fn frame_delta(info: &ObjectInfo, asset: &Asset) -> u32 {
+    info.frame_delta
+        .or(asset.animdata_speed)
+        .filter(|d| *d != 0)
+        .unwrap_or(256)
+}
+
+/// Frame `frame` of `asset` with the Objects.txt offset and order flag of
+/// `info`, built once and cached in the asset.
+fn cached_frame(asset: &Asset, frame: u8, info: &ObjectInfo) -> Arc<ObjectFrame> {
+    let mut frames = asset.frames.lock().unwrap_or_else(PoisonError::into_inner);
+    frames
+        .entry((frame, info.offset, info.order_flag))
+        .or_insert_with(|| Arc::new(build_frame(asset, frame, info.offset, info.order_flag)))
+        .clone()
 }
 
 fn build_frame(asset: &Asset, frame: u8, offset: (i32, i32), order_flag: u8) -> ObjectFrame {

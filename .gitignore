@@ -3,3 +3,4 @@
 /testdata/private/
 /.claude/worktrees/
 /.cargo/
+/dist/
