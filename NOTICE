@@ -26,13 +26,21 @@ DS1Edit (https://github.com/bethington/d2-ds1-edit) continues win_ds1edit. Its
 format guides (docs/guides/*.md) were used as specifications, and its
 headless renderer is used as a test oracle. It is not ported line by line.
 
-Data files derived from DS1Edit and embedded in this program, if present,
-are used under its MIT license:
+Embedded data from DS1Edit:
 
     assets/editor/obj.txt     DS1 object -> COF token table
-    assets/editor/ds1edit.dt1 editor marker tiles
+
+Provenance: this table originates in Paul Siramy's win_ds1edit (section 1),
+which was published without a license text. DS1Edit's NOTICE states that its
+MIT license covers Ben Ethington's modifications and additions and is not a
+relicensing of Paul Siramy's original work, which DS1Edit uses with
+attribution. Capybara Map Editor uses the table on the same basis: with
+attribution to both authors, and under DS1Edit's MIT license for the parts it
+covers.
 
 DS1Edit's license:
+
+    MIT License
 
     Copyright (c) 2025-2026 Ben Ethington
 
@@ -47,7 +55,13 @@ DS1Edit's license:
     The above copyright notice and this permission notice shall be included
     in all copies or substantial portions of the Software.
 
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
 
 
 3. Game data
