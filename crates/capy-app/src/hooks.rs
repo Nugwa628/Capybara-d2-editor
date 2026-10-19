@@ -280,6 +280,9 @@ fn map_only_shot(
             if render.mesh_div(doc.id) != Some(div) {
                 return; // still laid out for another zoom
             }
+            if !state.objects_settled(doc) {
+                return; // drawn without objects so far
+            }
             let Some((x0, y0, x1, y1)) = render.canvas(doc, div) else {
                 fail(hooks, state, exit, "the map draws nothing".to_owned());
                 return;
@@ -320,7 +323,7 @@ fn map_only_shot(
                     ..OrthographicProjection::default_2d()
                 }),
                 Transform::from_xyz(
-                    cx + crate::render::SAMPLE_BIAS,
+                    cx + crate::render::SAMPLE_BIAS + crate::render::WORLD_SHIFT_X,
                     -cy - crate::render::SAMPLE_BIAS,
                     0.0,
                 ),

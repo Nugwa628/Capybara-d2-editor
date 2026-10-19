@@ -45,6 +45,33 @@ pub enum EditOp {
         dy: i32,
     },
     DeleteObjects(Vec<usize>),
+    /// Place a new object (its index comes back as [`OpOutcome::Added`]).
+    AddObject(d2_formats::ds1::Object),
+    /// Replace one object's type, id, flags or position.
+    SetObject {
+        index: usize,
+        object: d2_formats::ds1::Object,
+    },
+    AddPathPoint {
+        object: usize,
+        point: d2_formats::ds1::PathPoint,
+        at: Option<usize>,
+    },
+    MovePathPoint {
+        object: usize,
+        index: usize,
+        x: i32,
+        y: i32,
+    },
+    SetPathAction {
+        object: usize,
+        index: usize,
+        action: i32,
+    },
+    DeletePathPoints {
+        object: usize,
+        indices: Vec<usize>,
+    },
 }
 
 impl EditOp {
@@ -65,6 +92,12 @@ impl EditOp {
             EditOp::Paste { .. } => "Paste".to_owned(),
             EditOp::MoveObjects { .. } => "Move objects".to_owned(),
             EditOp::DeleteObjects(_) => "Delete objects".to_owned(),
+            EditOp::AddObject(_) => "Add object".to_owned(),
+            EditOp::SetObject { .. } => "Object properties".to_owned(),
+            EditOp::AddPathPoint { .. } => "Add path point".to_owned(),
+            EditOp::MovePathPoint { .. } => "Move path point".to_owned(),
+            EditOp::SetPathAction { .. } => "Path action".to_owned(),
+            EditOp::DeletePathPoints { .. } => "Delete path points".to_owned(),
         }
     }
 }
@@ -76,6 +109,8 @@ pub enum OpOutcome {
     Moved(MoveReport),
     Pasted(PastePreview),
     Cut(Clipboard),
+    /// The index of a placed object.
+    Added(usize),
 }
 
 /// Result of one attempt.
@@ -132,6 +167,28 @@ pub fn run(doc: &mut Document, selection: &Selection, op: &EditOp) -> OpResult {
             wrap(doc.move_objects(indices, *dx, *dy), |()| OpOutcome::Done)
         }
         EditOp::DeleteObjects(indices) => wrap(doc.delete_objects(indices), |()| OpOutcome::Done),
+        EditOp::AddObject(object) => wrap(doc.add_object(*object), OpOutcome::Added),
+        EditOp::SetObject { index, object } => {
+            wrap(doc.set_object(*index, *object), |()| OpOutcome::Done)
+        }
+        EditOp::AddPathPoint { object, point, at } => {
+            wrap(doc.add_path_point(*object, *point, *at), |()| OpOutcome::Done)
+        }
+        EditOp::MovePathPoint { object, index, x, y } => {
+            wrap(doc.move_path_point(*object, *index, *x, *y), |()| {
+                OpOutcome::Done
+            })
+        }
+        EditOp::SetPathAction {
+            object,
+            index,
+            action,
+        } => wrap(doc.set_path_action(*object, *index, *action), |()| {
+            OpOutcome::Done
+        }),
+        EditOp::DeletePathPoints { object, indices } => {
+            wrap(doc.delete_path_points(*object, indices), |()| OpOutcome::Done)
+        }
     }
 }
 

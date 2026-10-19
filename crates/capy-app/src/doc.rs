@@ -147,6 +147,16 @@ pub struct RenderStatus {
     /// DT1s that could not be read.
     pub warnings: Vec<String>,
     pub millis: u64,
+    /// Object entries drawn (shadows included).
+    pub objects_drawn: usize,
+    /// Objects that draw nothing: `(index into ds1.objects, why)`.
+    pub missing_objects: Vec<(usize, String)>,
+    /// The session epoch of the object tables the drawn map used; `None`
+    /// while it was drawn without objects.
+    pub objects_epoch: Option<u64>,
+    /// 1:1 screen boxes of the drawn objects at frame 0, in draw order, for
+    /// picking: `(index into ds1.objects, [x0, y0, x1, y1])`.
+    pub object_boxes: Arc<Vec<(usize, [i32; 4])>>,
 }
 
 impl Default for RenderStatus {
@@ -159,6 +169,10 @@ impl Default for RenderStatus {
             atlas: None,
             warnings: Vec::new(),
             millis: 0,
+            objects_drawn: 0,
+            missing_objects: Vec::new(),
+            objects_epoch: None,
+            object_boxes: Arc::new(Vec::new()),
         }
     }
 }

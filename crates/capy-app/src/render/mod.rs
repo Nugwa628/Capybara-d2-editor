@@ -1,10 +1,16 @@
 //! Map rendering.
 //!
-//! * **Textured tiles.** Per open map, one `Mesh2d` of quads in the exact order
-//!   of `capy_render::draw_list`, one 2D-array atlas texture and one
-//!   premultiplied-alpha material: a single draw call, so the painter's order
-//!   is the index order. The CPU work (DT1 load, draw list, atlas bake, quad
-//!   layout) runs on a worker thread ([`job`]); this module owns the GPU side.
+//! * **Textured tiles and object sprites.** Per open map, the entries of
+//!   `capy_render::draw_list_with_objects` in their exact order, one 2D-array
+//!   atlas texture (tiles and every frame of every object layer) and a few
+//!   meshes: the list is cut into runs of one blend mode, each run one mesh
+//!   with strictly increasing z, so the painter's order is kept across
+//!   blend states ([`scene`] has the design). The CPU work (DT1 load, draw
+//!   list, sprite decode, atlas bake, quad layout) runs on the build thread
+//!   ([`worker`], [`job`]); this module owns the GPU side.
+//! * **Animation.** Object pieces are re-laid out on the main thread when a
+//!   frame changes ("Animate objects", 25 Hz); every frame is already in the
+//!   atlas, so nothing is baked or uploaded but those small meshes.
 //! * **Missing tiles** get a thin magenta diamond outline.
 //! * **Placeholders.** Until a map's textures are ready (and always for the
 //!   Tag layer) the flat-coloured diamonds of [`placeholder`] are drawn.
@@ -17,9 +23,11 @@ pub mod geometry;
 pub mod job;
 pub mod material;
 pub mod placeholder;
+pub mod scene;
+pub mod worker;
 
 use std::collections::HashMap;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 
 use bevy::asset::RenderAssetUsages;
@@ -32,16 +40,25 @@ use bevy::render::render_resource::{
 };
 use bevy::render::view::Msaa;
 use bevy::sprite_render::{ColorMaterial, MeshMaterial2d};
-use capy_render::{DrawItem, MissingTile, TileSet};
-use d2_assets::{GamePath, Overlay};
+use capy_render::{MissingTile, TileSet};
+use d2_assets::GamePath;
 use d2_formats::ds1::Ds1;
 
 use self::atlas::AtlasLayout;
 use self::geometry::{OutlineGeometry, TexGeometry};
-use self::job::{BuildInput, BuildKey, BuildOutput};
-use self::material::{TileMaterial, TileMaterialPlugin};
+use self::job::{BuildKey, BuildOutput};
+use self::material::{BlendClass, TileMaterial, TileMaterialPlugin};
+use self::scene::{Piece, Run, SceneEntry};
+use self::worker::{JobRequest, JobResult, Worker};
 use crate::doc::{LayerKey, MapDoc, RenderState};
 use crate::state::AppState;
+
+/// World x of the map meshes relative to iso space. `capy-render` places a
+/// cell's bitmap at `(x - y) * 80`, where the cell's diamond spans
+/// `[0, 160)`; iso space (the overlays, `crate::iso`) puts the diamond's top
+/// corner at `(x - y) * 80`. Shifting the meshes by half a cell lines the
+/// two up.
+pub const WORLD_SHIFT_X: f32 = -80.0;
 
 /// CPU-side mesh data for one placeholder layer. World space: y up, so iso y
 /// is negated.
@@ -130,7 +147,7 @@ pub struct MapLayer {
     pub rev: u64,
 }
 
-/// The textured quads of one document.
+/// One run of textured quads (tiles or sprite layers) of one document.
 #[derive(Component)]
 pub struct MapTiles {
     pub doc: u64,
@@ -146,7 +163,8 @@ pub struct MapOutline {
 #[derive(Component)]
 pub struct MapCamera;
 
-/// Draw depth of the outlines (opaque, so above the transparent tiles at 0).
+/// Draw depth of the outlines (opaque, so above the transparent runs, which
+/// stay below [`scene::RUN_Z_MAX`]).
 const OUTLINE_Z: f32 = 0.5;
 /// Outline thickness in screen pixels.
 const OUTLINE_PX: f32 = 2.0;
@@ -154,117 +172,26 @@ const OUTLINE_PX: f32 = 2.0;
 /// edge (even zoom divisors would put them there): iso pixels.
 pub const SAMPLE_BIAS: f32 = 0.02;
 
-/// A finished build, sent back from the worker thread.
-struct JobResult {
-    doc: u64,
-    ticket: u64,
-    div: u32,
-    key: BuildKey,
-    profile: String,
-    tiles: Option<Arc<TileSet>>,
-    warnings: Vec<String>,
-    outcome: Result<BuildOutput, String>,
+/// One mesh entity of a document.
+struct RunSlot {
+    entity: Entity,
+    /// The z it was last placed at (NaN: not yet).
+    z: f32,
 }
 
-struct JobRequest {
-    doc: u64,
-    ticket: u64,
-    div: u32,
-    key: BuildKey,
-    profile: String,
-    overlay: Arc<Overlay>,
-    tiles: Option<Arc<TileSet>>,
-    ds1: Arc<Ds1>,
-    prior: Option<Arc<AtlasLayout>>,
-}
-
-fn run_job(req: JobRequest) -> JobResult {
-    let JobRequest {
-        doc,
-        ticket,
-        div,
-        key,
-        profile,
-        overlay,
-        tiles,
-        ds1,
-        prior,
-    } = req;
-    let mut warnings = Vec::new();
-    let mut loaded: Option<Arc<TileSet>> = None;
-    let outcome = (|| {
-        let tiles = match tiles {
-            Some(t) => t,
-            None => {
-                let (t, w) = job::load_tileset(&overlay, &key.dt1_files)?;
-                warnings = w;
-                t
-            }
-        };
-        loaded = Some(tiles.clone());
-        let palette = job::load_palette(&overlay, key.palette_act)?;
-        job::build_map(BuildInput {
-            tiles,
-            ds1,
-            vis: key.vis.clone(),
-            palette,
-            palette_key: key.palette_key(),
-            prior,
-            div,
-        })
-    })();
-    JobResult {
-        doc,
-        ticket,
-        div,
-        key,
-        profile,
-        tiles: loaded,
-        warnings,
-        outcome,
-    }
-}
-
-fn spawn_job(tx: &Sender<JobResult>, req: JobRequest) {
-    let (doc, ticket, div) = (req.doc, req.ticket, req.div);
-    let (key, profile) = (req.key.clone(), req.profile.clone());
-    let thread_tx = tx.clone();
-    let (thread_key, thread_profile) = (key.clone(), profile.clone());
-    let spawned = std::thread::Builder::new()
-        .name("map-build".to_owned())
-        .spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_job(req)))
-                .unwrap_or_else(|_| JobResult {
-                    doc,
-                    ticket,
-                    div,
-                    key: thread_key,
-                    profile: thread_profile,
-                    tiles: None,
-                    warnings: Vec::new(),
-                    outcome: Err("map build panicked".to_owned()),
-                });
-            let _ = thread_tx.send(result);
-        });
-    if let Err(e) = spawned {
-        let _ = tx.send(JobResult {
-            doc,
-            ticket,
-            div,
-            key,
-            profile,
-            tiles: None,
-            warnings: Vec::new(),
-            outcome: Err(format!("cannot start the build thread: {e}")),
-        });
-    }
+/// The meshes of one piece and the object frames they show.
+struct PieceRender {
+    piece: Piece,
+    slots: Vec<RunSlot>,
+    frames: Vec<usize>,
 }
 
 /// GPU-side state of one open map.
 struct DocRender {
-    tiles_entity: Option<Entity>,
+    pieces: Vec<PieceRender>,
     outline_entity: Option<Entity>,
-    material: Option<Handle<TileMaterial>>,
+    /// One material per [`BlendClass`] over the current atlas.
+    materials: Option<Vec<Handle<TileMaterial>>>,
     /// The tileset and atlas layout the material's image was baked from.
     tiles: Option<Arc<TileSet>>,
     layout: Option<Arc<AtlasLayout>>,
@@ -275,19 +202,17 @@ struct DocRender {
     missing: Vec<MissingTile>,
     bounds: Option<(i32, i32, i32, i32)>,
     outline_div: Option<u32>,
-    /// The draw list the mesh was made from, and the zoom it is laid out for.
-    items: Option<Arc<Vec<DrawItem>>>,
+    /// The entries the meshes were made from, and the zoom they are laid out for.
+    entries: Option<Arc<Vec<SceneEntry>>>,
     mesh_div: u32,
 }
 
 impl DocRender {
     fn new() -> DocRender {
         DocRender {
-            items: None,
-            mesh_div: 0,
-            tiles_entity: None,
+            pieces: Vec::new(),
             outline_entity: None,
-            material: None,
+            materials: None,
             tiles: None,
             layout: None,
             layout_dt1: Vec::new(),
@@ -297,18 +222,27 @@ impl DocRender {
             missing: Vec::new(),
             bounds: None,
             outline_div: None,
+            entries: None,
+            mesh_div: 0,
         }
+    }
+
+    fn entities(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.pieces
+            .iter()
+            .flat_map(|p| p.slots.iter().map(|s| s.entity))
+            .chain(self.outline_entity)
     }
 }
 
 /// Worker-thread plumbing and per-document GPU state.
 #[derive(Resource)]
 pub struct MapRender {
-    tx: Sender<JobResult>,
+    worker: Worker,
     rx: Mutex<Receiver<JobResult>>,
     docs: HashMap<u64, DocRender>,
     /// Parsed DT1 sets by (profile, DT1 list); maps sharing a list share one.
-    tilesets: HashMap<(String, Vec<GamePath>), Arc<TileSet>>,
+    tilesets: HashMap<worker::TilesetKey, Arc<TileSet>>,
     next_ticket: u64,
     /// Lay the map out for this divisor whatever the view says (the
     /// map-only screenshot hook, which may ask for any `1:N`).
@@ -316,19 +250,22 @@ pub struct MapRender {
     /// Do not draw the missing-tile outlines (map-only screenshots, which are
     /// compared with the CPU compositor's output).
     pub hide_outlines: bool,
+    /// Always show animation frame 0 (map-only screenshots).
+    pub static_objects: bool,
 }
 
 impl MapRender {
     fn new() -> MapRender {
         let (tx, rx) = channel();
         MapRender {
-            tx,
+            worker: Worker::spawn(tx),
             rx: Mutex::new(rx),
             docs: HashMap::new(),
             tilesets: HashMap::new(),
             next_ticket: 1,
             force_div: None,
             hide_outlines: false,
+            static_objects: false,
         }
     }
 
@@ -368,7 +305,7 @@ impl Plugin for RenderPlugin {
                 Update,
                 (
                     drive_builds,
-                    sync_zoom_geometry,
+                    sync_scene,
                     sync_layers,
                     sync_tiles_visibility,
                     sync_outlines,
@@ -386,8 +323,8 @@ fn setup_material(mut commands: Commands, mut materials: ResMut<Assets<ColorMate
 }
 
 /// What the textured mesh of `doc` must be built from, once its map context is
-/// known.
-pub fn desired_key(doc: &MapDoc, gamma: f32) -> Option<BuildKey> {
+/// known. `objects` is the session epoch of the loaded object tables.
+pub fn desired_key(doc: &MapDoc, gamma: f32, objects: Option<u64>) -> Option<BuildKey> {
     let info = doc.info.as_ref()?;
     Some(BuildKey {
         rev: doc.rev,
@@ -395,6 +332,7 @@ pub fn desired_key(doc: &MapDoc, gamma: f32) -> Option<BuildKey> {
         gamma_bits: gamma.to_bits(),
         palette_act: info.palette_act,
         dt1_files: info.dt1_files.clone(),
+        objects,
     })
 }
 
@@ -443,6 +381,129 @@ pub fn summarize_missing(missing: &[MissingTile], limit: usize) -> Vec<String> {
         .collect()
 }
 
+/// Puts `runs` into the mesh entities of one piece: entities are reused in
+/// order, extra ones spawned (hidden until `sync_tiles_visibility` shows
+/// them) and surplus ones despawned.
+fn install_runs(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &[Handle<TileMaterial>],
+    doc: u64,
+    slots: &mut Vec<RunSlot>,
+    runs: Vec<Run>,
+) {
+    let n = runs.len();
+    for (i, run) in runs.into_iter().enumerate() {
+        let mesh = Mesh2d(meshes.add(tex_mesh(run.geo)));
+        let Some(material) = materials.get(run.class.index()).cloned() else {
+            continue;
+        };
+        match slots.get(i) {
+            Some(slot) => {
+                commands
+                    .entity(slot.entity)
+                    .insert((mesh, MeshMaterial2d(material)));
+            }
+            None => {
+                let entity = commands
+                    .spawn((
+                        MapTiles { doc },
+                        mesh,
+                        MeshMaterial2d(material),
+                        Transform::from_xyz(WORLD_SHIFT_X, 0.0, 0.0),
+                        Visibility::Hidden,
+                    ))
+                    .id();
+                slots.push(RunSlot {
+                    entity,
+                    z: f32::NAN,
+                });
+            }
+        }
+    }
+    for slot in slots.drain(n.min(slots.len())..) {
+        commands.entity(slot.entity).despawn();
+    }
+}
+
+/// Gives every run of the document its z: strictly increasing in draw order.
+fn assign_z(commands: &mut Commands, dr: &mut DocRender) {
+    let total: usize = dr.pieces.iter().map(|p| p.slots.len()).sum();
+    let mut k = 0;
+    for piece in &mut dr.pieces {
+        for slot in &mut piece.slots {
+            let z = scene::run_z(k, total);
+            if slot.z != z {
+                slot.z = z;
+                commands
+                    .entity(slot.entity)
+                    .insert(Transform::from_xyz(WORLD_SHIFT_X, 0.0, z));
+            }
+            k += 1;
+        }
+    }
+}
+
+/// The materials of an atlas image, one per blend class.
+fn class_materials(
+    materials: &mut Assets<TileMaterial>,
+    image: &Handle<Image>,
+) -> Vec<Handle<TileMaterial>> {
+    BlendClass::ALL
+        .iter()
+        .map(|&blend| {
+            materials.add(TileMaterial {
+                atlas: image.clone(),
+                blend,
+            })
+        })
+        .collect()
+}
+
+/// Installs a finished build's meshes (and atlas) for document `res.doc`.
+#[allow(clippy::too_many_arguments)]
+fn install_build(
+    commands: &mut Commands,
+    dr: &mut DocRender,
+    doc: u64,
+    out: &mut BuildOutput,
+    div: u32,
+    tick: Option<u32>,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<TileMaterial>,
+) {
+    if let Some(pixels) = out.pixels.take() {
+        let image = images.add(atlas_image(pixels));
+        dr.materials = Some(class_materials(materials, &image));
+    }
+    let Some(class_mats) = dr.materials.clone() else {
+        return;
+    };
+    let runs = std::mem::take(&mut out.runs);
+    let mut old = std::mem::take(&mut dr.pieces);
+    for (i, (piece, piece_runs)) in out.pieces.iter().zip(runs).enumerate() {
+        let mut slots = old
+            .get_mut(i)
+            .map(|p| std::mem::take(&mut p.slots))
+            .unwrap_or_default();
+        install_runs(commands, meshes, &class_mats, doc, &mut slots, piece_runs);
+        dr.pieces.push(PieceRender {
+            frames: scene::piece_frames(&out.entries, piece, tick),
+            piece: piece.clone(),
+            slots,
+        });
+    }
+    for p in old {
+        for slot in p.slots {
+            commands.entity(slot.entity).despawn();
+        }
+    }
+    assign_z(commands, dr);
+    dr.entries = Some(out.entries.clone());
+    dr.mesh_div = div;
+}
+
 /// Starts builds that are due and installs the ones that finished.
 #[allow(clippy::too_many_arguments)]
 fn drive_builds(
@@ -457,6 +518,8 @@ fn drive_builds(
     let gamma = state.config.gamma;
     // Edits made since the last frame (scripts run before the UI does).
     state.sync_docs();
+    let catalog = state.object_catalog();
+    let objects_epoch = catalog.as_ref().map(|_| state.session_epoch);
 
     // Drop the state of closed documents.
     let live: Vec<u64> = state.docs.iter().map(|d| d.id).collect();
@@ -468,7 +531,7 @@ fn drive_builds(
         .collect();
     for id in gone {
         if let Some(dr) = render.docs.remove(&id) {
-            for e in [dr.tiles_entity, dr.outline_entity].into_iter().flatten() {
+            for e in dr.entities() {
                 commands.entity(e).despawn();
             }
         }
@@ -488,7 +551,7 @@ fn drive_builds(
         let Some(doc_index) = state.docs.iter().position(|d| d.id == res.doc) else {
             continue;
         };
-        let wanted = desired_key(&state.docs[doc_index], gamma);
+        let wanted = desired_key(&state.docs[doc_index], gamma, objects_epoch);
         let Some(dr) = render.docs.get_mut(&res.doc) else {
             continue;
         };
@@ -505,49 +568,22 @@ fn drive_builds(
                 state.docs[doc_index].render.state = RenderState::Failed(e.clone());
                 state.error(format!("Cannot draw {path}: {e}"));
             }
-            Ok(out) => {
-                let BuildOutput {
-                    items,
-                    geometry,
-                    missing,
-                    layout,
-                    pixels,
-                    bounds,
-                    elapsed,
-                } = out;
+            Ok(mut out) => {
                 dr.tiles = res.tiles.clone().or_else(|| dr.tiles.take());
                 state.docs[doc_index].tiles = dr.tiles.clone();
-                if let Some(pixels) = pixels {
-                    let image = images.add(atlas_image(pixels));
-                    dr.material = Some(materials.add(TileMaterial { atlas: image }));
-                }
-                dr.layout = Some(layout.clone());
+                dr.layout = Some(out.layout.clone());
                 dr.layout_dt1 = res.key.dt1_files.clone();
-                dr.items = Some(items.clone());
-                dr.mesh_div = res.div;
-                let mesh = meshes.add(tex_mesh(geometry));
-                if let Some(material) = dr.material.clone() {
-                    match dr.tiles_entity {
-                        Some(e) => {
-                            commands
-                                .entity(e)
-                                .insert((Mesh2d(mesh), MeshMaterial2d(material)));
-                        }
-                        None => {
-                            dr.tiles_entity = Some(
-                                commands
-                                    .spawn((
-                                        MapTiles { doc: res.doc },
-                                        Mesh2d(mesh),
-                                        MeshMaterial2d(material),
-                                        Transform::default(),
-                                        Visibility::Hidden,
-                                    ))
-                                    .id(),
-                            );
-                        }
-                    }
-                }
+                install_build(
+                    &mut commands,
+                    dr,
+                    res.doc,
+                    &mut out,
+                    res.div,
+                    res.tick,
+                    &mut meshes,
+                    &mut images,
+                    &mut materials,
+                );
                 if dr.outline_entity.is_none() {
                     dr.outline_entity = Some(
                         commands
@@ -562,26 +598,42 @@ fn drive_builds(
                     );
                 }
                 dr.outline_div = None; // rebuilt by sync_outlines
-                dr.bounds = bounds;
-                dr.missing = missing;
+                dr.bounds = out.bounds;
+                dr.missing = std::mem::take(&mut out.missing);
+                let objects_epoch = res.key.objects;
                 dr.built = Some(res.key);
                 dr.failed = None;
+                let layout = out.layout.clone();
                 let status = &mut state.docs[doc_index].render;
                 status.state = RenderState::Ready;
                 status.missing = dr.missing.len();
                 status.missing_top = summarize_missing(&dr.missing, 6);
-                status.tiles_drawn = items.len();
+                status.tiles_drawn = out.tile_count;
+                status.objects_drawn = out.object_count;
+                status.objects_epoch = objects_epoch;
+                status.missing_objects = out
+                    .missing_objects
+                    .iter()
+                    .map(|m| (m.index, m.reason.to_string()))
+                    .collect();
+                status.object_boxes = Arc::new(scene::object_boxes(&out.entries, None));
                 status.atlas = Some((layout.size, layout.layers));
                 status.warnings = res.warnings.clone();
-                status.millis = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
+                status.millis = u64::try_from(out.elapsed.as_millis()).unwrap_or(u64::MAX);
                 let message = format!(
-                    "Drew {path}: {} tiles, {} missing, atlas {}x{}x{} ({} ms)",
-                    items.len(),
+                    "Drew {path}: {} tiles, {} object sprites{}, {} missing, atlas {}x{}x{} ({} ms)",
+                    out.tile_count,
+                    out.object_count,
+                    if objects_epoch.is_some() {
+                        ""
+                    } else {
+                        " (object tables not loaded yet)"
+                    },
                     dr.missing.len(),
                     layout.size,
                     layout.size,
                     layout.layers,
-                    elapsed.as_millis()
+                    out.elapsed.as_millis()
                 );
                 for w in &res.warnings {
                     state.warn(format!("{path}: {w}"));
@@ -596,6 +648,7 @@ fn drive_builds(
         .session
         .as_ref()
         .map(|s| (s.profile.id.clone(), s.overlay.clone()));
+    let tick = shown_tick(&state, &render);
     for i in 0..state.docs.len() {
         let doc = &state.docs[i];
         let id = doc.id;
@@ -608,7 +661,7 @@ fn drive_builds(
             state.docs[i].render.state = RenderState::ProfileClosed;
             continue;
         };
-        let Some(wanted) = desired_key(doc, gamma) else {
+        let Some(wanted) = desired_key(doc, gamma, objects_epoch) else {
             continue; // waiting for the map catalog
         };
         if dr.built.as_ref() == Some(&wanted)
@@ -635,53 +688,85 @@ fn drive_builds(
         if doc.render.state != RenderState::Ready {
             doc.render.state = RenderState::Loading;
         }
-        spawn_job(
-            &render.tx,
-            JobRequest {
-                doc: id,
-                ticket,
-                div,
-                key: wanted,
-                profile,
-                overlay,
-                tiles,
-                ds1,
-                prior,
-            },
-        );
+        let catalog = wanted.objects.and(catalog.clone());
+        render.worker.send(JobRequest {
+            doc: id,
+            ticket,
+            div,
+            tick,
+            key: wanted,
+            profile,
+            overlay,
+            tiles,
+            ds1,
+            prior,
+            catalog,
+        });
     }
 }
 
-/// Re-lay the quads of the active map out when the zoom divisor changed:
-/// DS1Edit places tiles on the zoomed pixel grid, see [`geometry::quad_origin`].
-fn sync_zoom_geometry(
+/// The animation tick the map shows now.
+fn shown_tick(state: &AppState, render: &MapRender) -> Option<u32> {
+    shown_tick_at(state, render, state.objects.clock)
+}
+
+fn shown_tick_at(state: &AppState, render: &MapRender, seconds: f64) -> Option<u32> {
+    if render.static_objects {
+        return None;
+    }
+    crate::objects::shown_tick(
+        state.config.animate_objects,
+        state.objects.frame_tick,
+        seconds,
+    )
+}
+
+/// Re-lays the active map out when the zoom divisor changed (DS1Edit places
+/// tiles on the zoomed pixel grid, see [`geometry::quad_origin`]), and the
+/// object pieces whose animation frame changed.
+fn sync_scene(
     mut commands: Commands,
-    state: Res<AppState>,
+    time: Res<Time>,
+    mut state: ResMut<AppState>,
     mut render: ResMut<MapRender>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
+    state.objects.clock = time.elapsed_secs_f64();
     let Some(doc) = state.active_doc() else {
         return;
     };
     let div = render.div_for(doc);
-    let Some(dr) = render.docs.get_mut(&doc.id) else {
+    let tick = shown_tick(&state, &render);
+    let id = doc.id;
+    let Some(dr) = render.docs.get_mut(&id) else {
         return;
     };
-    if dr.mesh_div == div || dr.in_flight.is_some() {
-        return;
-    }
-    let (Some(items), Some(layout), Some(tiles), Some(entity)) = (
-        dr.items.clone(),
+    let (Some(entries), Some(layout), Some(tiles), Some(class_mats)) = (
+        dr.entries.clone(),
         dr.layout.clone(),
         dr.tiles.clone(),
-        dr.tiles_entity,
+        dr.materials.clone(),
     ) else {
         return;
     };
-    let geometry = geometry::build_quads(&items, &layout, div, &|r| tiles.geometry(r));
-    commands
-        .entity(entity)
-        .insert(Mesh2d(meshes.add(tex_mesh(geometry))));
+    let zoom_changed = dr.mesh_div != div;
+    let mut changed = false;
+    for pr in &mut dr.pieces {
+        if !zoom_changed && !pr.piece.objects {
+            continue;
+        }
+        let frames = scene::piece_frames(&entries, &pr.piece, tick);
+        if !zoom_changed && frames == pr.frames {
+            continue;
+        }
+        let runs = scene::build_piece(&entries, &pr.piece, &layout, div, &|r| tiles.geometry(r), tick);
+        install_runs(&mut commands, &mut meshes, &class_mats, id, &mut pr.slots, runs);
+        pr.frames = frames;
+        changed = true;
+    }
+    if changed {
+        assign_z(&mut commands, dr);
+    }
     dr.mesh_div = div;
 }
 

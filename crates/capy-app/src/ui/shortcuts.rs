@@ -7,7 +7,7 @@
 //! | Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z | undo, redo |
 //! | Ctrl+C, Ctrl+X, Ctrl+V | copy, cut, paste preview |
 //! | Ctrl+A, Ctrl+D | select all on the active layer, deselect |
-//! | Delete | delete selected objects, else erase the selected cells |
+//! | Delete | Path tool: delete the selected path point; else delete selected objects, else erase the selected cells |
 //! | Esc | cancel the paste preview, the gesture, or a dialog; else deselect |
 //! | M L T S P E I O | tools: box, lasso, tile ID, identical, paint, erase, eyedropper, objects |
 //! | G | grid |
@@ -19,6 +19,7 @@ use capy_edit::{LayerRef, SelectOp};
 use super::map_tools;
 use crate::edit::ops::EditOp;
 use crate::edit::tools::Tool;
+use crate::objects::ObjectMode;
 use crate::state::AppState;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +105,32 @@ fn read(ctx: &egui::Context, paste_active: bool) -> Vec<Action> {
     out
 }
 
+/// Actions that change the map, which a history snapshot shown in place of
+/// the map (read-only) refuses, like the mouse tools do.
+fn edits_the_map(action: Action) -> bool {
+    matches!(
+        action,
+        Action::Undo
+            | Action::Redo
+            | Action::Cut
+            | Action::Paste
+            | Action::Delete
+            | Action::CommitPaste
+    )
+}
+
+/// The toast a refused keyboard edit shows.
+pub const SNAPSHOT_READ_ONLY: &str = "Viewing a snapshot: turn it off to edit";
+
+/// True (after a toast) when the active map shows a history snapshot.
+pub fn refuse_in_snapshot(state: &mut AppState) -> bool {
+    if state.active_doc().is_some_and(|d| d.snapshot_view.is_some()) {
+        state.notify(SNAPSHOT_READ_ONLY);
+        return true;
+    }
+    false
+}
+
 pub fn handle(ctx: &egui::Context, state: &mut AppState) {
     if state.edit.modal_open()
         || state.history.modal_open()
@@ -118,6 +145,12 @@ pub fn handle(ctx: &egui::Context, state: &mut AppState) {
 }
 
 fn apply(state: &mut AppState, action: Action) {
+    if edits_the_map(action) && refuse_in_snapshot(state) {
+        if action == Action::Paste || action == Action::CommitPaste {
+            state.cancel_paste();
+        }
+        return;
+    }
     match action {
         Action::Save => state.save_active(),
         Action::Undo => state.undo(),
@@ -136,6 +169,9 @@ fn apply(state: &mut AppState, action: Action) {
         Action::Tool(tool) => {
             map_tools::cancel_gesture(state);
             state.edit.tool = tool;
+            if tool == Tool::Objects {
+                state.objects.focus = true;
+            }
         }
         Action::Grid => state.edit.grid = !state.edit.grid,
         Action::Escape => {
@@ -169,9 +205,17 @@ pub fn select_all(state: &mut AppState) {
         .box_select(&doc.ds1, rect, &[layer], false, SelectOp::Replace);
 }
 
-/// Delete: the selected objects, else the selected cells.
+/// Delete: the selected path point (Path tool), else the selected objects,
+/// else the selected cells.
 pub fn delete(state: &mut AppState) {
     let Some(index) = state.active else { return };
+    if state.edit.tool == Tool::Objects && state.objects.mode == ObjectMode::Path {
+        let len = state.selected_path().len();
+        if let Some(cmd) = state.objects.path.delete(len) {
+            state.run_path_command(cmd);
+        }
+        return;
+    }
     let doc = &state.docs[index];
     if !doc.object_sel.is_empty() {
         let indices = doc.object_sel.clone();

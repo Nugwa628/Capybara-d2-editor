@@ -12,6 +12,7 @@ mod map_tools;
 mod map_view;
 mod maps;
 mod menu;
+pub mod objects;
 mod palette;
 mod properties;
 mod settings;
@@ -49,6 +50,9 @@ pub enum Panel {
     SpritePreview,
     /// Optional (in the default layout): snapshots, diff, milestones.
     History,
+    /// Optional (in the default layout): object properties, NPC path, the
+    /// "Add object" picker.
+    Objects,
 }
 
 impl Panel {
@@ -72,6 +76,7 @@ impl Panel {
             Panel::Log => "Log",
             Panel::SpritePreview => "Sprite preview",
             Panel::History => "History",
+            Panel::Objects => "Objects",
         }
     }
 }
@@ -123,7 +128,12 @@ pub fn default_layout() -> DockState<Panel> {
     let [centre, _right] = main.split_right(
         centre,
         0.78,
-        vec![Panel::Layers, Panel::Properties, Panel::History],
+        vec![
+            Panel::Layers,
+            Panel::Objects,
+            Panel::Properties,
+            Panel::History,
+        ],
     );
     let [_centre, _bottom] = main.split_below(centre, 0.76, vec![Panel::Log]);
     state
@@ -250,6 +260,24 @@ impl Dock {
         }
     }
 
+    pub fn has_objects(&self) -> bool {
+        self.map.find_tab(&Panel::Objects).is_some()
+    }
+
+    /// Bring the Objects panel to the front, adding it next to Layers when
+    /// the layout has none.
+    pub fn show_objects(&mut self) {
+        if self.map.find_tab(&Panel::Objects).is_none() {
+            if let Some(p) = self.map.find_tab(&Panel::Layers) {
+                self.map.set_focused_node_and_surface(p.node_path());
+            }
+            self.map.push_to_focused_leaf(Panel::Objects);
+        }
+        if let Some(location) = self.map.find_tab(&Panel::Objects) {
+            let _ = self.map.set_active_tab(location);
+        }
+    }
+
     /// Show or hide the Sprite preview panel (View menu).
     pub fn toggle_sprite_preview(&mut self) {
         match self.map.find_tab(&Panel::SpritePreview) {
@@ -304,11 +332,12 @@ impl TabViewer for Viewer<'_> {
             Panel::Log => log::show(ui, self.state),
             Panel::SpritePreview => sprites::preview::show(ui, self.state),
             Panel::History => history::show(ui, self.state),
+            Panel::Objects => objects::show(ui, self.state),
         }
     }
 
     fn is_closeable(&self, tab: &Panel) -> bool {
-        matches!(tab, Panel::SpritePreview | Panel::History)
+        matches!(tab, Panel::SpritePreview | Panel::History | Panel::Objects)
     }
 
     /// The Map panel is transparent so Bevy's scene shows through.
@@ -411,6 +440,9 @@ pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     focus_sprites_panel(state, dock);
     if std::mem::take(&mut state.history.focus) {
         dock.show_history();
+    }
+    if std::mem::take(&mut state.objects.focus) {
+        dock.show_objects();
     }
     if std::mem::take(&mut state.browser.focus_tiles)
         && let Some(location) = dock.map.find_tab(&Panel::Tiles)

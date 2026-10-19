@@ -120,6 +120,12 @@ impl AppState {
                     doc.object_sel.clear();
                 }
             }
+            OpOutcome::Added(object) => {
+                if let Some(doc) = self.docs.get_mut(index) {
+                    doc.object_sel = vec![object];
+                }
+                self.objects.path.follow_object(Some(object));
+            }
         }
     }
 

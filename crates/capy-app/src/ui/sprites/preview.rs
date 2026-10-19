@@ -31,16 +31,16 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         ui.weak("No profile is open.");
         return;
     };
-    let (overlay, game_version) = (session.overlay.clone(), session.profile.game_version);
+    let overlay = session.overlay.clone();
     let epoch = state.session_epoch;
-    let catalog = match state.sprites.preview.catalog(epoch, &overlay, game_version) {
-        Ok(Some(c)) => c,
-        Ok(None) => {
+    let catalog = match state.objects.catalog.poll(epoch) {
+        crate::objects::catalog::CatalogPoll::Ready(c) => c,
+        crate::objects::catalog::CatalogPoll::Pending => {
             ui.weak("Loading the object tables...");
             ui.ctx().request_repaint();
             return;
         }
-        Err(e) => {
+        crate::objects::catalog::CatalogPoll::Failed(e) => {
             ui.colored_label(
                 Color32::from_rgb(235, 90, 90),
                 format!("Object tables: {e}"),

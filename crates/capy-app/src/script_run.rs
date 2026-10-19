@@ -56,6 +56,9 @@ struct Shot {
     started: Instant,
     requested: bool,
     frames: u32,
+    /// When the map was first seen drawn: the settle time counts from
+    /// there, so the atlas upload and pipelines are done.
+    drawn_since: Option<Instant>,
 }
 
 #[derive(Resource, Default)]
@@ -257,6 +260,7 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
             started: Instant::now(),
             requested: false,
             frames: 0,
+            drawn_since: None,
         }));
     }
     let Some(index) = state.active else {
@@ -384,6 +388,7 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
             started: Instant::now(),
             requested: false,
             frames: 0,
+            drawn_since: None,
         })),
         Cmd::PreviewPaste { x, y, mode } => {
             let Some(clip) = state.edit.clipboard.clone() else {
@@ -1107,12 +1112,17 @@ fn poll_shot(commands: &mut Commands, state: &mut AppState, mut shot: Shot) -> S
     let drawn = state.config.mode == AppMode::Sprites
         || state.active_doc().is_none_or(|d| {
             d.fitted
-                && matches!(
-                    d.render.state,
-                    RenderState::Ready | RenderState::Failed(_) | RenderState::ProfileClosed
-                )
+                && (matches!(d.render.state, RenderState::Failed(_) | RenderState::ProfileClosed)
+                    || (d.render.state == RenderState::Ready && state.objects_settled(d)))
         });
-    let settled = shot.started.elapsed().as_secs_f32() >= SETTLE_SECS && shot.frames >= 30;
+    if !drawn {
+        shot.drawn_since = None;
+    } else if shot.drawn_since.is_none() {
+        shot.drawn_since = Some(Instant::now());
+    }
+    let settled = shot.started.elapsed().as_secs_f32() >= SETTLE_SECS
+        && shot.drawn_since.is_some_and(|t| t.elapsed().as_secs_f32() >= SETTLE_SECS / 2.0)
+        && shot.frames >= 30;
     if drawn && settled {
         if let Some(dir) = shot.file.parent() {
             let _ = std::fs::create_dir_all(dir);

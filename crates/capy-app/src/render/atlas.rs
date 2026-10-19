@@ -41,11 +41,49 @@ pub struct Rect {
     pub h: u32,
 }
 
-/// What an atlas entry is: a tile, baked either as terrain or as a shadow.
+/// How a sprite layer image is baked (see the module docs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SpriteBake {
+    /// `(r, g, b, 255)`: Normal, and the source of the Additive, Multiply
+    /// and Screen pipelines.
+    Opaque,
+    /// The reference's tinted draw with weight `w / 255` (Alpha25/50/75):
+    /// `rgb = s * w^2`, `a = w`.
+    Tinted(u8),
+    /// A black silhouette with coverage `w / 255` (`Blend::Darken`):
+    /// `(0, 0, 0, w)`.
+    Silhouette(u8),
+}
+
+/// What an atlas entry is: a tile (baked as terrain or as a shadow), or one
+/// object sprite layer image with a bake.
+///
+/// Sprite images are keyed by the address of their `Arc`: `ObjectSprites`
+/// caches every frame as an `Arc`, and the layout keeps a clone of each
+/// baked one ([`AtlasLayout::sprites`]), so an address can never be reused
+/// for other pixels while a layout refers to it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct AtlasKey {
-    pub tile: TileRef,
-    pub shadow: bool,
+pub enum AtlasKey {
+    Tile { tile: TileRef, shadow: bool },
+    Sprite { image: usize, bake: SpriteBake },
+}
+
+impl AtlasKey {
+    pub fn tile(tile: TileRef, shadow: bool) -> AtlasKey {
+        AtlasKey::Tile { tile, shadow }
+    }
+
+    pub fn sprite(image: &std::sync::Arc<IndexedImage>, bake: SpriteBake) -> AtlasKey {
+        AtlasKey::Sprite {
+            image: std::sync::Arc::as_ptr(image) as usize,
+            bake,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn is_shadow_tile(&self) -> bool {
+        matches!(self, AtlasKey::Tile { shadow: true, .. })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -213,6 +251,45 @@ pub fn bake(image: &IndexedImage, palette: &Palette, shadow: bool) -> Vec<u8> {
     out
 }
 
+/// Premultiplied texel of a tinted draw: `round(s * (w/255)^2)`.
+pub fn tinted_texel(s: u8, w: u8) -> u8 {
+    let w = f64::from(w) / 255.0;
+    (f64::from(s) * w * w + 0.5) as u8
+}
+
+/// The tint byte of a blend weight, quantised as the reference's byte tint
+/// (`floor(weight * 255 + 0.5)`, as `d2_formats::blend` does).
+pub fn weight_byte(weight: f32) -> u8 {
+    (weight.clamp(0.0, 1.0) * 255.0 + 0.5).floor() as u8
+}
+
+/// Bakes a sprite layer: like [`bake`], but palette index 0 is transparent
+/// too (`compose_cof_frame`, `blit_sprite`), and the texels follow `mode`.
+pub fn bake_sprite(image: &IndexedImage, palette: &Palette, mode: SpriteBake) -> Vec<u8> {
+    let n = (image.width as usize) * (image.height as usize);
+    let mut out = Vec::with_capacity(n * 4);
+    for i in 0..n {
+        let alpha = image.alpha.get(i).copied().unwrap_or(0);
+        let index = image.pixels.get(i).copied().unwrap_or(0);
+        if alpha == 0 || index == 0 {
+            out.extend_from_slice(&[0, 0, 0, 0]);
+            continue;
+        }
+        let [r, g, b] = palette.colors[usize::from(index)];
+        match mode {
+            SpriteBake::Opaque => out.extend_from_slice(&[r, g, b, 255]),
+            SpriteBake::Tinted(w) => out.extend_from_slice(&[
+                tinted_texel(r, w),
+                tinted_texel(g, w),
+                tinted_texel(b, w),
+                w,
+            ]),
+            SpriteBake::Silhouette(w) => out.extend_from_slice(&[0, 0, 0, w]),
+        }
+    }
+    out
+}
+
 /// Which texels a palette/gamma combination was baked with; an atlas is only
 /// reusable for the same combination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,6 +305,10 @@ pub struct AtlasLayout {
     pub layers: u32,
     pub palette: PaletteKey,
     pub rects: HashMap<AtlasKey, Rect>,
+    /// The sprite images baked in, kept alive so their addresses (the
+    /// [`AtlasKey::Sprite`] keys) stay theirs.
+    #[allow(dead_code, reason = "held, never read: it keeps the images alive")]
+    pub sprites: Vec<std::sync::Arc<IndexedImage>>,
 }
 
 impl AtlasLayout {
@@ -264,8 +345,15 @@ pub fn build(
     let page_bytes = (packing.size as usize) * (packing.size as usize) * 4;
     let mut data = vec![0u8; page_bytes * packing.layers as usize];
     let mut rects = HashMap::with_capacity(unique.len());
+    let mut sprites = Vec::new();
     for ((key, img), rect) in unique.iter().zip(&packing.rects) {
-        let baked = bake(img, palette, key.shadow);
+        let baked = match key {
+            AtlasKey::Tile { shadow, .. } => bake(img, palette, *shadow),
+            AtlasKey::Sprite { bake: mode, .. } => {
+                sprites.push(std::sync::Arc::clone(img));
+                bake_sprite(img, palette, *mode)
+            }
+        };
         let row_bytes = (img.width as usize) * 4;
         for row in 0..img.height as usize {
             let dst = rect.layer as usize * page_bytes
@@ -286,6 +374,7 @@ pub fn build(
             layers: packing.layers,
             palette: palette_key,
             rects,
+            sprites,
         },
         AtlasPixels {
             size: packing.size,
@@ -437,10 +526,7 @@ mod tests {
             img.alpha = vec![255; (w * h) as usize];
             std::sync::Arc::new(img)
         };
-        let key = |dt1, tile, shadow| AtlasKey {
-            tile: TileRef { dt1, tile },
-            shadow,
-        };
+        let key = |dt1, tile, shadow| AtlasKey::tile(TileRef { dt1, tile }, shadow);
         let entries = vec![
             (key(0, 0, false), mk(3, 5, 4)),
             (key(0, 1, false), mk(4, 7, 3)),
