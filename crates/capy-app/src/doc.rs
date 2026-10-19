@@ -3,7 +3,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use d2_assets::GamePath;
+use capy_render::Visibility;
+use d2_assets::{GamePath, MapInfo};
 use d2_formats::ds1::Ds1;
 
 use crate::config::LayerVisibility;
@@ -99,6 +100,55 @@ pub struct SourceInfo {
     pub layer_name: String,
 }
 
+/// Where the textured rendering of a map stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RenderState {
+    /// The map catalog has not told us the LvlType and DT1 list yet.
+    WaitingForContext,
+    /// The DT1s, atlas or mesh are being built.
+    Loading,
+    Ready,
+    Failed(String),
+    /// The map belongs to a profile other than the one now open.
+    ProfileClosed,
+}
+
+/// What the last finished build produced, for the Properties panel.
+#[derive(Clone, Debug)]
+pub struct RenderStatus {
+    pub state: RenderState,
+    /// Visible non-empty cells (per layer) with no tile.
+    pub missing: usize,
+    /// The most frequent missing keys, as text.
+    pub missing_top: Vec<String>,
+    pub tiles_drawn: usize,
+    /// `(page size, layers)` of the atlas.
+    pub atlas: Option<(u32, u32)>,
+    /// DT1s that could not be read.
+    pub warnings: Vec<String>,
+    pub millis: u64,
+}
+
+impl Default for RenderStatus {
+    fn default() -> Self {
+        RenderStatus {
+            state: RenderState::WaitingForContext,
+            missing: 0,
+            missing_top: Vec::new(),
+            tiles_drawn: 0,
+            atlas: None,
+            warnings: Vec::new(),
+            millis: 0,
+        }
+    }
+}
+
+impl RenderStatus {
+    pub fn is_ready(&self) -> bool {
+        self.state == RenderState::Ready
+    }
+}
+
 pub struct MapDoc {
     pub id: u64,
     pub profile_id: String,
@@ -109,6 +159,13 @@ pub struct MapDoc {
     pub rev: u64,
     pub hidden: BTreeSet<LayerKey>,
     pub objects_visible: bool,
+    /// Roof tiles (orientation 15), drawn by default.
+    pub roofs_visible: bool,
+    /// Special tiles (orientation 10 and 11), hidden by default.
+    pub special_visible: bool,
+    /// How the game would load this map; `None` until the catalog is ready.
+    pub info: Option<MapInfo>,
+    pub render: RenderStatus,
     pub view: View,
     /// False until the view has been fitted to the viewport once.
     pub fitted: bool,
@@ -146,6 +203,10 @@ impl MapDoc {
             rev: 1,
             hidden,
             objects_visible: defaults.objects,
+            roofs_visible: true,
+            special_visible: false,
+            info: None,
+            render: RenderStatus::default(),
             view: View::default(),
             fitted: false,
             dirty: false,
@@ -166,6 +227,24 @@ impl MapDoc {
         } else {
             self.hidden.insert(key);
         }
+    }
+
+    /// The layer toggles in the form `capy-render` takes.
+    pub fn visibility(&self) -> Visibility {
+        let mut vis = Visibility {
+            roofs: self.roofs_visible,
+            special: self.special_visible,
+            objects: self.objects_visible,
+            shadow: self.is_visible(LayerKey::Shadow),
+            ..Visibility::default()
+        };
+        for (i, v) in vis.floors.iter_mut().enumerate() {
+            *v = self.is_visible(LayerKey::Floor(i));
+        }
+        for (i, v) in vis.walls.iter_mut().enumerate() {
+            *v = self.is_visible(LayerKey::Wall(i));
+        }
+        vis
     }
 
     /// File name for the tab, with the dirty marker.
@@ -208,6 +287,32 @@ mod tests {
         );
         assert!(ds1.add_wall_layer().is_ok());
         assert_eq!(layer_keys(&ds1).len(), 4);
+    }
+
+    #[test]
+    fn visibility_maps_layer_toggles_for_the_renderer() {
+        let mut doc = MapDoc::new(
+            1,
+            "p".into(),
+            GamePath::new("data\\a.ds1"),
+            SourceInfo {
+                category: SourceCategory::Base,
+                layer_name: "d2data.mpq".into(),
+            },
+            Ds1::new(2, 2, 0),
+            &LayerVisibility::default(),
+        );
+        let vis = doc.visibility();
+        assert_eq!(vis, Visibility::default(), "special tiles start hidden");
+        doc.set_visible(LayerKey::Floor(1), false);
+        doc.set_visible(LayerKey::Wall(2), false);
+        doc.set_visible(LayerKey::Shadow, false);
+        doc.special_visible = true;
+        doc.roofs_visible = false;
+        let vis = doc.visibility();
+        assert_eq!(vis.floors, [true, false]);
+        assert_eq!(vis.walls, [true, true, false, true]);
+        assert!(!vis.shadow && !vis.roofs && vis.special);
     }
 
     #[test]

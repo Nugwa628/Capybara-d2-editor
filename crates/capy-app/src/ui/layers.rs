@@ -34,6 +34,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         doc.set_visible(key, visible);
     }
 
+    ui.checkbox(&mut doc.roofs_visible, "Roofs")
+        .on_hover_text("Roof tiles (orientation 15)");
+    ui.checkbox(&mut doc.special_visible, "Special tiles")
+        .on_hover_text("Orientation 10 and 11 markers; hidden by default");
+
     ui.separator();
     ui.horizontal(|ui| {
         ui.checkbox(&mut doc.objects_visible, "Objects");

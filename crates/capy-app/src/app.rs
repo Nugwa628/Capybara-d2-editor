@@ -14,7 +14,7 @@ use d2_assets::Profile;
 use crate::config::{self, Config};
 use crate::hooks::{self, DebugHooks};
 use crate::paths::Paths;
-use crate::render::{MapCamera, RenderPlugin};
+use crate::render::{MapCamera, MapRender, RenderPlugin};
 use crate::state::AppState;
 use crate::ui::{self, Dock};
 
@@ -85,7 +85,7 @@ pub fn prepare(paths: Paths) -> Prepared {
         }
     };
 
-    let (dock, dock_problem) = Dock::load(&paths.layout_file);
+    let (dock, dock_problems) = Dock::load(&paths.layout_file, &paths.sprites_layout_file);
     let mut state = AppState::new(paths.clone(), config, profiles);
     state.info(format!("Data folder: {}", paths.root.display()));
     for (is_error, text) in notes {
@@ -95,7 +95,7 @@ pub fn prepare(paths: Paths) -> Prepared {
             state.info(text);
         }
     }
-    if let Some(p) = dock_problem {
+    for p in dock_problems {
         state.warn(p);
     }
     if state.profiles.is_empty() {
@@ -192,11 +192,15 @@ fn setup_cameras(mut commands: Commands, mut egui: ResMut<EguiGlobalSettings>) {
             order: 0,
             ..default()
         },
+        crate::render::map_camera_extras(),
     ));
     commands.spawn((
         PrimaryEguiContext,
         Camera2d,
         RenderLayers::none(),
+        // Cameras on one target share its depth texture, so they must agree
+        // with the map camera on the sample count.
+        bevy::render::view::Msaa::Off,
         Camera {
             order: 1,
             output_mode: bevy::camera::CameraOutputMode::Write {
@@ -210,7 +214,17 @@ fn setup_cameras(mut commands: Commands, mut egui: ResMut<EguiGlobalSettings>) {
 }
 
 /// Open the profile from the last session (or `CAPY_PROFILE`).
-fn begin_startup_profile(mut state: ResMut<AppState>, hooks: Res<DebugHooks>) {
+fn begin_startup_profile(
+    mut state: ResMut<AppState>,
+    hooks: Res<DebugHooks>,
+    mut render: ResMut<MapRender>,
+) {
+    state.forced_context = hooks.forced_context;
+    state.index_disabled = hooks.no_index;
+    if hooks.map_only {
+        render.force_div = Some(hooks.map_only_div());
+        render.hide_outlines = true;
+    }
     let wanted = hooks
         .profile
         .clone()
@@ -231,7 +245,11 @@ fn ui_system(
     mut contexts: EguiContexts,
     mut state: ResMut<AppState>,
     mut dock: ResMut<Dock>,
+    hooks: Res<DebugHooks>,
 ) -> Result {
+    if hooks.map_only {
+        return Ok(()); // the map-only screenshot has no UI
+    }
     let ctx = contexts.ctx_mut()?.clone();
     ui::draw(&ctx, &mut state, &mut dock);
     Ok(())
@@ -269,7 +287,8 @@ fn write_out(state: &mut AppState, dock: &mut Dock) {
         }
     }
     let layout_file = state.paths.layout_file.clone();
-    if let Err(e) = dock.save_if_changed(&layout_file) {
+    let sprites_file = state.paths.sprites_layout_file.clone();
+    if let Err(e) = dock.save_if_changed(&layout_file, &sprites_file) {
         state.warn(format!("Could not save the panel layout: {e}"));
     }
 }

@@ -5,6 +5,7 @@ mod config;
 mod doc;
 mod fatal;
 mod hooks;
+mod index_task;
 mod iso;
 mod paths;
 mod render;

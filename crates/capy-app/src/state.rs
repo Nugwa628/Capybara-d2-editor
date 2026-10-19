@@ -6,13 +6,14 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 use bevy::prelude::Resource;
 use bevy_egui::egui;
-use d2_assets::{GamePath, LayerId, Overlay, Profile};
+use d2_assets::{GamePath, LayerId, MapCatalog, Overlay, Profile};
 use d2_formats::ds1::Ds1;
 
 use crate::config::Config;
-use crate::doc::{MapDoc, SourceCategory, SourceInfo, categorize_source};
+use crate::doc::{MapDoc, RenderState, SourceCategory, SourceInfo, categorize_source};
+use crate::index_task::{self, IndexState, IndexTask};
 use crate::paths::Paths;
-use crate::tasks::{self, SessionData, TaskEvent};
+use crate::tasks::{self, CatalogData, SessionData, TaskEvent};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogLevel {
@@ -35,10 +36,52 @@ pub struct Toast {
 
 /// What a finished background open produced, for the open profile.
 pub struct Session {
+    /// The request that produced it; background results carry the same number.
+    pub generation: u64,
     pub profile: Profile,
     pub overlay: std::sync::Arc<Overlay>,
     pub maps: Vec<GamePath>,
     pub summary: String,
+}
+
+/// The map catalog (LvlType, Def, act and DT1 list per DS1) of the open profile.
+pub enum CatalogState {
+    /// No profile yet.
+    None,
+    Building,
+    Ready(Box<MapCatalog>),
+    Failed(String),
+}
+
+impl CatalogState {
+    pub fn ready(&self) -> Option<&MapCatalog> {
+        match self {
+            CatalogState::Ready(c) => Some(c),
+            _ => None,
+        }
+    }
+}
+
+/// Edit buffer of the LvlType/Def override pickers for one document.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OverrideEdit {
+    /// The document the buffer was filled for.
+    pub doc: Option<u64>,
+    pub lvl_type: u32,
+    pub def_text: String,
+}
+
+impl OverrideEdit {
+    /// The Def typed by the user: empty means none, anything else must parse.
+    pub fn def(&self) -> Result<Option<u32>, String> {
+        let t = self.def_text.trim();
+        if t.is_empty() {
+            return Ok(None);
+        }
+        t.parse::<u32>()
+            .map(Some)
+            .map_err(|_| format!("{t:?} is not a Def number"))
+    }
 }
 
 /// A background open in flight.
@@ -70,6 +113,15 @@ pub struct AppState {
     /// Bumped whenever `session` changes, to invalidate list caches.
     pub session_epoch: u64,
     pub loading: Option<Loading>,
+    pub catalog: CatalogState,
+    pub index: IndexTask,
+    /// Debug hook: use this LvlType (and Def) for every map that is opened,
+    /// instead of the catalog's best guess. Never persisted.
+    pub forced_context: Option<(u32, Option<u32>)>,
+    /// Debug hook: do not build the asset index.
+    pub index_disabled: bool,
+    /// The Properties panel's LvlType/Def pickers.
+    pub override_edit: OverrideEdit,
     generation: u64,
     tx: Sender<TaskEvent>,
     rx: Mutex<Receiver<TaskEvent>>,
@@ -102,6 +154,11 @@ impl AppState {
             session: None,
             session_epoch: 0,
             loading: None,
+            catalog: CatalogState::None,
+            index: IndexTask::new(),
+            forced_context: None,
+            index_disabled: false,
+            override_edit: OverrideEdit::default(),
             generation: 0,
             tx,
             rx: Mutex::new(rx),
@@ -176,6 +233,8 @@ impl AppState {
         self.info(format!("Opening profile {} ({})", profile.name, profile.id));
         self.config.last_profile = Some(profile.id.clone());
         self.config_dirty = true;
+        // Whatever the old profile's index was doing is moot now.
+        self.index.cancel();
         tasks::spawn_open(
             self.generation,
             profile,
@@ -205,6 +264,19 @@ impl AppState {
                         l.stage = text;
                     }
                 }
+                TaskEvent::Catalog { generation, result } => {
+                    if self.session.as_ref().map(|s| s.generation) != Some(generation) {
+                        continue;
+                    }
+                    self.install_catalog(result);
+                }
+                TaskEvent::Index { generation, event } => {
+                    let before = self.index.state.clone();
+                    self.index.apply(generation, event);
+                    if self.index.state != before {
+                        self.log_index_transition(&before);
+                    }
+                }
                 TaskEvent::Finished { generation, result } => {
                     if self.loading.as_ref().map(|l| l.generation) != Some(generation) {
                         continue; // superseded by a newer request
@@ -229,6 +301,7 @@ impl AppState {
             elapsed,
         } = data;
         let maps = tasks::ds1_list(&names);
+        let generation = self.generation;
         self.info(format!(
             "Profile {} ready in {:.1}s: {summary}; {} maps{}",
             profile.id,
@@ -240,7 +313,23 @@ impl AppState {
                 " (names cache refreshed)"
             }
         ));
+        self.catalog = CatalogState::Building;
+        let overrides = self
+            .config
+            .overrides_for(&profile.id)
+            .map(|o| (GamePath::new(&o.ds1), o.lvl_type, o.def))
+            .collect();
+        tasks::spawn_catalog(
+            generation,
+            overlay.clone(),
+            profile.game_version,
+            maps.clone(),
+            overrides,
+            self.tx.clone(),
+        );
+        self.start_index(&profile, overlay.clone());
         self.session = Some(Session {
+            generation,
             profile,
             overlay,
             maps,
@@ -251,6 +340,188 @@ impl AppState {
             filter: std::mem::take(&mut self.maps_list.filter),
             ..MapsList::default()
         };
+    }
+
+    // ───────── map catalog ─────────
+
+    fn install_catalog(&mut self, result: Result<CatalogData, String>) {
+        match result {
+            Ok(CatalogData {
+                catalog,
+                warnings,
+                elapsed,
+            }) => {
+                for w in warnings.iter().take(20) {
+                    self.warn(format!("Map catalog: {w}"));
+                }
+                self.info(format!(
+                    "Map catalog ready in {:.1}s ({} LvlTypes, {} overrides, {} warnings)",
+                    elapsed.as_secs_f32(),
+                    catalog.lvl_type_ids().len(),
+                    catalog.overrides().len(),
+                    warnings.len()
+                ));
+                self.catalog = CatalogState::Ready(catalog);
+                for i in 0..self.docs.len() {
+                    self.refresh_doc_info(i);
+                }
+            }
+            Err(e) => {
+                self.error(format!("Could not build the map catalog: {e}"));
+                self.catalog = CatalogState::Failed(e);
+                for doc in &mut self.docs {
+                    if doc.render.state == RenderState::WaitingForContext {
+                        doc.render.state =
+                            RenderState::Failed("the map catalog could not be built".to_owned());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Looks up how the game loads document `i` (or applies the debug
+    /// override) once the catalog is ready.
+    fn refresh_doc_info(&mut self, i: usize) {
+        let Some(doc) = self.docs.get(i) else { return };
+        let in_open_profile = self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.profile.id == doc.profile_id);
+        if !in_open_profile {
+            return;
+        }
+        let Some(catalog) = self.catalog.ready() else {
+            return;
+        };
+        let path = doc.path.clone();
+        let info = match self.forced_context {
+            Some((lvl_type, def)) => catalog.resolve_explicit(&path, lvl_type, def).ok(),
+            None => catalog.best(&path),
+        };
+        if info.is_none() {
+            self.warn(format!("No map context for {path}"));
+        }
+        if let Some(doc) = self.docs.get_mut(i) {
+            doc.render.state = if info.is_some() {
+                RenderState::Loading
+            } else {
+                RenderState::Failed("no LvlType found for this map".to_owned())
+            };
+            doc.info = info;
+        }
+    }
+
+    /// Use `lvl_type` / `def` for every open copy of document `i`'s map and
+    /// remember it for the profile.
+    pub fn set_map_override(&mut self, i: usize, lvl_type: u32, def: Option<u32>) {
+        let Some(doc) = self.docs.get(i) else { return };
+        let (path, profile) = (doc.path.clone(), doc.profile_id.clone());
+        if !self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.profile.id == profile)
+        {
+            self.error("That map belongs to a profile that is not open");
+            return;
+        }
+        let CatalogState::Ready(catalog) = &mut self.catalog else {
+            self.error("The map catalog is not ready yet");
+            return;
+        };
+        if let Err(e) = catalog.resolve_explicit(&path, lvl_type, def) {
+            self.error(format!("Cannot use LvlType {lvl_type} for {path}: {e}"));
+            return;
+        }
+        catalog.set_override(path.clone(), lvl_type, def);
+        self.config
+            .set_override(&profile, path.as_str(), lvl_type, def);
+        self.config_dirty = true;
+        self.refresh_infos_for(&path, &profile);
+        self.info(format!(
+            "{path}: LvlType {lvl_type}{} chosen by the user",
+            def.map(|d| format!(", Def {d}")).unwrap_or_default()
+        ));
+    }
+
+    /// Drop the user's choice for document `i`'s map.
+    pub fn clear_map_override(&mut self, i: usize) {
+        let Some(doc) = self.docs.get(i) else { return };
+        let (path, profile) = (doc.path.clone(), doc.profile_id.clone());
+        if let CatalogState::Ready(catalog) = &mut self.catalog {
+            catalog.clear_override(&path);
+        }
+        self.config.clear_override(&profile, path.as_str());
+        self.config_dirty = true;
+        self.refresh_infos_for(&path, &profile);
+    }
+
+    fn refresh_infos_for(&mut self, path: &GamePath, profile: &str) {
+        let indices: Vec<usize> = self
+            .docs
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| &d.path == path && d.profile_id == profile)
+            .map(|(i, _)| i)
+            .collect();
+        for i in indices {
+            self.refresh_doc_info(i);
+        }
+    }
+
+    // ───────── asset index ─────────
+
+    fn start_index(&mut self, profile: &Profile, overlay: std::sync::Arc<Overlay>) {
+        if self.index_disabled {
+            return;
+        }
+        let (generation, cancel) = self.index.begin();
+        let tx = self.tx.clone();
+        index_task::spawn(
+            self.paths.cache.clone(),
+            profile.clone(),
+            overlay,
+            cancel,
+            move |event| {
+                let _ = tx.send(TaskEvent::Index { generation, event });
+            },
+        );
+        self.info(format!("Asset index: checking {}", profile.id));
+    }
+
+    fn log_index_transition(&mut self, before: &IndexState) {
+        match (&self.index.state, before) {
+            (IndexState::Ready(s), _) => {
+                let text = if s.rebuilt {
+                    format!(
+                        "Asset index built: {} assets in {:.1}s ({} warnings)",
+                        s.assets,
+                        s.elapsed.as_secs_f32(),
+                        s.warnings
+                    )
+                } else {
+                    format!(
+                        "Asset index up to date: {} assets (checked in {:.2}s)",
+                        s.assets,
+                        s.elapsed.as_secs_f32()
+                    )
+                };
+                self.info(text);
+            }
+            (IndexState::Cancelled, _) => self.info("Asset index build cancelled"),
+            (IndexState::Failed(e), _) => {
+                let text = format!("Asset index failed: {e}");
+                self.error(text);
+            }
+            (IndexState::Building(_), IndexState::Checking) => {
+                self.info("Asset index is missing or stale; rebuilding in the background");
+            }
+            _ => {}
+        }
+    }
+
+    /// The Cancel button of the status bar.
+    pub fn cancel_index(&mut self) {
+        self.index.cancel();
     }
 
     // ───────── maps ─────────
@@ -343,6 +614,7 @@ impl AppState {
             &self.config.layer_visibility,
         ));
         self.active = Some(self.docs.len() - 1);
+        self.refresh_doc_info(self.docs.len() - 1);
     }
 
     pub fn close_doc(&mut self, index: usize) {

@@ -21,6 +21,8 @@ serde_json.workspace = true
 toml.workspace = true
 d2-formats.workspace = true
 d2-assets.workspace = true
+capy-render.workspace = true
+capy-index.workspace = true
 bevy = { workspace = true, features = [
     "std",
     "bevy_winit",
@@ -32,8 +34,6 @@ bevy = { workspace = true, features = [
     "bevy_mesh",
     "bevy_asset",
     "bevy_log",
-    "bevy_text",
-    "bevy_picking",
     "png",
     "multi_threaded",
 ] }
