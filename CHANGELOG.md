@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+- **Convert to palette** (Sprites tab, and right-click a tile set in the Tiles
+  browser): convert DT1 tiles and DC6/DCC sprites from one palette to another,
+  one file or a batch. Shows every used colour with its match and error,
+  lets you override any colour, change the matching settings and compare
+  before/after; nothing changes until you press Convert. "All acts (shared
+  colours only)" makes art that looks the same in every act. DT1 and DC6 keep
+  every byte except the colours.
+- The Sprites tab opens DT1 tile sets.
+- **Palette memory:** each file remembers its palette; a badge shows whether
+  the palette is remembered, suggested by the folder or not remembered, and
+  saving or importing with a different palette asks first.
+
+### Fixed
+- Saving from a batch while saving a map could drop an entry from
+  `CHANGED.txt`.
+
 ## [1.0.0] - 2026-10-19
 
 ### Changed

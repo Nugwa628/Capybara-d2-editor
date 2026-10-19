@@ -1,6 +1,6 @@
 # Capybara's D2 Editor (formerly Capybara Map Editor) — Plan
 
-Status: **Release 1.0.0 published** (2026-10-19, github.com/Nugwa628/Capybara-d2-editor). **P7 palette tools in progress.** Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC.
+Status: **Release 1.0.0 published** (2026-10-19, github.com/Nugwa628/Capybara-d2-editor). **P7 palette tools done on main** (not yet released). Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -163,6 +163,12 @@ Status: **Release 1.0.0 published** (2026-10-19, github.com/Nugwa628/Capybara-d2
 - 351 hazard sites reviewed, 76 reachable ones fixed (overflow on file values, allocations sized by unbacked counts, unbounded loops and recursion); no unsafe, exit, panic or unwrap outside tests.
 - Fuzz tests on every parser entry point; `PROPTEST_CASES=5000` release run: 800 passed, 0 failed. Both oracles (render 74 rows, edit oracle) identical to the pre-audit baselines.
 - New limits, far above shipped data: txt padding (4 cells/byte + 1 Mi), tbl strings (8x file size + 64 KiB), DT1/DC6 headers count against the read budget, milestone trees 64 levels, sprite batch scans 256 levels.
+
+### P7 acceptance (2026-10-19)
+- Library: `d2_formats::remap` on the full corpora: 643/643 readable DT1 and 4065/4065 DC6 give byte-identical output for the identity table and change only pixel bytes for an act5->act1 table (83.2 M bytes in 511 DT1, 6.5 M in 483 DC6); 47,939/47,939 DCC decode to the mapped frames. `capy_paint::remap` property-tested; act5->act1 default plan: 29 indices re-matched, mean 0.40, worst 10.5.
+- App: `palette_e2e` converts `expansion\siege\ground.dt1` Act 5 -> Act 1 with one override (output equals `remap_indices(original, table)`, only pixel bytes differ, CHANGED.txt, install untouched) and `ui\bigmenu\radiobutton.dc6` to all-acts shared colours (no index 225-254 left); palette badges survive a restart. Fact found: in-game UI, item and skill-icon DC6s use no index in 225-254; only menu/front-end art does.
+- Fixed on the way: concurrent saves (batch worker + main thread) could drop a CHANGED.txt entry; `SavesDir` now serialises CHANGED.txt updates (test fails without the lock).
+- Lead decisions on the app's open questions: "Use <remembered>" in the save warning switches palette and continues the save; a conversion to "All acts" is remembered as `act1` (it displays identically).
 
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
