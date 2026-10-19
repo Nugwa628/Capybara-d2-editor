@@ -10,8 +10,38 @@ publish.workspace = true
 name = "CapybaraMapEditor"
 path = "src/main.rs"
 
+[features]
+# Dev-only: `cargo run -p capy-app -F dev`. Never enabled for release builds.
+dev = ["bevy/dynamic_linking"]
+
 [dependencies]
 anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+d2-formats.workspace = true
+d2-assets.workspace = true
+bevy = { workspace = true, features = [
+    "std",
+    "bevy_winit",
+    "bevy_window",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_sprite",
+    "bevy_sprite_render",
+    "bevy_mesh",
+    "bevy_asset",
+    "bevy_log",
+    "bevy_text",
+    "bevy_picking",
+    "png",
+    "multi_threaded",
+] }
+bevy_egui.workspace = true
+egui_dock = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
