@@ -204,7 +204,7 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **`.tbl` strings** decode as Latin-1 for classic profiles (UTF-8 is a D2R concern); a missing key returns `None`.
 
 ## API contracts
-- `docs/api/d2-formats.md` and `docs/api/d2-assets.md` are the public APIs, owned by the lead. Agents implement against them and ask before changing them.
+- `docs/api/*.md` (d2-formats, d2-assets, capy-edit, capy-history, capy-index) are the public APIs, owned by the lead, including the index schema and naming rules in `capy-index.md`. Agents implement against them and ask before changing them.
 
 ## Deviations (with reasons)
 - **egui 0.36.2 instead of 0.37.** bevy_egui 0.43.1 and egui_dock 0.21.1 (the newest releases) both depend on egui 0.36.2; a direct egui 0.37 would put two eguis in the tree. Code uses `bevy_egui::egui`.
@@ -218,6 +218,7 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **Excel source preference per game version**: 1.13c reads `.bin` first, 1.14d reads `.txt` first (each falls back to the other). Vanilla ships identical data in both forms, so this only matters for mods.
 - **`LvlType.act` and `Level.act` are both 0-based**, like the DS1 act field (LvlTypes.txt stores 1-based acts).
 - **DS1 parse limits**: the header and cell layers must be complete; zero-padding past EOF is tolerated only in the object/group/NPC blocks, up to 256 bytes (the shipped short files need 12 and 4). `to_bytes` refuses any model the file's version cannot store, rather than silently dropping data.
+- **Phases overlap at the user's request (2026-10-19: "need this done fast").** While P0 wave 2 finishes, `capy-history` (P4), `capy-edit` (P2), `capy-index` (P1/P3 groundwork) and the `capy-app` shell (P1) are built in parallel against the API contracts in `docs/api/`. Each phase's acceptance tests must still pass before that phase is declared done, and each phase still ends with a summary to the user.
 - Repo-local git identity `ZF <112085691+Nugwa628@users.noreply.github.com>` was set because none existed.
 
 ## Open questions
