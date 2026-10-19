@@ -1,0 +1,322 @@
+# `d2-formats` public API (owner: lead)
+
+Pure parsing. No Bevy, no I/O beyond `&[u8]`, no `unsafe`, no panics on bad data.
+Changing anything here needs the lead's approval. Private helpers are free.
+
+```rust
+// ───────────── lib.rs ─────────────
+pub mod error;    pub use error::{FormatError, Result};
+pub mod grid;     pub use grid::Grid;
+pub mod image;    pub use image::IndexedImage;
+pub mod ds1;      // wave 1
+pub mod txt;      // wave 1
+pub mod excel;    // wave 1 (spike)
+pub mod tables;   // wave 1
+pub mod tbl;      // wave 1
+pub mod palette;  // wave 2
+pub mod dt1;      // wave 2
+pub mod dc6;      // wave 2
+pub mod dcc;      // wave 2
+pub mod cof;      // wave 2
+pub mod animdata; // wave 2
+
+// ───────────── error.rs ─────────────
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum FormatError {
+    #[error("{format}: unexpected end of data at offset {offset:#x} (needed {needed} more bytes)")]
+    Truncated { format: &'static str, offset: usize, needed: usize },
+    #[error("{format}: invalid {what} at offset {offset:#x}: {detail}")]
+    Invalid { format: &'static str, what: &'static str, offset: usize, detail: String },
+    #[error("{format}: unsupported version {version}")]
+    UnsupportedVersion { format: &'static str, version: i64 },
+    #[error("{format}: missing column {column:?}")]
+    MissingColumn { format: &'static str, column: String },
+    /// The model cannot be written in the requested file version
+    /// (e.g. two wall layers in a v3 DS1).
+    #[error("{format}: cannot write version {version}: {detail}")]
+    NotRepresentable { format: &'static str, version: i64, detail: String },
+}
+pub type Result<T, E = FormatError> = std::result::Result<T, E>;
+
+// ───────────── grid.rs ─────────────
+/// Row-major, x fastest.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Grid<T> { /* width: u32, height: u32, cells: Vec<T> */ }
+impl<T: Copy + Default> Grid<T> {
+    pub fn new(width: u32, height: u32) -> Self;
+    pub fn from_vec(width: u32, height: u32, cells: Vec<T>) -> Option<Self>; // None on len mismatch
+    pub fn width(&self) -> u32;
+    pub fn height(&self) -> u32;
+    pub fn get(&self, x: u32, y: u32) -> Option<T>;
+    pub fn get_mut(&mut self, x: u32, y: u32) -> Option<&mut T>;
+    pub fn set(&mut self, x: u32, y: u32, value: T) -> bool; // false when out of bounds
+    pub fn as_slice(&self) -> &[T];
+    pub fn as_mut_slice(&mut self) -> &mut [T];
+    /// New size, keeping the top-left overlap; new cells are `fill`.
+    pub fn resized(&self, width: u32, height: u32, fill: T) -> Self;
+}
+
+// ───────────── image.rs ─────────────
+/// Palette-indexed image. `alpha[i] == 0` is transparent, 255 opaque.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexedImage {
+    pub width: u32,
+    pub height: u32,
+    /// Position of pixel (0,0) relative to the tile/sprite anchor.
+    pub offset_x: i32,
+    pub offset_y: i32,
+    pub pixels: Vec<u8>,
+    pub alpha: Vec<u8>,
+}
+impl IndexedImage {
+    pub fn new(width: u32, height: u32, offset_x: i32, offset_y: i32) -> Self; // all transparent
+    pub fn to_rgba(&self, palette: &crate::palette::Palette) -> Vec<u8>;       // wave 2
+}
+
+// ───────────── ds1.rs ─────────────
+pub const MAX_WALL_LAYERS: usize = 4;
+pub const MAX_FLOOR_LAYERS: usize = 2;
+pub const WORKSPACE_PREFIX: &[u8] = b"DS1EDIT_WRKSPC_";
+/// Orientation remap applied to raw values when version < 7.
+pub const DIR_LOOKUP: [u8; 25];
+
+/// One cell dword of a wall/floor/shadow layer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct Cell(pub u32);
+impl Cell {
+    pub const EMPTY: Cell = Cell(0);
+    pub fn prop1(self) -> u8;          // bits 0-7
+    pub fn sub_index(self) -> u8;      // bits 8-15
+    pub fn main_index(self) -> u8;     // bits 20-25
+    pub fn unwalkable(self) -> bool;   // bit 17
+    pub fn hidden(self) -> bool;       // bit 31
+    pub fn is_empty(self) -> bool;     // rule confirmed against reference ds1.c / preview.c
+    pub fn with_indices(self, main: u8, sub: u8) -> Cell; // keeps all other bits
+    pub fn with_hidden(self, hidden: bool) -> Cell;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WallLayer {
+    pub tiles: Grid<Cell>,
+    /// Raw orientation dwords exactly as stored.
+    pub orientations: Grid<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Object { pub kind: i32, pub id: i32, pub x: i32, pub y: i32, pub flags: i32 } // flags: v>=6, else 0
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Group { pub x: i32, pub y: i32, pub width: i32, pub height: i32, pub unknown: i32 } // unknown: v>=13
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PathPoint { pub x: i32, pub y: i32, pub action: i32 } // action: v>=15, else 1
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NpcPath { pub x: i32, pub y: i32, pub points: Vec<PathPoint> }
+
+/// Bytes that are not part of the editable model but must survive a round trip.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Preserved {
+    pub unknown_v9_13: [i32; 2],   // v9..=13 only
+    pub pre_group_dword: i32,      // v>=18 with a group block
+    /// Bytes after the last block the version defines (e.g. the NPC count
+    /// v12/13 authoring tools wrote, swamp2.ds1's extra groups).
+    pub trailing: Vec<u8>,
+    /// Bytes the declared structure needed past EOF; they were read as zero.
+    /// `to_bytes` drops them again if they are still all zero.
+    pub missing: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ds1 {
+    pub version: i32,
+    pub width: u32,           // real width  (stored value + 1)
+    pub height: u32,          // real height (stored value + 1)
+    pub act: i32,             // raw stored value, 0-based; 0 when v<8
+    pub tag_type: i32,        // 0 when v<10
+    /// Raw file-list strings without their NUL, in order, including
+    /// DS1EDIT_WRKSPC_* entries. Empty when v<3.
+    pub files: Vec<Vec<u8>>,
+    pub walls: Vec<WallLayer>,
+    pub floors: Vec<Grid<Cell>>,
+    pub shadow: Grid<Cell>,
+    pub tag: Option<Grid<u32>>, // Some when v<4, or 1<=tag_type<=2
+    pub objects: Vec<Object>,
+    pub groups: Vec<Group>,
+    pub npc_paths: Vec<NpcPath>,
+    pub preserved: Preserved,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Ds1Report { pub missing_bytes: usize, pub trailing_bytes: usize, pub warnings: Vec<String> }
+
+impl Ds1 {
+    pub fn parse(bytes: &[u8]) -> Result<Ds1>;
+    pub fn parse_with_report(bytes: &[u8]) -> Result<(Ds1, Ds1Report)>;
+    /// Writes `self.version`'s layout. parse→to_bytes is byte-identical.
+    pub fn to_bytes(&self) -> Result<Vec<u8>>;
+    pub fn new(width: u32, height: u32, act: i32) -> Ds1; // v18, 1 wall, 1 floor, no tag
+    pub fn effective_act(&self) -> u8;                    // act clamped to 0..=4
+    /// Effective orientation (DIR_LOOKUP applied when version < 7).
+    pub fn orientation(&self, wall: usize, x: u32, y: u32) -> Option<u8>;
+    pub fn workspace_entries(&self) -> impl Iterator<Item = &[u8]>; // files starting with WORKSPACE_PREFIX
+    pub fn tileset_refs(&self) -> impl Iterator<Item = &[u8]>;      // the other files
+    pub fn add_wall_layer(&mut self) -> Result<usize>;  // NotRepresentable past MAX or for v<4
+    pub fn add_floor_layer(&mut self) -> Result<usize>; // NotRepresentable past MAX or for v<16
+    /// Smallest version >= self.version that can hold the current model.
+    pub fn min_version_for_model(&self) -> i32;
+}
+
+// ───────────── txt.rs ─────────────
+/// Tab-separated excel table. Latin-1 decoded, CRLF or LF, ragged rows padded with "".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxtTable { /* headers: Vec<String>, rows: Vec<Vec<String>> */ }
+impl TxtTable {
+    pub fn parse(bytes: &[u8]) -> Result<TxtTable>;
+    pub fn from_parts(headers: Vec<String>, rows: Vec<Vec<String>>) -> TxtTable;
+    pub fn headers(&self) -> &[String];
+    pub fn column(&self, name: &str) -> Option<usize>; // ASCII case-insensitive, first match
+    pub fn len(&self) -> usize;
+    pub fn is_empty(&self) -> bool;
+    pub fn row(&self, index: usize) -> Option<Row<'_>>;
+    pub fn rows(&self) -> impl Iterator<Item = Row<'_>>;
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Row<'a> { /* table: &'a TxtTable, index: usize */ }
+impl<'a> Row<'a> {
+    pub fn index(&self) -> usize;
+    pub fn get(&self, column: &str) -> Option<&'a str>;
+    pub fn get_i64(&self, column: &str) -> Option<i64>; // None when missing or empty
+    pub fn cells(&self) -> &'a [String];
+}
+
+// ───────────── excel.rs ─────────────
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ExcelVersion { V113c, V114d }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ExcelTableKind { LvlTypes, LvlPrest, LvlWarp, Objects, ObjPreset, Levels }
+impl ExcelTableKind {
+    pub fn file_stem(self) -> &'static str;       // "lvltypes", ...
+    pub fn all() -> &'static [ExcelTableKind];
+}
+pub fn record_size(kind: ExcelTableKind, version: ExcelVersion) -> usize;
+/// `.bin` = u32 record count + fixed-size records. Output uses the `.txt`
+/// column names; columns the record does not store are omitted. A layout may
+/// decode only a subset of columns (documented per table).
+pub fn decode_bin(kind: ExcelTableKind, version: ExcelVersion, bytes: &[u8]) -> Result<TxtTable>;
+/// The version whose record size fits the file, if exactly one does.
+pub fn detect_version(kind: ExcelTableKind, bytes: &[u8]) -> Option<ExcelVersion>;
+
+// ───────────── tables.rs ─────────────
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LvlType {
+    pub row: usize,
+    pub id: u32,
+    pub name: String,
+    pub act: u8,
+    /// File1..File32 by slot; None for empty or "0".
+    pub files: Vec<Option<String>>,
+    pub expansion: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LvlPrest {
+    pub row: usize,
+    pub def: u32,
+    pub level_id: i32,
+    pub name: String,
+    pub size_x: i32,
+    pub size_y: i32,
+    pub populate: bool,
+    pub logicals: bool,
+    pub outdoors: bool,
+    pub animate: bool,
+    pub kill_edge: bool,
+    pub fill_blanks: bool,
+    pub auto_map: bool,
+    pub scan: bool,
+    pub pops: i32,
+    pub pop_pad: i32,
+    /// File1..File6 by slot; None for empty or "0". Paths relative to data\global\tiles.
+    pub files: Vec<Option<String>>,
+    pub dt1_mask: u32,
+    pub expansion: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Level { pub row: usize, pub id: u32, pub name: String, pub act: u8, pub pal: u8, pub level_type: u32, pub drlg_type: u32 }
+pub fn lvl_types(table: &TxtTable) -> Result<Vec<LvlType>>;
+pub fn lvl_prests(table: &TxtTable) -> Result<Vec<LvlPrest>>;
+pub fn levels(table: &TxtTable) -> Result<Vec<Level>>;
+impl LvlPrest {
+    /// DT1 files of `lvl_type` selected by `dt1_mask` (bit i = File(i+1)), in slot order.
+    pub fn dt1_files<'a>(&self, lvl_type: &'a LvlType) -> impl Iterator<Item = &'a str>;
+}
+
+// ───────────── tbl.rs ─────────────
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StringTable { /* entries: Vec<(String, String)> */ }
+impl StringTable {
+    pub fn parse(bytes: &[u8]) -> Result<StringTable>;
+    pub fn get(&self, key: &str) -> Option<&str>;
+    pub fn entries(&self) -> &[(String, String)];
+}
+
+// ───────────── palette.rs (wave 2) ─────────────
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Palette { pub colors: [[u8; 3]; 256] } // RGB
+impl Palette {
+    pub fn parse_dat(bytes: &[u8]) -> Result<Palette>; // 768 bytes, BGR on disk
+    pub fn with_gamma(&self, gamma: f32) -> Palette;  // 255*(i/255)^(1/g) per channel
+}
+/// "data\\global\\palette\\act{n}\\pal.dat" for act 0..=4.
+pub fn act_palette_path(act: u8) -> &'static str;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pl2 {
+    pub base: Palette,
+    pub light_levels: Vec<[u8; 256]>,       // 32
+    pub alpha_blend: Vec<Vec<[u8; 256]>>,   // [25%,50%,75%][src] -> dst map
+    pub additive: Vec<[u8; 256]>,
+    pub multiply: Vec<[u8; 256]>,
+    // remaining tables per docs/guides/palettes-and-colour.md, pub, named
+}
+impl Pl2 { pub fn parse(bytes: &[u8]) -> Result<Pl2>; }
+
+// ───────────── dt1.rs (wave 2) ─────────────
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TileKey { pub orientation: u8, pub main: u8, pub sub: u8 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockFormat { Isometric, Rle }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Block { pub x: i16, pub y: i16, pub grid_x: u8, pub grid_y: u8, pub raw_format: i16, pub format: BlockFormat, pub data: Vec<u8> }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tile {
+    pub direction: i32, pub roof_height: i16, pub sound: u8, pub animated: u8,
+    pub height: i32, pub width: i32,
+    pub orientation: i32, pub main_index: i32, pub sub_index: i32,
+    pub rarity: i32, pub subtile_flags: [u8; 25],
+    pub blocks: Vec<Block>,
+}
+impl Tile {
+    pub fn key(&self) -> Option<TileKey>;          // None if an index is out of range
+    pub fn render(&self) -> Result<IndexedImage>;  // offsets in block x/y space
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Dt1 { pub version: (i32, i32), pub tiles: Vec<Tile> }
+impl Dt1 { pub fn parse(bytes: &[u8]) -> Result<Dt1>; }   // no writer, ever
+
+// ───────────── dc6.rs / dcc.rs / cof.rs / animdata.rs (wave 2) ─────────────
+pub struct Dc6 { pub version: i32, pub flags: u32, pub encoding: u32, pub directions: u32, pub frames_per_direction: u32, pub frames: Vec<Dc6Frame> }
+pub struct Dc6Frame { pub flipped: bool, pub width: u32, pub height: u32, pub offset_x: i32, pub offset_y: i32, pub data: Vec<u8> }
+impl Dc6 { pub fn parse(bytes: &[u8]) -> Result<Dc6>; pub fn frame(&self, dir: u32, frame: u32) -> Option<&Dc6Frame>; }
+impl Dc6Frame { pub fn render(&self) -> Result<IndexedImage>; }
+
+pub struct Dcc { pub version: u8, pub frames_per_direction: u32, pub directions: Vec<DccDirection> }
+pub struct DccDirection { pub frames: Vec<IndexedImage> }
+impl Dcc { pub fn parse(bytes: &[u8]) -> Result<Dcc>; }
+
+pub struct CofLayer { pub component: u8, pub shadow: u8, pub selectable: u8, pub transparent: u8, pub draw_effect: u8, pub weapon_class: [u8; 4] }
+pub struct Cof { pub directions: u8, pub frames_per_direction: u8, pub layers: Vec<CofLayer>, pub keyframes: Vec<u8>, pub layer_order: Vec<u8> }
+impl Cof { pub fn parse(bytes: &[u8]) -> Result<Cof>; pub fn draw_order(&self, dir: u8, frame: u8) -> Option<&[u8]>; }
+
+pub struct AnimRecord { pub cof_name: String, pub frames_per_direction: u32, pub speed: u32, pub flags: [u8; 144] }
+pub struct AnimData { /* records */ }
+impl AnimData { pub fn parse(bytes: &[u8]) -> Result<AnimData>; pub fn get(&self, cof_name: &str) -> Option<&AnimRecord>; pub fn records(&self) -> &[AnimRecord]; }
+```

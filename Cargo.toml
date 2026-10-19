@@ -32,6 +32,16 @@ capy-edit = { path = "crates/capy-edit" }
 capy-history = { path = "crates/capy-history" }
 thiserror = "2"
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
+# UI stack, pinned together: bevy_egui 0.43.1 and egui_dock 0.21.1 both
+# require egui 0.36.2. `cargo tree -d` showed a single egui with this set.
+# Only capy-app may use these.
+bevy = { version = "=0.20.0", default-features = false }
+bevy_egui = "=0.43.1"
+egui_dock = "=0.21.1"
+egui = "=0.36.2"
 
 [profile.dev.package."*"]
 opt-level = 2

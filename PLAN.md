@@ -1,6 +1,6 @@
 # Capybara Map Editor — Plan
 
-Status: planning, re-verified 2026-10-19. No code yet.
+Status: **P0 in progress** (2026-10-19). Step 0 bootstrap done: workspace skeleton, LICENSE/NOTICE, initial commit, UI crates pinned.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -21,6 +21,7 @@ Status: planning, re-verified 2026-10-19. No code yet.
     history\<profile>\           deduped snapshots + index.json (timeline)
     user.db                      tags, aliases, favorites, recents, saved searches
     cache\                       index.db + thumbnails (safe to delete; rebuilt automatically)
+    profiles\<id>.toml           one game profile per file (built-ins written on first run)
   ```
 - **Output:** saves are loose `.ds1` files. **The user packs them into the MPQ by hand.** To make that easy:
   - drag the `saves\<profile>\data` folder into an MPQ editor and the paths match;
@@ -90,10 +91,10 @@ Status: planning, re-verified 2026-10-19. No code yet.
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
 |---|---|---|
-| bevy | 0.20 | |
-| bevy_egui | 0.43 | |
-| egui | 0.37 | |
-| egui_dock | 0.21 | Prove one shared egui version with `cargo tree -d` before pinning |
+| bevy | 0.20.0 | **pinned** |
+| bevy_egui | 0.43.1 | **pinned**; requires egui 0.36 |
+| egui | 0.36.2 | **pinned** (not 0.37: see Deviations) |
+| egui_dock | 0.21.1 | **pinned**; requires egui 0.36. `cargo tree -d` shows one egui, bevy, winit and wgpu; a bevy+egui+egui_dock probe compiles |
 | gix | 0.89 | |
 | rusqlite | 0.40 | Bundled SQLite, FTS5 |
 | image_hasher | 3.1 | |
@@ -177,6 +178,19 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
    - Fuzzy matching (nucleo) plus filter tokens: `type: act: color: tag: idx:5/2 file: similar: used-in: mirrored: src:mxl`.
    - Thumbnails update live as you type. Enter picks the result as the brush; Shift+Enter shows it in the browser.
 6. **Recents** are recorded automatically. **Favorites** are stars in named, reorderable groups. **Saved searches** work as smart folders, so custom tiles can be pinned to the top.
+
+## API contracts
+- `docs/api/d2-formats.md` and `docs/api/d2-assets.md` are the public APIs, owned by the lead. Agents implement against them and ask before changing them.
+
+## Deviations (with reasons)
+- **egui 0.36.2 instead of 0.37.** bevy_egui 0.43.1 and egui_dock 0.21.1 (the newest releases) both depend on egui 0.36.2; a direct egui 0.37 would put two eguis in the tree. Code uses `bevy_egui::egui`.
+- **`capybara\profiles\<id>.toml`** added to the portable layout: the prompt asks for one small TOML file per profile that users can add, so profiles live in their own folder instead of inside `config.toml`.
+- **`Levels` added to the `.bin` decoder's tables** (subset of columns: Id, Name, Act, Pal, LevelType, DrlgType). LvlPrest only names a LevelId; the LvlType and palette for a preset come from Levels. Without it every Median XL map would need a manual LvlType pick.
+- **`d2-formats` is built in two sequential waves** (wave 1: ds1, txt, excel, tables, tbl; wave 2: palette, dt1, dc6, dcc, cof, animdata) because two agents may not edit one crate at once. `FormatError` was written by the lead before wave 1 so `d2-assets` can depend on it in parallel.
+- **Real-file format tests read an extracted corpus** at `testdata\private\extracted\<profile>\` (made by a `d2-assets` example), because `d2-formats` cannot depend on `d2-assets`. The P0 acceptance tests that need the overlay live in `d2-assets` tests.
+- **Known-names seed** lives at `assets/known-names/seed.txt` (outside any crate so it can be written while `d2-assets` is being built) and is embedded with `include_str!`.
+- `.gitattributes` forces LF for text and marks game formats binary, because `core.autocrlf` is on and would corrupt binary fixtures.
+- Repo-local git identity `ZF <112085691+Nugwa628@users.noreply.github.com>` was set because none existed.
 
 ## Open questions
 - None currently. Answered on 2026-10-19:
