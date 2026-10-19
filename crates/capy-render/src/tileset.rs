@@ -28,16 +28,19 @@ pub struct TileRef {
 /// How a group of tiles sharing one key picks its representative.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum VariantRule {
-    /// The documented game rule (`docs/specs/dt1.md` section 8, PLAN.md): the
-    /// highest rarity wins and ties go to the first tile in load order; when
-    /// every rarity is 0, the last matching tile of the first DT1 that has
-    /// the key.
-    #[default]
+    /// The documented game rule (`docs/specs/dt1.md` section 8): the highest
+    /// rarity wins and ties go to the first tile in load order; when every
+    /// rarity is 0, the last matching tile of the first DT1 that has the key.
+    /// Matches only 8 of 18 oracle maps, because vanilla groups are almost
+    /// all rarity ties.
     Documented,
     /// What DS1Edit actually computes (`misc.c:156-212`): the group head's own
-    /// rarity is never compared against the others, so on ties or when the
-    /// head is the highest the choice differs. Kept to measure the effect on
-    /// oracle parity.
+    /// rarity is never compared against the others, so on ties the second
+    /// tile in (DT1 slot, rarity, block) order wins. **Default** (lead
+    /// decision, PLAN.md "Renderer vs oracle"): matches 18 of 18 oracle maps,
+    /// i.e. what modders see in DS1Edit. The game itself picks randomly among
+    /// nonzero-rarity blocks, so neither rule is "the game".
+    #[default]
     ReferenceQuirk,
 }
 
@@ -253,7 +256,7 @@ impl TileSet {
         }
     }
 
-    /// Selects the variant rule (default [`VariantRule::Documented`]).
+    /// Selects the variant rule (default [`VariantRule::ReferenceQuirk`]).
     pub fn with_variant_rule(mut self, rule: VariantRule) -> TileSet {
         self.rule = rule;
         self

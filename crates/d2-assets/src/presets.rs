@@ -352,6 +352,27 @@ fn name_match(prest_name: &str, type_name: &str) -> usize {
     }
 }
 
+/// The 0-based act when every non-empty File entry of `lvl_type` sits under
+/// the same `ActN\` folder (the reference's palette override,
+/// `txtread.c:688-815`); `None` when they disagree or none has such a folder.
+fn files_act_folder(lvl_type: &LvlType) -> Option<u8> {
+    let mut found: Option<u8> = None;
+    for file in lvl_type.files.iter().flatten() {
+        let lower = file.trim_start_matches(['\\', '/']).to_ascii_lowercase();
+        let digit = lower
+            .strip_prefix("act")
+            .and_then(|rest| rest.as_bytes().first().copied())
+            .filter(|d| (b'1'..=b'5').contains(d))
+            .filter(|_| matches!(lower.as_bytes().get(4), Some(b'\\' | b'/')))?;
+        let act = digit - b'1';
+        match found {
+            Some(prev) if prev != act => return None,
+            _ => found = Some(act),
+        }
+    }
+    found
+}
+
 fn append_unique(out: &mut Vec<GamePath>, path: GamePath) {
     if !out.contains(&path) {
         out.push(path);
@@ -822,9 +843,20 @@ impl MapCatalog {
             .or_else(|| level.map(|l| l.act.min(MAX_ACT)))
             .or_else(|| self.header_act.get(ds1).copied())
             .unwrap_or(0);
-        let palette_act = match type_row {
-            Some(t) if t.id == LVL_TYPE_ACT4_PALETTE => ACT4,
-            _ => act,
+        // Lead decision (PLAN.md "Renderer vs oracle"): the Level's own `Pal`
+        // when the map belongs to a real level (Median XL depends on it, e.g.
+        // Level 241 is LvlTypes act 5 but uses the jungle palette); otherwise
+        // the reference rule: the LvlType act, overridden when every File
+        // entry sits under one `ActN\` folder (txtread.c:688-815), which is
+        // what makes LvlTypes 35 use Act 4.
+        let palette_act = match (level.filter(|l| l.id > 0), type_row) {
+            (Some(l), _) => l.pal.min(MAX_ACT),
+            (None, Some(t)) => files_act_folder(t).unwrap_or(if t.id == LVL_TYPE_ACT4_PALETTE {
+                ACT4
+            } else {
+                act
+            }),
+            (None, None) => act,
         };
         let dt1_files = type_row.map_or_else(Vec::new, |t| Self::type_paths(t, prest));
         let missing_dt1 = dt1_files

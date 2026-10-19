@@ -125,8 +125,8 @@ fn write_tables(root: &Path) {
             ],
             &["None", "0", "", "0", "0", "0", "0"],
             &["Cave", "1", "Cave Level", "1", "2", "0", "0"],
-            &["Desert", "2", "Desert Level", "2", "2", "1", "1"],
-            &["Lava", "3", "Lava Level", "35", "2", "4", "4"],
+            &["Desert", "2", "Desert Level", "2", "2", "1", "2"],
+            &["Lava", "3", "Lava Level", "35", "2", "4", "3"],
             &["Weird", "4", "", "99", "2", "2", "2"],
         ]),
     );
@@ -473,9 +473,21 @@ fn lvl_type_35_uses_the_act4_palette() {
     let lava = catalog.best(&gp("act4\\lava\\l.ds1")).unwrap();
     assert_eq!(lava.lvlprest_slot, Some(2));
     assert_eq!(lava.lvl_type, Some(35));
-    // LvlTypes stores Act 5 -> index 4, but the palette is Act 4's (index 3).
+    // LvlTypes stores Act 5 -> index 4, but the palette is Act 4's (index 3):
+    // the Level's own Pal says so, as in vanilla (Hell 1-3, Pandemonium 3).
     assert_eq!(lava.act, 4);
     assert_eq!(lava.palette_act, 3);
+}
+
+#[test]
+fn level_pal_overrides_the_lvl_type_act() {
+    // Median XL case (Level 241: LvlTypes act 5, Pal 2): a real Level's Pal
+    // wins over the LvlType act. The fixture's Desert level stores Pal 2.
+    let (_s, catalog, _) = catalog();
+    let all = catalog.lookup(&gp(r"act1\cave\shared.ds1"));
+    let desert = all.iter().find(|i| i.level_id == Some(2)).unwrap();
+    assert_eq!(desert.lvl_type, Some(2));
+    assert_eq!((desert.act, desert.palette_act), (1, 2));
 }
 
 #[test]

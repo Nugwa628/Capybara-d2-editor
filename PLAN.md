@@ -187,6 +187,17 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
   - Snapshots on save and by autosave timer, named checkpoints, a timeline, a visual tile diff, restore, a retention limit, and gix milestones.
   - Saves are atomic (write a temp file, then rename). Each save also updates `CHANGED.txt`.
   - **Test:** killing the process during a save never corrupts the target file.
+- **P6 Sprites mode** (added at the user's request, 2026-10-19).
+  - A top-level mode tab switches between **Map Editor** and **Sprites**. Sprites mode works without any map open. A dockable sprite viewer is also available inside the map editor.
+  - Viewer: DC6/DCC/COF, direction/frame picker, animation at AnimData speed, palette and gamma picker, COF layer compositing with draw order and blend modes, bounding-box and anchor overlay.
+  - Converter (feature list from SixDice v0.63's README/CHANGES only; its license forbids reverse engineering, so its jar is never opened, decompiled or run for this work):
+    - DC6 and DCC **encoders** in `d2-formats` (DC6 runs capped at 127; no state leaking between DCC frames);
+    - image import (PNG/BMP/GIF/PCX) with palette quantization, optional Floyd-Steinberg dithering and transparent protection (opaque pixels never map to index 0);
+    - frame split/join (256x256), trim borders, centre/batch offsets, add/remove frames and directions;
+    - export of frames + `sprite.json` (exact offsets for re-import) and of sprite sheets;
+    - batch conversion of directory trees in both directions, from the GUI and the exe's CLI.
+  - Output: "Save to game path" writes to `capybara\saves\<profile>\<game path>` and appends CHANGED.txt; "Export to…" and batch conversion write to a folder the user picks.
+  - **Test:** every DC6 and DCC in both corpora re-encodes to the same frames (decode, encode, decode); a PNG import/export round trip preserves pixels and offsets; batch conversion of a sample tree both ways.
 - **P5 Extras.** Objects and NPC paths, animated DCC/DC6, a headless render CLI, and an importer for the legacy `assets/*.ini` files. (No MPQ writing; the user packs by hand.)
   - Stretch goal: offline CLIP text-to-image tile search.
 
@@ -243,6 +254,7 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **`LvlType.act` and `Level.act` are both 0-based**, like the DS1 act field (LvlTypes.txt stores 1-based acts).
 - **DS1 parse limits**: the header and cell layers must be complete; zero-padding past EOF is tolerated only in the object/group/NPC blocks, up to 256 bytes (the shipped short files need 12 and 4). `to_bytes` refuses any model the file's version cannot store, rather than silently dropping data.
 - **Phases overlap at the user's request (2026-10-19: "need this done fast").** While P0 wave 2 finishes, `capy-history` (P4), `capy-edit` (P2), `capy-index` (P1/P3 groundwork) and the `capy-app` shell (P1) are built in parallel against the API contracts in `docs/api/`. Each phase's acceptance tests must still pass before that phase is declared done, and each phase still ends with a summary to the user.
+- **Writes outside `capybara\` (user-approved, 2026-10-19):** the sprite converter's "Export to…" and batch conversion write to a folder the user picks in a dialog. Everything else still stays under `capybara\`.
 - Repo-local git identity `ZF <112085691+Nugwa628@users.noreply.github.com>` was set because none existed.
 
 ## Known gaps

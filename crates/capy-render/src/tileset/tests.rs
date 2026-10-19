@@ -70,13 +70,15 @@ fn rarity_ties_go_to_the_first_in_load_order() {
     let set = tileset(vec![
         dt1(vec![tile(0, 1, 1, 2, 1), tile(0, 1, 1, 2, 2)]),
         dt1(vec![tile(0, 1, 1, 2, 3)]),
-    ]);
+    ])
+    .with_variant_rule(VariantRule::Documented);
     assert_eq!(set.resolve(key(0, 1, 1)), Some(r(0, 0)));
     // A later DT1 with a higher rarity still wins.
     let set = tileset(vec![
         dt1(vec![tile(0, 1, 1, 2, 1)]),
         dt1(vec![tile(0, 1, 1, 5, 2)]),
-    ]);
+    ])
+    .with_variant_rule(VariantRule::Documented);
     assert_eq!(set.resolve(key(0, 1, 1)), Some(r(1, 0)));
 }
 
@@ -139,8 +141,11 @@ fn reference_quirk_skips_the_group_head() {
         tile(0, 1, 1, 1, 1),
         tile(0, 1, 1, 1, 2),
         tile(0, 1, 1, 1, 3),
-    ])]);
+    ])])
+    .with_variant_rule(VariantRule::Documented);
     assert_eq!(documented.variant_rule(), VariantRule::Documented);
+    // The default is DS1Edit's rule (lead decision).
+    assert_eq!(VariantRule::default(), VariantRule::ReferenceQuirk);
     assert_eq!(documented.resolve(key(0, 1, 1)), Some(r(0, 0)));
 }
 
