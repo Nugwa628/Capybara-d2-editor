@@ -33,6 +33,7 @@ capy-history = { path = "crates/capy-history" }
 thiserror = "2"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.9"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 bzip2 = "0.6"
