@@ -11,6 +11,7 @@ mod iso;
 mod paths;
 mod render;
 mod script_run;
+mod sprites;
 mod state;
 mod tasks;
 mod ui;

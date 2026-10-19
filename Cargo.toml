@@ -57,6 +57,10 @@ gix = { version = "0.89", default-features = false, features = ["sha1"] }
 png = "0.18"
 arboard = { version = "3", default-features = false }
 gif = "0.14"
+# Native file dialogs (capy-app only).
+rfd = "0.17"
+# Console attach for the single-exe CLI on Windows (capy-app only).
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
 # UI stack, pinned together: bevy_egui 0.43.1 and egui_dock 0.21.1 both
 # require egui 0.36.2. `cargo tree -d` showed a single egui with this set.
