@@ -385,7 +385,10 @@ fn cancel_stops_before_the_next_item_and_returns_the_partial_report() {
     )
     .unwrap();
     assert!(report.cancelled);
-    assert_eq!(report.converted, 1, "the partial report counts the done item");
+    assert_eq!(
+        report.converted, 1,
+        "the partial report counts the done item"
+    );
     assert_eq!(report.log.len(), 2);
     assert_eq!(
         report.log.last().map(String::as_str),
