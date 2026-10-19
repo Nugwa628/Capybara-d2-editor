@@ -15,7 +15,7 @@ Features marked **planned** are not in the program yet.
 - [History: autosave, checkpoints, diff and restore](#history-autosave-checkpoints-diff-and-restore)
 - [Settings](#settings)
 - [Sprites mode](#sprites-mode)
-- [Coming soon: tile browser and Ctrl+K search](#coming-soon-tile-browser-and-ctrlk-search)
+- [The Tiles browser and Ctrl+K search](#the-tiles-browser-and-ctrlk-search)
 - [Troubleshooting](#troubleshooting)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Advanced: settings and environment variables](#advanced-settings-and-environment-variables)
@@ -214,17 +214,19 @@ Map Editor panels (default layout):
 | Panel | Where | What it does |
 |---|---|---|
 | Maps | left | Every map in the profile, with a filter. |
-| Tiles | left, second tab | Tiles you have picked recently, and the index size. |
+| Tiles | left, second tab | The asset browser: search every tile (and sprite) of the profile, Recent tiles, Favorites and saved searches. See [The Tiles browser](#the-tiles-browser-and-ctrlk-search). |
 | Map | centre | Open maps as tabs, the tool strip, and the map itself. |
 | Layers | right | Choose the active layer, toggle visibility, layer actions. |
-| Properties | right, second tab | Facts about the map, its tile set (with override), rendering status, hovered cell. |
-| History | right, third tab | The map's snapshots, checkpoints, the diff against a snapshot, restore, milestones. **View > History** shows or hides it. |
+| Objects | right, second tab | The selected object's properties and NPC path, and the **Add object** picker. See [Objects and NPC paths](#objects-and-npc-paths). |
+| Properties | right, third tab | Facts about the map, its tile set (with override), rendering status, hovered cell. |
+| History | right, fourth tab | The map's snapshots, checkpoints, the diff against a snapshot, restore, milestones. **View > History** shows or hides it. |
 | Log | bottom | Everything the editor reports. |
 | Sprite preview | optional | The selected object's animation. Turn it on with **View > Sprite preview**. |
 
-Only the Sprite preview and History panels can be closed. The others can be
-moved but not closed. A layout saved by an older version has no History tab;
-**View > History** adds it.
+Only the Sprite preview, History and Objects panels can be closed. The others
+can be moved but not closed. A layout saved by an older version may lack the
+History or Objects tab: **View > History** and **View > Objects panel** add
+them, and picking the Objects tool (**O**) brings the Objects panel up too.
 
 ### The Log and notifications
 
@@ -308,16 +310,29 @@ Overrides apply to every open copy of the map. They are saved per profile in
 
 ### DS1Edit's legacy `.ini` mappings
 
-DS1Edit keeps LvlType/Def choices in `assets\*.ini` files (one
-`<LvlTypesId> <LvlPrestDef> <path>` per line). The editor's map library can
-read these, but the program has no menu item to import them yet: importing
-them is **planned**. Until then, set overrides by hand in Properties.
+DS1Edit keeps LvlType/Def choices in `assets\*.ini` files, one
+`<LvlTypesId> <LvlPrestDef> <path>` per line, for example
+`1 2 assets/tiles/ACT1/TOWN/townE1.ds1`. To bring them over:
+
+1. **File > Import DS1Edit ini mappings...** and pick one or more `.ini`
+   files (Ctrl or Shift selects several).
+2. Every line that names a map of the open profile becomes an override, as
+   if you had chosen that LvlType and Def in **Properties > Map context**.
+   They are saved per profile in `config.toml`; open maps are redrawn with
+   their new tile set.
+3. A notification says how many mappings were read, how many maps now use
+   them and how many lines name maps the profile does not have. Lines that
+   can't be read (a missing number, a path that is not a `.ds1`) are listed
+   in the Log with their file and line number.
+
+When a file lists a map twice, the later line wins. **Clear override** in
+Properties undoes an imported mapping for one map.
 
 ---
 
 ## Viewing a map
 
-<!-- screenshot: the Map panel at 1:2 with the grid on, a selection and a few object markers -->
+<!-- screenshot: the Map panel at 1:2: the town with its objects and NPCs, one NPC selected with its path -->
 
 When a map opens, the view fits the whole map in the panel. Until its tiles
 are loaded you see flat coloured diamonds; then the textured map replaces
@@ -350,7 +365,8 @@ Tag, as present in the map.
 - **Roofs** shows or hides roof tiles (orientation 15). On by default.
 - **Special tiles** shows or hides the orientation 10 and 11 marker tiles.
   Off by default.
-- **Objects** shows or hides the object markers. The count is next to it.
+- **Objects** shows or hides objects and NPCs (sprites, shadows and
+  markers). The count is next to it.
 
 The Tag layer is always drawn as flat coloured diamonds, and it starts
 hidden. You can change which layer kinds start visible in `config.toml` (see
@@ -358,13 +374,28 @@ hidden. You can change which layer kinds start visible in `config.toml` (see
 
 ### Objects
 
-Objects and NPCs show as orange diamond markers at their positions. Select
-one with the Objects tool (**O**) and turn on **View > Sprite preview** to
-see its animated sprite. The preview shows the object's name, type, id,
-token, mode and class. You can also pick a direction, play or pause, and
-**Open in Sprites mode** to inspect its COF.
+Objects and NPCs are drawn with their real sprites, in the game's drawing
+order: their shadows, objects that stand behind walls, then each object
+between the walls of its tile, as DS1Edit draws them. Transparent, additive
+(flames, glows) and other blended layers look as they do in DS1Edit.
 
-Drawing object sprites in the map view itself is **planned**.
+- **Animation.** **View > Animate objects** plays every object and NPC at its
+  own game speed (on by default; the choice is saved). Turn it off to see
+  the first frame of each animation, which is also what saved screenshots
+  and DS1Edit's headless renders show.
+- **Markers.** With the Objects tool (**O**) every object also gets an orange
+  diamond marker on its sub-tile, a handle you can click even when the
+  sprite is small or hidden behind a wall. **View > Object markers** shows
+  them all the time. Objects that draw nothing (no sprite in this profile,
+  or an id the game tables don't know) always get a **purple** marker.
+- The object tables load in the background when a profile opens. Until
+  they are ready, objects show as markers only.
+
+To look at one object closely, select it with the Objects tool and turn on
+**View > Sprite preview**: it shows the object's name, type, id, token, mode
+and class, lets you pick a direction, play or pause, and **Open in Sprites
+mode** to inspect its COF. Editing objects is described in
+[Objects and NPC paths](#objects-and-npc-paths).
 
 ### Missing tiles
 
@@ -390,7 +421,7 @@ The tool strip sits above the map. Hover a button for its name and key.
 | **P** | Paint | Paints the current tile on the active layer. |
 | **E** | Erase | Empties cells on the active layer. |
 | **I** | Eyedropper | Click a cell to make its tile the current tile. |
-| **O** | Objects | Click an object marker to select it, drag to move. |
+| **O** | Objects | Select, move and delete objects; add objects and NPCs; edit NPC paths. See [Objects and NPC paths](#objects-and-npc-paths). |
 
 Tool keys work without modifiers. They are ignored while you type in a text
 box or a dialog is open.
@@ -553,23 +584,83 @@ layer name:
   removed. Undo restores a removed layer with its content.
 - **Upgrade DS1 version** (see above).
 
-### Objects
+### Objects and NPC paths
 
-With the Objects tool (**O**):
+<!-- screenshot: the Objects panel with the Add object picker and its preview, and an NPC path on the map -->
 
-- click a marker to select it, and **Shift**-click to add or remove one;
-- drag a selected marker to move all selected objects (they snap to
-  sub-tiles, 5 per cell edge);
-- **Delete** removes the selected objects;
-- click empty space to deselect.
+The Objects tool (**O**) has three modes, picked in the tool strip or at the
+top of the **Objects** panel:
 
-Objects must be visible (the Objects checkbox in Layers) to be picked.
-Adding new objects and NPCs, and editing NPC paths, is **planned**.
+| Mode | A click on the map |
+|---|---|
+| **Select** | Selects the object under the cursor: its marker, or else the topmost sprite there. **Shift**-click adds or removes one. Drag a selected object to move all selected objects (they snap to sub-tiles, 5 per cell edge). Click empty ground to deselect. |
+| **Add** | Places the object chosen in the picker on the sub-tile under the cursor (a green diamond and the sub-tile coordinates follow the cursor). The new object is selected. |
+| **Path** | Edits the NPC path of the selected object (see below). With nothing selected, a click selects an object. |
+
+**Delete** removes the selected objects (in Path mode: the selected path
+point). Objects must be visible (the Objects checkbox in Layers) to be
+picked.
+
+#### Adding objects and NPCs
+
+The **Add object** part of the Objects panel lists everything the game can
+place in the map's act (type 2 objects such as torches, chests and
+waypoints, and type 1 monsters and NPCs):
+
+- **Search** filters the list. Every word must match the name, the sprite
+  token, the class (`npc`, `object`), `type2` or `id37`, or `2:37`. A plain
+  number also finds that id exactly, listed first.
+- Click an entry to choose it: the Objects tool switches to **Add** and an
+  animated preview of the object appears below the list.
+- Click on the map to place it. Every click places another one.
+
+Placing an object on a map older than DS1 version 2 offers the usual
+[upgrade](#ds1-versions-and-upgrade-to-vn). Placing it on a sub-tile where
+an object with an NPC path already stands is refused (the game could not
+tell whose path it is), with a notification naming the sub-tile and the
+objects.
+
+#### Object properties
+
+With one object selected, the Objects panel shows:
+
+- the name from the game tables, the sprite token, mode, weapon class, order
+  flag and where the data came from;
+- whether it draws (and why not, when it doesn't);
+- **Type**, **Id**, **Flags** and the **Sub-tile** position. Change them and
+  click **Apply** (one undo step) or **Revert**. Flags need DS1 version 6;
+  moving an object carries its NPC path along.
+
+#### NPC paths
+
+An NPC's walking route is a list of points with an action each. With one
+object selected, its path is drawn on the map: a line from the object
+through numbered blue nodes; an action other than 1 is shown as `a2`, `a3`
+next to its node. The Objects panel lists the points with their position and
+action.
+
+In **Path** mode:
+
+- click on empty ground to add a point there: after the selected node when
+  one is selected, else at the end of the path. The new point is selected,
+  so you can click on to extend the route;
+- drag a node to move it;
+- **Delete** removes the selected node;
+- **New points** in the Objects panel sets the action new points get; the
+  action combo of each point in the list changes that point.
+
+The actions are numbered 1 to 5. Action 1 is the default; what the game does
+with the others is not documented. Paths need DS1 version 14 and actions
+other than 1 need version 15: on older maps the editor offers the upgrade.
+Every change is one undo step. A path belongs to the object standing on its
+first sub-tile, so an object that shares its sub-tile with another can't get
+a path.
 
 ### Delete, undo and redo
 
-- **Delete** removes the selected objects if any are selected. Otherwise it
-  empties the selected cells.
+- **Delete** removes the selected objects if any are selected (in the
+  Objects tool's Path mode: the selected path point). Otherwise it empties
+  the selected cells.
 - **Ctrl+Z** undoes, **Ctrl+Y** or **Ctrl+Shift+Z** redoes. The Edit menu
   shows what will be undone or redone.
 
@@ -708,9 +799,11 @@ changes):
 - Size, DS1 version, layers added or removed and other data are listed below
   the counts.
 - **Show snapshot (read-only)** draws the snapshot in place of the map so you
-  can flip between then and now. While it is on, the map can't be edited; a
-  blue line at the top of the map says so. Untick it to go back. Any edit
-  (for example Ctrl+Z) also switches back to the current map.
+  can flip between then and now. While it is on, the map can't be edited:
+  a blue line at the top of the map says so, the mouse tools do nothing, and
+  editing keys and menu items (Ctrl+Z, Ctrl+Y, Ctrl+X, Ctrl+V, Delete) are
+  refused with the notification "Viewing a snapshot: turn it off to edit".
+  Untick it to go back.
 
 ### Restore
 
@@ -1081,13 +1174,87 @@ before this automatic reduction is **planned**.
 
 ---
 
-## Coming soon: tile browser and Ctrl+K search
+## The Tiles browser and Ctrl+K search
 
-A tile browser and a **Ctrl+K** search box (fuzzy search by name, act,
-colour, tag, file and "similar" tiles, with live thumbnails) are being built
-and are **planned** for the next release.
+<!-- screenshot: the Tiles panel with a query, the scope buttons, Recent, Favorites and the thumbnail grid -->
 
-The asset index they search already works:
+The **Tiles** panel and the **Ctrl+K** search find any tile (and DS1, DT1,
+DC6, DCC or COF file) of the profile by name, look or use, and turn a tile
+into the paint brush.
+
+### The Tiles panel
+
+From top to bottom:
+
+- **The query box.** Results update as you type. Free text matches the
+  tile's name (an alias you gave it, or the generated name such as
+  `Act1 Town Floor · Floor · grass · 05/02`), its path and its file; every
+  word must match. Filter tokens narrow it down (table below). A query that
+  can't be read is shown in red with a caret under the problem. **x**
+  clears it.
+- **Scope**: **This map's tile set** (only the DT1s the active map loads;
+  needs a map whose LvlType is known), **Whole profile** (every tile), or
+  **Sprites** (DC6, DCC and COF files). The number on the right is the
+  thumbnail size: **Ctrl+mouse wheel** over the panel resizes the
+  thumbnails (a list below 48 px).
+- **Saved searches**: pinned searches as buttons (right-click to unpin);
+  the **Saved searches** menu lists them all, pins, deletes, and **Save the
+  current query...**.
+- **Recent**: the tiles you painted with, newest first.
+- **Favorites**: named groups of starred tiles. Drag tiles into a group or to
+  reorder them, drag a group header to reorder the groups, right-click a
+  header to rename or delete the group (the tiles stay in the index).
+- **The results grid.** A tile from outside the active map's tile set has an
+  orange **!** badge: it would be missing in this map.
+
+On a thumbnail:
+
+| Action | Effect |
+|---|---|
+| Click | Select it. |
+| Double-click, or Enter | Use it: a tile becomes the brush (on its layer kind) and the Paint tool is picked; a map opens; a sprite opens in Sprites mode. |
+| The star | Add to or remove from favorites (the first group, or a new "Favorites" group). |
+| Right-click | The tile menu: **Use as brush / open**, **Set alias...**, **Add tag...** / **Remove tag**, **Add note...** / **Edit note...**, **Add to favorites** (a group, or **New group...**), **Remove from** a group, **Find similar**, **Show maps that use it**, **Copy key**. |
+
+Aliases, tags, notes, favorites, saved searches and recents live in
+`capybara\user.db`, keyed by the tile's game path and indices, so they
+survive an index rebuild.
+
+### Query tokens
+
+| Token | Finds |
+|---|---|
+| `type:floor` (`wall`, `roof`, `shadow`, `special`, `tree`, `lowerwall`) | Tiles of that kind. |
+| `type:tile`, `type:ds1`, `type:dt1`, `type:dc6`, `type:dcc`, `type:cof` | Assets of that kind. |
+| `act:1` ... `act:5` | Tiles of that act. |
+| `color:green` | Tiles whose dominant colour is that colour. |
+| `tag:x`, `tag:"two words"` | Tiles you tagged. |
+| `idx:5`, `idx:5/2`, `idx:0:5/2` | Main index, main/sub, or orientation:main/sub. |
+| `file:floor.dt1` | Assets whose path contains the text. |
+| `similar:<key>` | Tiles that look alike (nearest first); the tile menu's **Find similar** fills it in. |
+| `used-in:towne1` | Tiles used by maps whose path contains the text. |
+| `mirrored:yes` | Tiles with a mirrored twin. |
+| `src:mod`, `src:base`, `src:saves`, `src:<archive>` | Where the asset comes from. |
+| `-tag:foo` | A leading `-` negates any token. |
+
+An unknown `word:` is plain text.
+
+### Ctrl+K
+
+**Ctrl+K** opens a search box in the middle of the window over every asset
+of the profile, with live thumbnails. With an empty query it lists the
+recently used tiles.
+
+| Keys | Action |
+|---|---|
+| Up, Down, PgUp, PgDn | Move the selection (1 or 10 rows). |
+| Enter | Use the asset: a tile becomes the brush, a map opens, a sprite opens in Sprites mode. |
+| Shift+Enter | Show it in the Tiles browser. |
+| Esc, or a click outside | Close. |
+
+### The asset index
+
+The browser and Ctrl+K search the asset index:
 
 - When a profile opens, the editor checks `capybara\cache\index.db` in the
   background. If the index is missing or out of date, it rebuilds it.
@@ -1098,7 +1265,8 @@ The asset index they search already works:
   date".
 - After you save, the index updates its view of your saved files in the
   background.
-- The Tiles panel shows how many assets are indexed.
+- Until the index is ready the Tiles panel and Ctrl+K say so; search starts
+  when it is done.
 
 From the command line, `index status` and `index build` do the same (see
 [cli.md](cli.md)).
@@ -1185,7 +1353,7 @@ dialog is open.
 | Enter | Commit the paste preview |
 | Ctrl+A | Select all on the active layer |
 | Ctrl+D | Deselect (cells and objects) |
-| Delete | Delete the selected objects, else empty the selected cells |
+| Delete | Path mode: delete the selected path point; else delete the selected objects, else empty the selected cells |
 | Esc | Cancel the paste preview, else the drag in progress, else close the Move/Resize window, else deselect |
 | M | Select box |
 | L | Lasso |
@@ -1196,12 +1364,14 @@ dialog is open.
 | I | Eyedropper |
 | O | Objects |
 | G | Cell grid on/off |
+| Ctrl+K | Search every asset (see [Ctrl+K](#ctrlk)) |
 | Mouse wheel | Zoom at the cursor |
 | Middle-drag, Space + drag | Pan |
 | Arrow keys | Pan |
 | Shift / Ctrl + selection | Add / subtract |
 | Shift+Ctrl (or Alt) + selection | Intersect |
 | Shift + click (Objects tool) | Add or remove an object from the selection |
+| Ctrl + mouse wheel (Tiles panel) | Thumbnail size |
 
 ### Sprites mode
 
@@ -1277,12 +1447,15 @@ settings change.
 | `keep_last` | History retention: newest saves/autosaves/before-restore snapshots kept per map (default 100, at least 1). |
 | `max_age_days` | History retention: also drop those older than this many days; `0` (the default) means no age limit. |
 | `select_scope` | `"active"` or `"visible"`: the layers selection tools start on. |
+| `browser_thumb` | Thumbnail size of the Tiles browser in points. |
+| `animate_objects` | **View > Animate objects** (default `true`). |
+| `object_markers` | **View > Object markers** (default `false`). |
 | `[layer_visibility]` | `floor`, `wall`, `shadow`, `tag`, `objects`: which layer kinds start visible when a map opens. `tag` is `false` by default. |
 | `last_profile` | The profile opened at start-up. |
 | `mode` | `"map"` or `"sprites"`: the mode shown at start-up. |
 | `[window]` | `width` and `height` of the window. |
 | `[[recent_maps]]` | The File > Open recent list. |
-| `[[overrides]]` | Your LvlType/Def choices, per profile and map. |
+| `[[overrides]]` | Your LvlType/Def choices, per profile and map, including the ones imported from DS1Edit `.ini` files. |
 
 ### Environment variables
 
@@ -1296,5 +1469,7 @@ settings change.
 The editor also has hooks used by its automated tests, such as
 `CAPY_SCRIPT`, which runs a file of editing commands and then exits (it has
 history commands too: `autosave-now`, `checkpoint`, `history-select`,
-`restore`, `milestone`, `prune`, `setting`, ...), and `CAPY_SCREENSHOT`. They
-are meant for development and may change.
+`restore`, `milestone`, `prune`, `setting`, ..., and object commands:
+`place-object`, `select-object`, `path-add`, `path-move`, `path-action`,
+`path-delete`, `animate`, `object-frame-tick`, `import-ini`, ...), and
+`CAPY_SCREENSHOT`. They are meant for development and may change.
