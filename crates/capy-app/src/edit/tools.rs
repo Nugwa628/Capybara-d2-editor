@@ -104,22 +104,25 @@ pub struct Mods {
     pub alt: bool,
 }
 
-/// Shift adds, Ctrl subtracts, Alt intersects, nothing replaces. With several
-/// held, Shift wins over Ctrl, which wins over Alt.
+/// Shift adds, Ctrl subtracts, Shift+Ctrl intersects (the same as the
+/// Sprites editor), nothing replaces. Alt also intersects (kept as an alias)
+/// unless Shift or Ctrl alone says otherwise.
 pub fn select_op(mods: Mods) -> SelectOp {
-    if mods.shift {
-        SelectOp::Add
-    } else if mods.ctrl {
-        SelectOp::Subtract
-    } else if mods.alt {
-        SelectOp::Intersect
-    } else {
-        SelectOp::Replace
+    match (mods.shift, mods.ctrl) {
+        (true, true) => SelectOp::Intersect,
+        (true, false) => SelectOp::Add,
+        (false, true) => SelectOp::Subtract,
+        (false, false) if mods.alt => SelectOp::Intersect,
+        (false, false) => SelectOp::Replace,
     }
 }
 
+/// The tool-strip hint for the selection modifiers.
+pub const SELECT_MODS_HINT: &str = "Shift adds, Ctrl subtracts, Shift+Ctrl (or Alt) intersects";
+
 /// Which layers a selection tool looks at.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SelectScope {
     /// Only the active layer.
     #[default]
@@ -327,16 +330,25 @@ mod tests {
             SelectOp::Add
         );
         assert_eq!(select_op(Mods { ctrl: true, ..none }), SelectOp::Subtract);
+        // Shift+Ctrl intersects, as in the Sprites editor; Alt is an alias.
+        assert_eq!(
+            select_op(Mods {
+                shift: true,
+                ctrl: true,
+                alt: false
+            }),
+            SelectOp::Intersect
+        );
         assert_eq!(select_op(Mods { alt: true, ..none }), SelectOp::Intersect);
-        // Combinations resolve by precedence.
         assert_eq!(
             select_op(Mods {
                 shift: true,
                 ctrl: true,
                 alt: true
             }),
-            SelectOp::Add
+            SelectOp::Intersect
         );
+        // Shift or Ctrl alone wins over the Alt alias.
         assert_eq!(
             select_op(Mods {
                 ctrl: true,
@@ -345,6 +357,36 @@ mod tests {
             }),
             SelectOp::Subtract
         );
+        assert_eq!(
+            select_op(Mods {
+                shift: true,
+                alt: true,
+                ctrl: false
+            }),
+            SelectOp::Add
+        );
+    }
+
+    #[test]
+    fn map_and_sprite_editors_agree_on_the_modifiers() {
+        use crate::sprites::editor::Mods as SpriteMods;
+        use capy_paint::MaskOp;
+        for (shift, ctrl) in [(false, false), (true, false), (false, true), (true, true)] {
+            let map = select_op(Mods {
+                shift,
+                ctrl,
+                alt: false,
+            });
+            let sprite = SpriteMods { shift, ctrl }.mask_op();
+            let same = matches!(
+                (map, sprite),
+                (SelectOp::Replace, MaskOp::Replace)
+                    | (SelectOp::Add, MaskOp::Add)
+                    | (SelectOp::Subtract, MaskOp::Subtract)
+                    | (SelectOp::Intersect, MaskOp::Intersect)
+            );
+            assert!(same, "shift {shift} ctrl {ctrl}: {map:?} vs {sprite:?}");
+        }
     }
 
     #[test]

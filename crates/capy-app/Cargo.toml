@@ -31,6 +31,7 @@ capy-cli.workspace = true
 rfd.workspace = true
 image.workspace = true
 arboard = { workspace = true, features = ["image-data"] }
+jiff.workspace = true
 bevy = { workspace = true, features = [
     "std",
     "bevy_winit",
@@ -50,6 +51,7 @@ egui_dock = { workspace = true, features = ["serde"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
+windows-registry.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

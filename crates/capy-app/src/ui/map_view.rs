@@ -167,6 +167,15 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 Stroke::new(1.5, Color32::from_rgb(255, 230, 120)),
             ));
         }
+        if doc.snapshot_view.is_some() {
+            painter.text(
+                rect.center_top() + Vec2::new(0.0, 10.0),
+                egui::Align2::CENTER_TOP,
+                "Showing a history snapshot (read-only): untick Show snapshot in History to edit",
+                egui::FontId::proportional(15.0),
+                Color32::from_rgb(140, 200, 255),
+            );
+        }
         let z = ZOOM_STEPS[doc.view.zoom.min(ZOOM_STEPS.len() - 1)];
         painter.text(
             rect.left_bottom() + Vec2::new(8.0, -6.0),

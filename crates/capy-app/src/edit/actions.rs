@@ -342,6 +342,7 @@ impl AppState {
                     self.warn(format!("{path}: {w}"));
                 }
                 self.edit.changed = report.changed_total;
+                self.history.invalidate();
                 self.after_save(index, &path);
                 self.notify(format!(
                     "Saved {path} ({} bytes). CHANGED.txt lists {} file(s).",

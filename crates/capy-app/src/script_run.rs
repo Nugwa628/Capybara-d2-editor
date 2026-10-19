@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy_egui::egui;
 use capy_edit::{CellRect, CellValue, SelectOp};
+use capy_history::{SnapshotId, SnapshotKind};
 use d2_assets::GamePath;
 
 use capy_paint::{GradientShape, OutlineSide};
@@ -26,6 +27,7 @@ use crate::edit::paste::PasteSession;
 use crate::edit::script::GradientSpec;
 use crate::edit::script::{Cmd, Line, parse_script};
 use crate::edit::state::MoveDialog;
+use crate::history;
 use crate::index_task::IndexState;
 use crate::iso::ZOOM_STEPS;
 use crate::sprites::convert::Layout;
@@ -68,6 +70,8 @@ pub struct ScriptRunner {
     started: bool,
     /// When the command at the front started waiting (`Step::Retry`).
     retry_since: Option<Instant>,
+    /// `autosave-now`: the autosave run count when it started its worker.
+    awaiting_autosave: Option<u64>,
 }
 
 impl ScriptRunner {
@@ -184,7 +188,7 @@ pub fn run_script(
     }
 
     while let Some((line, cmd)) = runner.cmds.pop_front() {
-        let result = step(&mut state, &cmd);
+        let result = step(&mut state, &cmd, &mut runner.awaiting_autosave);
         if !matches!(result, Step::Retry) {
             runner.retry_since = None;
         }
@@ -222,7 +226,7 @@ pub fn run_script(
     }
 }
 
-fn step(state: &mut AppState, cmd: &Cmd) -> Step {
+fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) -> Step {
     if let Cmd::Open(path) = cmd {
         let wanted = GamePath::new(path);
         state.open_map(&wanted);
@@ -241,6 +245,9 @@ fn step(state: &mut AppState, cmd: &Cmd) -> Step {
         return step;
     }
     if let Some(step) = browser_step(state, cmd) {
+        return step;
+    }
+    if let Some(step) = history_step(state, cmd, awaiting_autosave) {
         return step;
     }
     // Screenshots also work without a map (Sprites mode).
@@ -437,6 +444,24 @@ fn step(state: &mut AppState, cmd: &Cmd) -> Step {
         | Cmd::ThumbSize(_)
         | Cmd::TileMenu(_)
         | Cmd::TilesTab => Step::Next,
+        // Handled by `history_step`.
+        Cmd::AutosaveNow
+        | Cmd::Checkpoint(_)
+        | Cmd::AssertHistory { .. }
+        | Cmd::HistorySelect(_)
+        | Cmd::AssertDiff { .. }
+        | Cmd::ShowSnapshot(_)
+        | Cmd::HistoryJump(_)
+        | Cmd::Restore(_)
+        | Cmd::Milestone(_)
+        | Cmd::AssertMilestones(_)
+        | Cmd::Prune(_)
+        | Cmd::AssertChanged(_)
+        | Cmd::Setting { .. }
+        | Cmd::HistoryTab
+        | Cmd::Settings(_)
+        | Cmd::AddInstall(_)
+        | Cmd::CloseDialogs => Step::Next,
         Cmd::PaintBrush { x, y } => {
             let Some(layer) = state.edit.current_layer else {
                 return Step::Fail("paint-brush: there is no brush (use brush-from)".to_owned());
@@ -795,6 +820,230 @@ fn browser_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
         }
         Cmd::TilesTab => {
             state.browser.focus_tiles = true;
+            Ok(())
+        }
+        _ => return None,
+    };
+    Some(match result {
+        Ok(()) => Step::Next,
+        Err(e) => Step::Fail(e),
+    })
+}
+
+/// The active map's timeline entry named `key` (index from the newest, or a
+/// checkpoint name / label).
+fn find_snapshot(state: &mut AppState, index: usize, key: &str) -> Result<SnapshotId, String> {
+    let timeline = state.timeline_of(index);
+    history::find_in_timeline(&timeline, key).ok_or_else(|| {
+        let names: Vec<String> = timeline
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                format!(
+                    "{i}: {}{}",
+                    history::kind_slug(&s.kind),
+                    history::display_name(s)
+                        .map(|n| format!(" {n:?}"))
+                        .unwrap_or_default()
+                )
+            })
+            .collect();
+        format!("no snapshot {key:?} in the timeline [{}]", names.join(", "))
+    })
+}
+
+/// Runs a History / Settings command; `None` for every other command.
+fn history_step(
+    state: &mut AppState,
+    cmd: &Cmd,
+    awaiting_autosave: &mut Option<u64>,
+) -> Option<Step> {
+    let needs_map = matches!(
+        cmd,
+        Cmd::Checkpoint(_)
+            | Cmd::AssertHistory { .. }
+            | Cmd::HistorySelect(_)
+            | Cmd::AssertDiff { .. }
+            | Cmd::ShowSnapshot(_)
+            | Cmd::HistoryJump(_)
+            | Cmd::Restore(_)
+    );
+    let index = state.active;
+    if needs_map && index.is_none() {
+        return Some(Step::Fail(
+            "no map is open (use `open <game path>` first)".to_owned(),
+        ));
+    }
+    let index = index.unwrap_or(0);
+    let result: Result<(), String> = match cmd {
+        Cmd::AutosaveNow => {
+            if state.history.autosave_in_flight {
+                return Some(Step::Retry);
+            }
+            match *awaiting_autosave {
+                Some(run) if state.history.autosave_runs > run => {
+                    *awaiting_autosave = None;
+                    if state.history.autosave_errors.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "autosave-now: {}",
+                            state.history.autosave_errors.join("; ")
+                        ))
+                    }
+                }
+                Some(_) => return Some(Step::Retry),
+                None => {
+                    let run = state.history.autosave_runs;
+                    if state.autosave_now() == 0 {
+                        state.info("autosave-now: no map has unrecorded changes");
+                        Ok(())
+                    } else {
+                        *awaiting_autosave = Some(run);
+                        return Some(Step::Retry);
+                    }
+                }
+            }
+        }
+        Cmd::Checkpoint(name) => state.checkpoint(index, name).map(|s| {
+            state.info(format!(
+                "Checkpoint {name:?} recorded (snapshot {})",
+                s.id.0
+            ));
+        }),
+        Cmd::AssertHistory { n, kind } => {
+            let timeline = state.timeline_of(index);
+            let actual = timeline
+                .iter()
+                .filter(|s| {
+                    kind.as_deref()
+                        .is_none_or(|k| history::kind_slug(&s.kind) == k)
+                })
+                .count();
+            if actual == *n {
+                Ok(())
+            } else {
+                let all: Vec<&str> = timeline
+                    .iter()
+                    .map(|s| history::kind_slug(&s.kind))
+                    .collect();
+                Err(format!(
+                    "assert-history {n}{}: found {actual} (timeline, newest first: {all:?})",
+                    kind.as_deref().map(|k| format!(" {k}")).unwrap_or_default()
+                ))
+            }
+        }
+        Cmd::HistorySelect(key) => {
+            find_snapshot(state, index, key).and_then(|id| state.select_snapshot(id))
+        }
+        Cmd::AssertDiff { layer, count } => {
+            state.history_frame();
+            let doc_id = state.docs[index].id;
+            match state.history.overlay_for(doc_id) {
+                None => Err("assert-diff: no snapshot is selected (history-select)".to_owned()),
+                Some(o) if o.count(*layer) == *count => Ok(()),
+                Some(o) => Err(format!(
+                    "assert-diff {} {count}: {} cell(s) differ ({:?})",
+                    crate::doc::layer_label(*layer),
+                    o.count(*layer),
+                    o.per_layer.get(layer)
+                )),
+            }
+        }
+        Cmd::ShowSnapshot(on) => state.set_show_snapshot(*on),
+        Cmd::HistoryJump(layer) => {
+            state.history_frame();
+            let doc_id = state.docs[index].id;
+            let n = state.history.jump_cursor;
+            match state
+                .history
+                .overlay_for(doc_id)
+                .map(|o| o.nth_of(*layer, n))
+            {
+                None => Err("history-jump: no snapshot is selected".to_owned()),
+                Some(None) => Err(format!(
+                    "history-jump: no change on {}",
+                    crate::doc::layer_label(*layer)
+                )),
+                Some(Some((x, y))) => {
+                    state.history.jump_cursor = n + 1;
+                    state.jump_to_cell(x, y);
+                    Ok(())
+                }
+            }
+        }
+        Cmd::Restore(key) => find_snapshot(state, index, key).and_then(|id| {
+            let profile = state.docs[index].profile_id.clone();
+            let expected = history::read_snapshot(&state.paths.history, &profile, id)?;
+            state.restore_snapshot(id)?;
+            let now = state.docs[index]
+                .edit
+                .ds1()
+                .to_bytes()
+                .map_err(|e| format!("restore: cannot serialise the map: {e}"))?;
+            if now != expected {
+                return Err("restore: the map does not equal the snapshot".to_owned());
+            }
+            if !state.docs[index].is_dirty() {
+                return Err("restore: the map should be dirty".to_owned());
+            }
+            match state.timeline_of(index).first() {
+                Some(s) if s.kind == SnapshotKind::BeforeRestore => Ok(()),
+                other => Err(format!(
+                    "restore: the newest snapshot is {:?}, not BeforeRestore",
+                    other.map(|s| history::kind_slug(&s.kind))
+                )),
+            }
+        }),
+        Cmd::Milestone(message) => state.milestone(message).map(|id| match id {
+            Some(id) => state.info(format!("Milestone {id} committed")),
+            None => state.info("Milestone: nothing changed"),
+        }),
+        Cmd::AssertMilestones(n) => {
+            state.refresh_milestones();
+            match state.milestones().clone() {
+                Ok(list) if list.len() == *n => Ok(()),
+                Ok(list) => Err(format!("assert-milestones {n}: there are {}", list.len())),
+                Err(e) => Err(format!("assert-milestones: {e}")),
+            }
+        }
+        Cmd::Prune(keep) => {
+            let mut policy = state.config.retention();
+            policy.keep_last = *keep;
+            state.prune_now(&policy).map(|r| {
+                state.info(format!(
+                    "Pruned {} snapshot(s), {} blob(s), {} bytes",
+                    r.snapshots_removed, r.blobs_removed, r.bytes_freed
+                ));
+            })
+        }
+        Cmd::AssertChanged(n) => {
+            let actual = state
+                .active_profile_id()
+                .map_or(0, |p| crate::edit::save::changed_count(&state.paths, p));
+            if actual == *n {
+                Ok(())
+            } else {
+                Err(format!("assert-changed {n}: CHANGED.txt lists {actual}"))
+            }
+        }
+        Cmd::Setting { key, value } => state.apply_setting(key, value),
+        Cmd::HistoryTab => {
+            state.history.focus = true;
+            Ok(())
+        }
+        Cmd::Settings(open) => {
+            state.settings.open = *open;
+            Ok(())
+        }
+        Cmd::AddInstall(dir) => {
+            state.open_add_install(dir.as_deref());
+            Ok(())
+        }
+        Cmd::CloseDialogs => {
+            state.settings.open = false;
+            state.settings.add = None;
+            state.history.prompt = None;
             Ok(())
         }
         _ => return None,

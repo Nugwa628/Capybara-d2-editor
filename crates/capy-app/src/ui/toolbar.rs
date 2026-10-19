@@ -41,7 +41,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                         ui.selectable_value(&mut state.edit.scope, scope, scope.label());
                     }
                 });
-            ui.weak("Shift adds, Ctrl subtracts, Alt intersects");
+            ui.weak(crate::edit::tools::SELECT_MODS_HINT);
         }
         if tool.brushes() {
             ui.label("Brush");

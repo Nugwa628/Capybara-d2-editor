@@ -12,6 +12,8 @@ Features marked **planned** are not in the program yet.
 - [Viewing a map](#viewing-a-map)
 - [Editing a map](#editing-a-map)
 - [Saving and packing](#saving-and-packing)
+- [History: autosave, checkpoints, diff and restore](#history-autosave-checkpoints-diff-and-restore)
+- [Settings](#settings)
 - [Sprites mode](#sprites-mode)
 - [Coming soon: tile browser and Ctrl+K search](#coming-soon-tile-browser-and-ctrlk-search)
 - [Troubleshooting](#troubleshooting)
@@ -36,7 +38,7 @@ capybara\
   layout-sprites.json  panel layout of Sprites mode
   profiles\<id>.toml   one game profile per file
   saves\<profile>\     your edited files, at their game paths, plus CHANGED.txt
-  history\<profile>\   a snapshot of every save (index.json and objects\)
+  history\<profile>\   snapshots of saves, autosaves and checkpoints (index.json and objects\)
   cache\               asset index (index.db) and file-name lists
 ```
 
@@ -52,24 +54,50 @@ shows an error window and stops (see [Troubleshooting](#troubleshooting)).
 A profile tells the editor which archives and folders make up one game setup.
 Each profile is a TOML file in `capybara\profiles\`.
 
-On the first run, the editor writes a profile for each install it finds at
-the default locations:
+On the first run, the editor writes a profile for each install it finds:
 
-| Profile id | Name | Install folder it looks for | Game version |
+| Profile id | Name | Where it looks | Game version |
 |---|---|---|---|
-| `vanilla` | Diablo II 1.14d | `C:\Program Files (x86)\Diablo II` | 1.14d |
+| `vanilla` | Diablo II 1.14d | `C:\Program Files (x86)\Diablo II`, then the install path Diablo II's installer left in the Windows registry | 1.14d |
 | `mxl` | Median XL | `C:\games\median-xl` | 1.13c |
+
+The registry is only read, never written. It is checked under
+`HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Blizzard Entertainment\Diablo II` and
+`HKEY_CURRENT_USER\Software\Blizzard Entertainment\Diablo II` (value
+`InstallPath`); a registry path is used only if it holds `d2data.mpq` and
+`d2exp.mpq`.
 
 It only does this when `config.toml` doesn't exist yet or `capybara\profiles\`
 holds no `.toml` files. It never overwrites a profile file.
 
-If your game lives somewhere else, write the profile yourself (see below), or
-copy a generated one and change the paths. Profiles are read when the editor
-starts, so restart it after adding or editing one.
+If your game lives somewhere else, use **File > Add game install...** (see
+below), write the profile yourself, or copy a generated one and change the
+paths. Profile files you write by hand are read when the editor starts, so
+restart it after adding or editing one.
 
 Switch profiles with the **Profile** box on the menu bar. At start-up the
-editor opens the profile you used last. On the very first run it opens the
-first profile in alphabetical order of id (so `mxl` comes before `vanilla`).
+editor opens the profile you used last. On the very first run it opens
+`vanilla` if there is one, otherwise the first profile in alphabetical order
+of id.
+
+#### Add game install
+
+**File > Add game install...** (also in **File > Settings...**) makes a
+profile for an install folder:
+
+1. Click **Choose folder...**, type the folder, or click **Use** next to an
+   install the editor found (from the registry or a default location).
+2. The editor looks at the archive names in the folder:
+   - any `medianxl-*.mpq`: **Median XL**;
+   - `d2data.mpq` and `d2exp.mpq`: **Diablo II (vanilla)**;
+   - neither: it asks you which one to treat it as.
+   If another profile already reads that folder, the dialog says so.
+3. Check the proposed **Profile id** (unique, for example `vanilla-2`),
+   **Name** and **Game version**.
+4. Click **Add profile**. The editor writes `capybara\profiles\<id>.toml` and
+   opens the new profile straight away; no restart is needed.
+
+Nothing is ever written inside the install folder.
 
 #### Vanilla
 
@@ -178,7 +206,8 @@ From top to bottom:
    - the open profile and how many maps it has;
    - a spinner while the map catalog builds;
    - asset index progress, with a **Cancel** button;
-   - on the right, the hovered cell and the zoom (`1:4`).
+   - on the right, the time of the last autosave (`autosaved 14:32`), the
+     hovered cell and the zoom (`1:4`).
 
 Map Editor panels (default layout):
 
@@ -189,11 +218,13 @@ Map Editor panels (default layout):
 | Map | centre | Open maps as tabs, the tool strip, and the map itself. |
 | Layers | right | Choose the active layer, toggle visibility, layer actions. |
 | Properties | right, second tab | Facts about the map, its tile set (with override), rendering status, hovered cell. |
+| History | right, third tab | The map's snapshots, checkpoints, the diff against a snapshot, restore, milestones. **View > History** shows or hides it. |
 | Log | bottom | Everything the editor reports. |
 | Sprite preview | optional | The selected object's animation. Turn it on with **View > Sprite preview**. |
 
-Only the Sprite preview panel can be closed. The others can be moved but not
-closed.
+Only the Sprite preview and History panels can be closed. The others can be
+moved but not closed. A layout saved by an older version has no History tab;
+**View > History** adds it.
 
 ### The Log and notifications
 
@@ -374,11 +405,12 @@ ID or Select identical:
 | none | Replace the selection |
 | **Shift** | Add to it |
 | **Ctrl** | Subtract from it |
-| **Alt** | Intersect with it |
+| **Shift+Ctrl** | Intersect with it |
+| **Alt** | Intersect with it (same as Shift+Ctrl) |
 
-If several are held, Shift wins over Ctrl, and Ctrl wins over Alt. Selected
-cells are tinted by layer: green for floors, blue for walls, purple for the
-shadow, pink for tag.
+These are the same keys as in the Sprites editor. Shift or Ctrl alone wins
+over Alt. Selected cells are tinted by layer: green for floors, blue for
+walls, purple for the shadow, pink for tag.
 
 #### Selection scope
 
@@ -388,6 +420,8 @@ layers it looks at:
 - **Active layer**: only the active layer (the default).
 - **All visible layers**: every layer whose checkbox is on in the Layers
   panel.
+
+Which one the editor starts with is set in **File > Settings...**.
 
 Select by tile ID and Select identical read the clicked cell from the active
 layer if it has a tile there. Otherwise they use the topmost layer in scope
@@ -610,11 +644,124 @@ the archives in the editor.
 
 Every save also stores a compressed copy of the file in
 `capybara\history\<profile>\`. If you save the same content twice in a row,
-the second save doesn't add a snapshot.
+the second save doesn't add a snapshot. The **History** panel shows them; see
+the next section.
 
-Browsing the timeline, restoring snapshots, named checkpoints, autosave and
-"Milestone" commits are **planned**. Until then, the snapshots are a safety
-net that a future version can read.
+---
+
+## History: autosave, checkpoints, diff and restore
+
+<!-- screenshot: the History panel with a checkpoint selected and the diff overlay on the map -->
+
+The editor keeps the versions of each map in `capybara\history\<profile>\`.
+Identical content is stored once. There are four kinds of snapshot:
+
+| Kind | Made by | Pruned by retention |
+|---|---|---|
+| Save | every save (**Ctrl+S**) | yes |
+| Autosave | the autosave timer, or **Autosave now** | yes |
+| Checkpoint | **Checkpoint...**, or **Make checkpoint...** on any snapshot | **never** |
+| Before restore | a restore, just before it replaces the map | yes |
+
+Only saves write `capybara\saves\` and `CHANGED.txt`. Autosaves, checkpoints
+and restores never touch them, so nothing new needs packing until you save.
+
+### Autosave
+
+Every few minutes (5 by default; set it in **File > Settings...**, 0 turns it
+off), each open map with **unsaved changes** is recorded as an Autosave
+snapshot. Maps without unsaved changes are skipped, and so is a map that has
+not changed since its last autosave. The writing happens in the background,
+so the editor doesn't pause. The status bar and the History panel then show
+`autosaved 14:32`. **Autosave now** in the History panel does it at once.
+
+### The History panel
+
+The panel shows the active map's timeline, **newest first**: the kind, the
+name or label, the time (hover for the full date) and the size.
+
+- **Checkpoint...** records the map as it is now under a name, without saving
+  it. Use it before a risky change.
+- **Milestone...**: see [Milestones](#milestones).
+- Click a row to select it and compare it with the map (below).
+  Right-click a row, or use the buttons under the list, for:
+  - **Rename / label...**: a note shown in the timeline (empty removes it);
+  - **Make checkpoint...** (or **Rename checkpoint...**): turns the snapshot
+    into a named checkpoint, which retention never removes;
+  - **Restore...** (below);
+  - **Delete...**: removes it from the timeline. Its stored copy is freed by
+    the next prune.
+
+### Comparing with a snapshot
+
+Selecting a snapshot compares it with the map as it is now (including unsaved
+changes):
+
+- **Show changes on the map** paints every differing cell: **green** where a
+  tile was added since, **red** where one was removed, **yellow** where it
+  changed (another tile, orientation or flags). Objects added or removed get
+  a green or red ring.
+- The summary counts the added, removed and changed cells of each layer. The
+  checkbox in front of a layer shows or hides that layer's cells on the map,
+  and **Jump** centres the map on the layer's next change (click again for
+  the one after).
+- Size, DS1 version, layers added or removed and other data are listed below
+  the counts.
+- **Show snapshot (read-only)** draws the snapshot in place of the map so you
+  can flip between then and now. While it is on, the map can't be edited; a
+  blue line at the top of the map says so. Untick it to go back. Any edit
+  (for example Ctrl+Z) also switches back to the current map.
+
+### Restore
+
+**Restore...** asks first. Then:
+
+1. the map as it is now is recorded as a **Before restore** snapshot;
+2. the map is replaced by the snapshot, as **one undo step**: **Ctrl+Z**
+   brings your version back.
+
+The map is then marked unsaved. Restoring doesn't save; press **Ctrl+S** when
+you are happy with it.
+
+### Retention
+
+The newest saves, autosaves and before-restore snapshots of each map are kept
+(100 by default). You can also drop those older than a number of days.
+Checkpoints are never removed. Set both in **File > Settings...**; the policy
+is applied whenever a profile opens, and **Prune now** applies it at once and
+reports how much was freed.
+
+### Milestones
+
+A milestone is a git commit of the whole `capybara\saves\` folder (every
+profile), made with a built-in git library; you don't need git installed.
+**Milestone...** asks for a message and commits every saved file, including
+deletions since the last milestone. Unsaved changes are not included, so save
+first. If nothing changed since the last milestone, the editor says "nothing
+changed" and makes no commit. The **Milestones** list at the bottom of the
+History panel shows the commits, newest first.
+
+The repository is `capybara\saves\.git`. Any git tool can read it, for
+example to see what changed between two milestones.
+
+---
+
+## Settings
+
+<!-- screenshot: the Settings window -->
+
+**File > Settings...** holds:
+
+| Section | Setting |
+|---|---|
+| Map view | **Gamma** of the map view and the object preview (0.5 to 3.0, default 1.30). The map is redrawn live as you drag. **Reset** goes back to 1.30. |
+| Layers visible when a map opens | Floors, Walls, Shadow, Tag, Objects. **Apply to the open map** applies them to the active map now. |
+| Selection | Whether selection tools start on the **Active layer** or **All visible layers**. Changing it also changes the current choice. |
+| Autosave | The interval in minutes; 0 is off. |
+| History retention | How many saves/autosaves to keep per map, and an optional age limit in days (0 = none). **Prune now**. |
+| Game profiles | The profiles, **Add game install...** and **Open profiles folder**. |
+
+Settings are saved in `config.toml` straight away.
 
 ---
 
@@ -826,7 +973,7 @@ button the secondary.
 | **R** | Rectangle | Outline or Filled. |
 | **C** | Ellipse | Outline or Filled. |
 | **F** | Fill | **Contiguous** fills the touching area of the same index; **Global (same index)** fills every pixel of that index in the frame. |
-| **K** | Replace colour | Click a pixel: every pixel of that index becomes the primary colour (right-click: the secondary). **In every frame** does it across the whole sprite. |
+| **K** | Replace colour | Click a colour to replace it with the primary (right-click: secondary): every pixel of that index changes. **In every frame** does it across the whole sprite. |
 | **I** | Picker | Left-click picks the primary colour, right-click the secondary. |
 | **G** | Gradient | See below. |
 | **H** | Shade | Left button lightens, right button darkens, along each pixel's own ramp. **Steps** 1 to 8. |
@@ -840,8 +987,8 @@ button the secondary.
 Brush size is 1 to 32 pixels; **[** and **]** change it.
 
 When a selection exists, painting tools only change selected pixels. For the
-selection tools, hold **Shift** to add, **Ctrl** to subtract, and both to
-intersect. The **Selection** buttons are **All**, **None**, **Invert**,
+selection tools, hold **Shift** to add, **Ctrl** to subtract, and
+**Shift+Ctrl** to intersect (the same keys as in the Map Editor). The **Selection** buttons are **All**, **None**, **Invert**,
 **Grow**, **Shrink**, **Flip H**, **Flip V**, **Rot CW** and **Rot CCW**.
 
 #### Gradient
@@ -1052,7 +1199,8 @@ dialog is open.
 | Mouse wheel | Zoom at the cursor |
 | Middle-drag, Space + drag | Pan |
 | Arrow keys | Pan |
-| Shift / Ctrl / Alt + selection | Add / subtract / intersect |
+| Shift / Ctrl + selection | Add / subtract |
+| Shift+Ctrl (or Alt) + selection | Intersect |
 | Shift + click (Objects tool) | Add or remove an object from the selection |
 
 ### Sprites mode
@@ -1110,7 +1258,7 @@ Editor:
 | Mouse wheel | Pan |
 | Middle-drag, Space + drag | Pan |
 | Right mouse button | Draw with the secondary colour |
-| Shift / Ctrl / both + selection | Add / subtract / intersect |
+| Shift / Ctrl / Shift+Ctrl + selection | Add / subtract / intersect |
 
 ---
 
@@ -1124,14 +1272,17 @@ settings change.
 
 | Key | Meaning |
 |---|---|
-| `gamma` | Gamma of the map view and the object preview (default 1.30, DS1Edit's default). There is no menu for it yet. |
+| `gamma` | Gamma of the map view and the object preview (default 1.30, DS1Edit's default). Also in **File > Settings...**. |
+| `autosave_minutes` | Minutes between autosaves of maps with unsaved changes (default 5); `0` turns autosave off. |
+| `keep_last` | History retention: newest saves/autosaves/before-restore snapshots kept per map (default 100, at least 1). |
+| `max_age_days` | History retention: also drop those older than this many days; `0` (the default) means no age limit. |
+| `select_scope` | `"active"` or `"visible"`: the layers selection tools start on. |
 | `[layer_visibility]` | `floor`, `wall`, `shadow`, `tag`, `objects`: which layer kinds start visible when a map opens. `tag` is `false` by default. |
 | `last_profile` | The profile opened at start-up. |
 | `mode` | `"map"` or `"sprites"`: the mode shown at start-up. |
 | `[window]` | `width` and `height` of the window. |
 | `[[recent_maps]]` | The File > Open recent list. |
 | `[[overrides]]` | Your LvlType/Def choices, per profile and map. |
-| `autosave_minutes` | Reserved for autosave, which is **planned**; it has no effect yet. |
 
 ### Environment variables
 
@@ -1143,5 +1294,7 @@ settings change.
 | `CAPY_NO_INDEX` | Set to `1` to skip building the asset index. |
 
 The editor also has hooks used by its automated tests, such as
-`CAPY_SCRIPT`, which runs a file of editing commands and then exits, and
-`CAPY_SCREENSHOT`. They are meant for development and may change.
+`CAPY_SCRIPT`, which runs a file of editing commands and then exits (it has
+history commands too: `autosave-now`, `checkpoint`, `history-select`,
+`restore`, `milestone`, `prune`, `setting`, ...), and `CAPY_SCREENSHOT`. They
+are meant for development and may change.

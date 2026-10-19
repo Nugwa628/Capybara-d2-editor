@@ -86,6 +86,19 @@ fn file_menu(ui: &mut Ui, state: &mut AppState) {
     ui.weak(format!("CHANGED.txt: {changed} file(s)"));
 
     ui.separator();
+    if ui.button("Settings...").clicked() {
+        state.settings.open = true;
+        ui.close();
+    }
+    if ui
+        .button("Add game install...")
+        .on_hover_text("Make a profile for a Diablo II or Median XL folder")
+        .clicked()
+    {
+        state.open_add_install(None);
+        ui.close();
+    }
+    ui.separator();
     if ui.button("Quit").clicked() {
         state.request_quit();
         ui.close();
@@ -244,6 +257,14 @@ fn view_menu(ui: &mut Ui, state: &mut AppState, dock: &mut Dock) {
         .changed()
     {
         dock.toggle_sprite_preview();
+        ui.close();
+    }
+    let mut history = dock.has_history();
+    if ui
+        .add_enabled(map_mode, egui::Checkbox::new(&mut history, "History"))
+        .changed()
+    {
+        dock.toggle_history();
         ui.close();
     }
     if ui.button("Reset panel layout").clicked() {

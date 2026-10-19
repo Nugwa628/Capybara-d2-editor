@@ -136,6 +136,13 @@ pub fn handle_input(
     if state.edit.modal_open() {
         return;
     }
+    // A history snapshot shown in place of the map is read-only.
+    if state.docs[index].snapshot_view.is_some() {
+        if state.edit.gesture.is_some() {
+            end_gesture(state, false);
+        }
+        return;
+    }
 
     // The floating paste owns the pointer: it follows the mouse, a click
     // commits it.
@@ -471,6 +478,7 @@ pub fn paint_overlays(ui: &Ui, state: &mut AppState, f: &ViewFrame) {
     if state.edit.grid {
         draw_grid(&painter, state, f);
     }
+    draw_history_diff(&painter, state, f);
     draw_selection(&painter, state, f);
     draw_objects(&painter, state, f);
     draw_gesture(&painter, state, f);
@@ -566,6 +574,46 @@ fn draw_selection(painter: &Painter, state: &AppState, f: &ViewFrame) {
         &cells,
         Some(Color32::from_rgba_unmultiplied(255, 255, 255, 190)),
     );
+}
+
+/// The diff against the History panel's selected snapshot: green added, red
+/// removed, yellow changed cells, and rings for objects added or removed.
+fn draw_history_diff(painter: &Painter, state: &AppState, f: &ViewFrame) {
+    let Some(doc) = state.active_doc() else {
+        return;
+    };
+    if !state.history.overlay_visible {
+        return;
+    }
+    let Some(overlay) = state.history.overlay_for(doc.id) else {
+        return;
+    };
+    let hidden = &state.history.overlay_hidden;
+    let cells: Vec<((u32, u32), Color32)> = overlay
+        .cells
+        .iter()
+        .filter(|c| !hidden.contains(&c.layer) && on_screen(f, c.x, c.y, 160.0))
+        .map(|c| {
+            let [r, g, b, a] = c.change.rgba();
+            ((c.x, c.y), Color32::from_rgba_unmultiplied(r, g, b, a))
+        })
+        .collect();
+    fill_cells(
+        painter,
+        f,
+        &cells,
+        Some(Color32::from_rgba_unmultiplied(255, 255, 255, 70)),
+    );
+    let r = marker_radius(f) + 4.0;
+    for o in &overlay.objects {
+        let (u, v) = object_tile_pos(o.x, o.y);
+        let c = f.tile_to_screen(u, v);
+        if !f.rect.expand(r).contains(c) {
+            continue;
+        }
+        let [cr, cg, cb, _] = o.change.rgba();
+        painter.circle_stroke(c, r, Stroke::new(2.5, Color32::from_rgb(cr, cg, cb)));
+    }
 }
 
 /// Half-width of an object marker, in points.
