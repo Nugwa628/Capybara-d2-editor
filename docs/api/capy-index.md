@@ -102,6 +102,11 @@ pub type Result<T, E = IndexError> = std::result::Result<T, E>;
 // query.rs — `type: act: color: tag: idx: file: similar: used-in: mirrored: src:` + free text
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AssetKind { Tile, Ds1, Dt1, Dc6, Dcc, Cof }
+impl AssetKind {
+    pub fn as_str(self) -> &'static str;               // the `kind` column: "tile", "ds1", ...
+    pub fn parse(text: &str) -> Option<AssetKind>;     // inverse of as_str, ASCII case-insensitive
+    pub fn label(self) -> &'static str;                // "Tile", "DS1", "DT1", "DC6", "DCC", "COF" (generated names)
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Filter {
     Type(AssetKind),                 // type:tile|floor|wall|roof|shadow|special|ds1|dt1|dc6|dcc|cof
@@ -111,6 +116,8 @@ pub enum Filter {
     Tag(String),                     // tag:"my tag" (quoted values allowed)
     Idx { main: u8, sub: Option<u8>, orientation: Option<u8> }, // idx:5  idx:5/2  idx:0:5/2 (orientation:main/sub)
     File(String),                    // file:floor.dt1 (substring of path, case-insensitive)
+    AnyFile(Vec<String>),            // no token, programmatic only: path contains ANY of these substrings
+                                     //   (each like File; pass `\` separators). [] matches nothing.
     Similar(String),                 // similar:<asset key>  (pHash Hamming distance <= 10, nearest first)
     UsedIn(String),                  // used-in:towne1 (substring of DS1 path)
     Mirrored,                        // mirrored:yes — has a horizontally mirrored twin (phash_mirror match)
@@ -123,6 +130,13 @@ pub struct Query { pub text: String, pub filters: Vec<Filter> }
 #[error("bad query at {position}: {detail}")]
 pub struct QueryError { pub position: usize, pub detail: String }
 pub fn parse_query(input: &str) -> Result<Query, QueryError>;   // unknown `word:` stays free text
+// Multi-file scope (lib-wishes-2, 2026-10-19, for lead review): `Filter::AnyFile` rather than a
+// `Query` field, so it composes with `Not` and the other filters and needs no
+// new query plumbing. `Filter` is not `#[non_exhaustive]`; adding the variant
+// only breaks exhaustive `match`es, and no crate outside capy-index has one.
+// "This map's tile set" is one query: `type:tile` + `AnyFile(map DT1 paths)`;
+// it returns exactly the union of the per-DT1 `file:` queries (real-data test
+// over the Median XL whimsy DT1s in `tests/p3_queries.rs`).
 // Ranking: every free-text token must match (AND). A token matches via an
 // alias/name/path prefix, substring or segment hit, or a fuzzy match scoring
 // at least 70% of the token's self-match score (no loose fuzzy wins).
@@ -152,6 +166,7 @@ pub struct Hit { pub asset: AssetRow, pub score: f32, pub alias: Option<String> 
 pub struct Index { /* path, Connection */ }
 impl Index {
     pub fn open(cache_dir: &std::path::Path) -> Result<Index>;              // creates cache_dir/index.db
+    pub fn db_path(&self) -> &std::path::Path;                              // where index.db lives
     /// Ignores the profile's saves layer (`saves\<id>`); saving a map never makes
     /// the profile stale. Saved DS1s are picked up by `refresh_saves`.
     pub fn status(&self, profile_id: &str, overlay: &d2_assets::Overlay) -> Result<IndexStatus>;
@@ -167,6 +182,13 @@ impl Index {
     pub fn thumbnail(&self, asset_id: i64) -> Result<Option<Vec<u8>>>;        // PNG bytes
     pub fn tiles_with_key(&self, profile_id: &str, orientation: u8, main: u8, sub: u8) -> Result<Vec<AssetRow>>;
     pub fn count(&self, profile_id: &str, kind: Option<AssetKind>) -> Result<u64>;
+    /// LvlTypes rows that load a DT1 asset: `(lvltype id, slot)`, slot being the
+    /// 0-based File index (bit `slot` of a LvlPrest `Dt1Mask`); sorted by lvltype, slot.
+    /// Empty for assets that are not DT1 files or that no LvlType loads.
+    pub fn lvltypes_of(&self, asset_id: i64) -> Result<Vec<(u32, u32)>>;
+    /// DS1 paths that use a tile asset, with how many cells use it; most cells first,
+    /// then by path. Empty for non-tile assets and unused tiles.
+    pub fn used_in(&self, asset_id: i64) -> Result<Vec<(String, u32)>>;
 }
 
 // user.rs
@@ -176,7 +198,8 @@ pub struct FavoriteGroup { pub id: i64, pub name: String, pub position: i64 }
 pub struct SavedSearch { pub id: i64, pub name: String, pub query: String, pub position: i64, pub pinned: bool }
 pub struct UserDb { /* Connection */ }
 impl UserDb {
-    pub fn open(path: &std::path::Path) -> Result<UserDb>;
+    pub fn open(path: &std::path::Path) -> Result<UserDb>;               // creates the file and folder, migrates
+    pub fn schema_version(&self) -> Result<i64>;                         // the stored `meta` schema_version
     pub fn alias(&self, profile: &str, key: &str) -> Result<Option<String>>;
     pub fn set_alias(&self, profile: &str, key: &str, alias: Option<&str>) -> Result<()>;
     pub fn tags(&self, profile: &str, key: &str) -> Result<Vec<String>>;
@@ -196,9 +219,35 @@ impl UserDb {
     pub fn move_favorite(&self, group_id: i64, profile: &str, key: &str, new_position: i64) -> Result<()>;
     pub fn record_use(&self, profile: &str, key: &str) -> Result<()>;
     pub fn recents(&self, profile: &str, limit: usize) -> Result<Vec<String>>;   // newest first
-    pub fn saved_searches(&self) -> Result<Vec<SavedSearch>>;
-    pub fn save_search(&self, name: &str, query: &str) -> Result<SavedSearch>;
+    pub fn use_count(&self, profile: &str, key: &str) -> Result<u32>;   // record_use calls kept in recents; 0 if never (or forgotten past 1000 recents)
+    pub fn saved_searches(&self) -> Result<Vec<SavedSearch>>;           // pinned first, then by position, then id
+    pub fn save_search(&self, name: &str, query: &str) -> Result<SavedSearch>; // existing name: replaces the query, keeps position and pin
+    pub fn rename_search(&self, id: i64, name: &str) -> Result<()>;     // trimmed, unique, non-empty; keeps query, position, pin
+    pub fn move_search(&self, id: i64, new_position: i64) -> Result<()>; // clamped; others shift
     pub fn delete_search(&self, id: i64) -> Result<()>;
     pub fn set_search_pinned(&self, id: i64, pinned: bool) -> Result<()>;
 }
+```
+Ordering (user.db): favorite groups, favorites and saved searches keep dense
+positions `0..n` after every write; `move_*` removes the item and re-inserts it
+at `new_position` (negative = 0, past the end = last). Saved-search positions
+are one order over all searches; pinning only changes the listing order. Names
+of groups and saved searches are trimmed and unique. An empty or taken name,
+and renaming or moving an unknown id, is `IndexError::Other`; deleting or
+pinning an unknown id does nothing. Recents are newest first and capped at
+1000 per profile.
+
+```rust
+// naming.rs — pure functions behind generated names (see "Generated names")
+pub fn generated_tile_name(place: &str, orientation: u8, descriptor: &str, main: u8, sub: u8) -> String;
+pub fn generated_file_name(path: &str, kind: AssetKind) -> String;   // `<place> · <kind label>`
+pub fn place_from_path(path: &str) -> String;
+pub fn class_name(orientation: u8) -> &'static str;                  // "Floor", "Wall", "Special", ...
+pub fn descriptor(color: &str, texture: &str, luma: f32) -> String;  // "grass", "dirt", "green edgy", "dark", ...
+pub fn color_name(rgb: [u8; 3]) -> &'static str;
+pub fn texture_class(edge_density: f32) -> &'static str;             // "flat" | "noisy" | "edgy" (NaN = flat)
+pub fn luma(rgb: [u8; 3]) -> f32;                                    // Rec. 601
+pub const FLAT_BELOW: f32 = 20.0;  pub const NOISY_BELOW: f32 = 60.0;  pub const DARK_BELOW: f32 = 25.0;
+pub const GREY_BELOW_SATURATION: f32 = 0.15;  pub const WHITE_FROM_LUMA: f32 = 170.0;
+pub const BROWN_BELOW_VALUE: f32 = 0.55;  pub const TAN_BELOW_SATURATION: f32 = 0.35;
 ```

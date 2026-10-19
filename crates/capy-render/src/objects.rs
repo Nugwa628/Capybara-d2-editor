@@ -149,6 +149,11 @@ pub struct ObjectFrame {
     /// [`frame_index`] and forced frames wrap at (at least 1). Layers with
     /// fewer frames repeat their last one.
     pub frames_per_direction: u8,
+    /// Direction count of the object's COF (at least 1; COFs with none are
+    /// reported as [`MissingReason::CofInvalid`]). The user direction passed
+    /// to [`ObjectSprites::frame_of_info`] is mapped onto this many file
+    /// directions.
+    pub directions: u8,
 }
 
 impl ObjectFrame {
@@ -747,6 +752,7 @@ fn build_frame(asset: &Asset, frame: u8, offset: (i32, i32), order_flag: u8) -> 
         offset,
         order_flag,
         frames_per_direction: asset.cof.frames_per_direction.max(1),
+        directions: asset.cof.directions.max(1),
     }
 }
 

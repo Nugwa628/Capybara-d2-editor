@@ -8,7 +8,8 @@ use crate::model::{Sprite, SpriteFormat};
 use crate::quantize::{QuantizeOptions, to_rgba};
 use crate::testutil::{small_sprite, synthetic_palette};
 use crate::transfer::{
-    ExportMeta, META_FILE, export_frames, export_sheet, import_frames, import_sheet, natural_cmp,
+    ExportMeta, META_FILE, export_frames, export_sheet, import_frames, import_frames_subset,
+    import_sheet, natural_cmp,
 };
 
 /// Options that keep every palette colour (no colour keying).
@@ -362,4 +363,140 @@ fn sheet_import_with_meta_keeps_opaque_black() {
         .map(|&p| if p == 0 || p == 7 { 0 } else { 255 })
         .collect();
     assert_eq!(loose.directions[0][0].alpha, keyed_alpha);
+}
+
+fn names(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| (*s).to_owned()).collect()
+}
+
+#[test]
+fn subset_import_keeps_offsets_and_closes_gaps() {
+    let pal = synthetic_palette();
+    let sprite = small_sprite(3, 4, 6);
+    let dir = tempfile::tempdir().unwrap();
+    let full = export_frames(&sprite, SpriteFormat::Dcc, &pal, "act1", None, dir.path()).unwrap();
+
+    // Direction 1 is not picked; frames come back in (dir, frame) order
+    // whatever the order of the names, and a repeated name counts once.
+    let picked = names(&[
+        "d02_f003.png",
+        "d00_f001.png",
+        "D02_F000.PNG",
+        "d00_f000.png",
+        "d00_f001.png",
+    ]);
+    let (back, meta) = import_frames_subset(dir.path(), &picked, &pal, &exact()).unwrap();
+    let want = Sprite {
+        directions: vec![
+            vec![
+                sprite.directions[0][0].clone(),
+                sprite.directions[0][1].clone(),
+            ],
+            vec![
+                sprite.directions[2][0].clone(),
+                sprite.directions[2][3].clone(),
+            ],
+        ],
+    };
+    assert_eq!(back, want, "pixels and sprite.json offsets");
+    let meta = meta.unwrap();
+    assert_eq!((meta.directions, meta.frames_per_direction), (3, 4));
+    assert_eq!(meta.palette, full.palette);
+    let origin: Vec<(u32, u32)> = meta.frames.iter().map(|f| (f.dir, f.frame)).collect();
+    assert_eq!(origin, [(0, 0), (0, 1), (2, 0), (2, 3)]);
+    assert_eq!(meta.frames[2].file, "d02_f000.png");
+
+    // Picking every file gives what `import_frames` gives.
+    let every: Vec<String> = full.frames.iter().map(|f| f.file.clone()).collect();
+    let (all, all_meta) = import_frames_subset(dir.path(), &every, &pal, &exact()).unwrap();
+    assert_eq!(all, sprite);
+    assert_eq!(all_meta, Some(full));
+
+    // A ragged pick is allowed but cannot be encoded as is.
+    let ragged = names(&["d00_f000.png", "d01_f000.png", "d01_f001.png"]);
+    let (back, _) = import_frames_subset(dir.path(), &ragged, &pal, &exact()).unwrap();
+    let lens: Vec<usize> = back.directions.iter().map(Vec::len).collect();
+    assert_eq!(lens, [1, 2]);
+    assert!(back.encode(SpriteFormat::Dc6).is_err());
+}
+
+#[test]
+fn subset_import_with_sprite_json_does_not_colour_key() {
+    let mut pal = crate::testutil::synthetic_palette();
+    pal.colors[7] = [0, 0, 0];
+    let px = vec![7, 2, 0, 7, 7, 3];
+    let sprite = Sprite {
+        directions: vec![vec![
+            crate::testutil::image(3, 2, -1, -2, px.clone()),
+            crate::testutil::image(3, 2, 4, 5, px.clone()),
+        ]],
+    };
+    let dir = tempfile::tempdir().unwrap();
+    export_frames(&sprite, SpriteFormat::Dc6, &pal, "", None, dir.path()).unwrap();
+    let keyed = QuantizeOptions::default();
+    let (back, meta) =
+        import_frames_subset(dir.path(), &names(&["d00_f001.png"]), &pal, &keyed).unwrap();
+    assert!(meta.is_some());
+    assert_eq!(back.directions, vec![vec![sprite.directions[0][1].clone()]]);
+
+    // Without sprite.json: the given order, centred anchors, opts as given.
+    std::fs::remove_file(dir.path().join(META_FILE)).unwrap();
+    let (loose, meta) = import_frames_subset(
+        dir.path(),
+        &names(&["d00_f001.png", "d00_f000.png"]),
+        &pal,
+        &keyed,
+    )
+    .unwrap();
+    assert!(meta.is_none());
+    assert_eq!(loose.directions.len(), 1);
+    assert_eq!(loose.directions[0].len(), 2);
+    let mut centred = loose.directions[0][0].clone();
+    crate::ops::center_offset(&mut centred);
+    assert_eq!(loose.directions[0][0], centred);
+    let expect: Vec<u8> = px
+        .iter()
+        .map(|&p| if p == 0 || p == 7 { 0 } else { 255 })
+        .collect();
+    assert_eq!(loose.directions[0][0].alpha, expect, "black is keyed out");
+}
+
+#[test]
+fn subset_import_errors() {
+    let pal = synthetic_palette();
+    let dir = tempfile::tempdir().unwrap();
+    export_frames(
+        &small_sprite(2, 2, 4),
+        SpriteFormat::Dc6,
+        &pal,
+        "",
+        None,
+        dir.path(),
+    )
+    .unwrap();
+    let import = |files: &[&str]| import_frames_subset(dir.path(), &names(files), &pal, &exact());
+    assert!(matches!(import(&[]), Err(SpriteError::Invalid(_))));
+    let unlisted = import(&["d05_f000.png"]).unwrap_err();
+    assert!(
+        unlisted.to_string().contains("not a frame listed"),
+        "{unlisted}"
+    );
+    for hostile in ["../d00_f000.png", r"sub\d00_f000.png", "a/b.png", ""] {
+        let e = import(&[hostile]).unwrap_err();
+        assert!(
+            e.to_string().contains("plain file name"),
+            "{hostile:?}: {e}"
+        );
+    }
+    // Listed but deleted from the folder.
+    std::fs::remove_file(dir.path().join("d01_f001.png")).unwrap();
+    assert!(matches!(
+        import(&["d01_f001.png"]),
+        Err(SpriteError::Io { .. })
+    ));
+    // Without sprite.json the names must still be plain images.
+    std::fs::remove_file(dir.path().join(META_FILE)).unwrap();
+    assert!(import(&["d00_f000.png"]).is_ok());
+    assert!(import(&["sprite.txt"]).is_err());
+    assert!(import(&[r"..\d00_f000.png"]).is_err());
 }

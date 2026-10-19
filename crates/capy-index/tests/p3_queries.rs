@@ -14,7 +14,10 @@ mod common;
 
 use std::path::PathBuf;
 
-use capy_index::{UserDb, parse_query};
+use std::collections::BTreeSet;
+use std::time::Instant;
+
+use capy_index::{Filter, UserDb, parse_query};
 use d2_assets::{GamePath, Profile};
 use d2_formats::ds1::Ds1;
 
@@ -212,14 +215,23 @@ fn oracle(overlay: &d2_assets::Overlay) {
     assert!(has(23, 3), "shire.ds1 should use floor 23/3");
 }
 
-#[test]
-fn p3_queries_over_median_xl() {
+/// The Median XL install, or `None` (test skipped) when it is absent.
+fn mxl_dir() -> Option<PathBuf> {
     let dir = std::env::var_os("CAPY_MXL_DIR")
         .map_or_else(|| PathBuf::from("C:\\games\\median-xl"), PathBuf::from);
-    if !dir.is_dir() {
+    if dir.is_dir() {
+        Some(dir)
+    } else {
         println!("skipped: {} missing", dir.display());
-        return;
+        None
     }
+}
+
+#[test]
+fn p3_queries_over_median_xl() {
+    let Some(dir) = mxl_dir() else {
+        return;
+    };
     let profile = Profile::median_xl(&dir);
     let user_dir = tempfile::tempdir().unwrap();
     let common::Shared { idx, overlay, .. } = common::shared_mxl(&profile);
@@ -310,5 +322,77 @@ fn p3_queries_over_median_xl() {
             .unwrap()
             .iter()
             .any(|(ds1, cells)| ds1 == SHIRE_DS1 && *cells > 0)
+    );
+}
+
+/// `Filter::AnyFile` over every whimsy DT1 returns exactly the union of one
+/// `file:` query per DT1 (the browser's "this map's tile set" scope).
+#[test]
+fn any_file_over_whimsy_dt1s() {
+    let Some(dir) = mxl_dir() else {
+        return;
+    };
+    let profile = Profile::median_xl(&dir);
+    let user_dir = tempfile::tempdir().unwrap();
+    let common::Shared { idx, .. } = common::shared_mxl(&profile);
+    let user = UserDb::open(&user_dir.path().join("user.db")).unwrap();
+    let all = 1_000_000;
+
+    let dt1s: Vec<String> = idx
+        .search(
+            "mxl",
+            &parse_query(&format!("type:dt1 file:{WHIMSY}")).unwrap(),
+            &user,
+            all,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|h| h.asset.path)
+        .collect();
+    println!("whimsy DT1s: {dt1s:?}");
+    assert!(dt1s.len() >= 2, "Median XL has several whimsy DT1s");
+    assert!(dt1s.contains(&format!("{WHIMSY}whimsyfloor.dt1")));
+
+    let started = Instant::now();
+    let mut separate = BTreeSet::new();
+    for dt1 in &dt1s {
+        let q = parse_query(&format!("type:tile file:\"{dt1}\"")).unwrap();
+        for h in idx.search("mxl", &q, &user, all).unwrap() {
+            separate.insert(h.asset.key);
+        }
+    }
+    let per_file = started.elapsed();
+
+    let started = Instant::now();
+    let mut q = parse_query("type:tile").unwrap();
+    q.filters.push(Filter::AnyFile(dt1s.clone()));
+    let hits = idx.search("mxl", &q, &user, all).unwrap();
+    let one = started.elapsed();
+    let combined: BTreeSet<String> = hits.iter().map(|h| h.asset.key.clone()).collect();
+    println!(
+        "{} tiles: {} file: queries in {per_file:?}, one AnyFile query in {one:?}",
+        combined.len(),
+        dt1s.len()
+    );
+    assert_eq!(combined.len(), hits.len(), "each tile once");
+    assert!(!combined.is_empty());
+    assert_eq!(combined, separate);
+
+    // Combined with filters and free text, as the browser does.
+    let mut q = parse_query("color:green type:floor").unwrap();
+    q.filters.push(Filter::AnyFile(dt1s.clone()));
+    let green = idx.search("mxl", &q, &user, all).unwrap();
+    assert!(
+        green
+            .iter()
+            .any(|h| h.asset.key == format!("{WHIMSY}whimsyfloor.dt1#0/23/0/0"))
+    );
+    assert!(green.iter().all(|h| h.asset.path.starts_with(WHIMSY)));
+    let mut q = parse_query("whimsyfloor 23/05").unwrap();
+    q.filters.push(Filter::AnyFile(dt1s));
+    let top = idx.search("mxl", &q, &user, 5).unwrap();
+    assert!(
+        top.iter()
+            .any(|h| h.asset.key == format!("{WHIMSY}whimsyfloor.dt1#0/23/5/0"))
     );
 }

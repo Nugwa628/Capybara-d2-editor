@@ -14,6 +14,9 @@
 //!
 //! `Filter::Act` holds the number the user typed (1 to 5); the database
 //! stores acts 0-based, the index converts.
+//!
+//! [`Filter::AnyFile`] has no token: it is built by code (the browser's
+//! "this map's tile set" scope), so a query string never produces it.
 
 /// What kind of thing an asset row is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -88,6 +91,12 @@ pub enum Filter {
     /// `file:floor.dt1`: case-insensitive substring of the path
     /// (lower-cased, `/` turned into `\`).
     File(String),
+    /// Programmatic only (no query token): the path contains ANY of these
+    /// substrings, each matched like [`Filter::File`] (case-insensitive;
+    /// pass `\` separators, as `parse_query` would). One filter replaces
+    /// one query per file, e.g. every DT1 of a map. An empty list matches
+    /// nothing; `Not(AnyFile([]))` matches everything.
+    AnyFile(Vec<String>),
     /// `similar:<asset key>`: pHash Hamming distance <= 10, nearest first.
     Similar(String),
     /// `used-in:towne1`: substring of a DS1 path (lower-cased, `/` to `\`).
@@ -486,6 +495,9 @@ mod tests {
             ("\"\"", q("", vec![])),
             // A filter keyword that is only a prefix of a longer word is text.
             ("tagged:x", q("tagged:x", vec![])),
+            // `Filter::AnyFile` is programmatic only; there is no token.
+            ("anyfile:x", q("anyfile:x", vec![])),
+            ("any-file:x", q("any-file:x", vec![])),
             ("5/2", q("5/2", vec![])),
         ];
         for (input, want) in cases {

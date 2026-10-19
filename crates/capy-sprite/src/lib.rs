@@ -41,5 +41,6 @@ pub use ops::{
 };
 pub use quantize::{Dither, QuantizeOptions, quantize, to_rgba};
 pub use transfer::{
-    ExportMeta, FrameMeta, export_frames, export_sheet, import_frames, import_sheet,
+    ExportMeta, FrameMeta, export_frames, export_sheet, import_frames, import_frames_subset,
+    import_sheet,
 };

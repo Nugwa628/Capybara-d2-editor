@@ -82,6 +82,16 @@ fn clause(f: &Filter, profile: &str, user: &UserDb, sql: &mut Sql) -> Result<Str
             let p = sql.bind(text.to_ascii_lowercase());
             format!("instr(lower(a.path), {p}) > 0")
         }
+        Filter::AnyFile(texts) => {
+            if texts.is_empty() {
+                return Ok("0".to_owned());
+            }
+            let lower: Vec<String> = texts.iter().map(|t| t.to_ascii_lowercase()).collect();
+            let p = sql.bind(json_array(&lower));
+            format!(
+                "EXISTS (SELECT 1 FROM json_each({p}) f WHERE instr(lower(a.path), f.value) > 0)"
+            )
+        }
         Filter::Similar(key) => {
             let key = key.to_ascii_lowercase();
             let p = sql.bind(key);

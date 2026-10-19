@@ -248,6 +248,130 @@ pub fn import_frames(
     ))
 }
 
+/// `name` when it is a plain file name (no folder part); `sprite.json` and
+/// subset imports must not point outside their folder.
+fn plain_file_name<'a>(name: &'a str, what: &str) -> Result<&'a Path> {
+    let path = Path::new(name);
+    if name.is_empty()
+        || path.file_name().map(Path::new) != Some(path)
+        || name.contains(['/', '\\'])
+    {
+        return Err(SpriteError::invalid(format!(
+            "{what} {name:?} is not a plain file name"
+        )));
+    }
+    Ok(path)
+}
+
+fn image_kind_of(name: &Path) -> Option<ImageKind> {
+    name.extension()
+        .and_then(|e| e.to_str())
+        .and_then(ImageKind::from_extension)
+}
+
+/// [`import_frames`] for some of the files of a folder: only `files` (plain
+/// file names inside `dir`) are read.
+///
+/// **With a `sprite.json`** every name must be one of its frame files
+/// (compared ASCII case-insensitively; a repeated name counts once), and
+/// colour keying is off exactly as in [`import_frames`]. Each frame keeps
+/// its offset from `sprite.json`. Frames of the export that are not picked
+/// are left out and the rest close up:
+/// * a direction with no picked frame is dropped, so the sprite has one
+///   direction per export direction that has a picked frame, in direction
+///   order;
+/// * inside a direction the picked frames come in frame order, without gaps,
+///   whatever the order of `files`.
+///
+/// Directions can therefore end up with different frame counts (picking
+/// `d00_f000`, `d01_f000` and `d01_f001` gives 1 and 2 frames); such a
+/// sprite cannot be encoded until the caller lays it out again. The
+/// returned [`ExportMeta`] is the folder's `sprite.json` with `frames`
+/// reduced to the imported ones, listed in the order of the returned
+/// sprite (direction by direction) and keeping their original `dir` and
+/// `frame`, so a caller can put each frame back where it came from;
+/// `directions` and `frames_per_direction` stay the export's.
+///
+/// **Without a `sprite.json`** the files form one direction in the order
+/// given, each anchored with [`center_offset`], and `opts` applies
+/// unchanged (like [`import_frames`] on a loose folder); the meta is `None`.
+///
+/// Errors: an empty `files`, a name with a folder part, a name that
+/// `sprite.json` does not list, an unreadable or undecodable image.
+pub fn import_frames_subset(
+    dir: &Path,
+    files: &[String],
+    palette: &Palette,
+    opts: &QuantizeOptions,
+) -> Result<(Sprite, Option<ExportMeta>)> {
+    if files.is_empty() {
+        return Err(SpriteError::invalid("no frame files picked"));
+    }
+    let meta_path = dir.join(META_FILE);
+    if !meta_path.is_file() {
+        let mut frames = Vec::with_capacity(files.len());
+        for file in files {
+            let name = plain_file_name(file, "frame file")?;
+            let kind = image_kind_of(name).ok_or_else(|| {
+                SpriteError::invalid(format!("{file:?} is not a PNG/BMP/GIF/PCX image"))
+            })?;
+            let mut img = load_quantized(&dir.join(name), kind, palette, opts)?;
+            center_offset(&mut img);
+            frames.push(img);
+        }
+        return Ok((
+            Sprite {
+                directions: vec![frames],
+            },
+            None,
+        ));
+    }
+    let json = std::fs::read(&meta_path).map_err(|e| SpriteError::io(&meta_path, e))?;
+    let mut meta: ExportMeta = serde_json::from_slice(&json)
+        .map_err(|e| SpriteError::invalid(format!("{}: {e}", meta_path.display())))?;
+    let no_key = QuantizeOptions {
+        transparent_rgb: None,
+        ..opts.clone()
+    };
+    // The picked entries of sprite.json, each once, in (dir, frame) order.
+    let mut picked: Vec<FrameMeta> = Vec::with_capacity(files.len());
+    for file in files {
+        plain_file_name(file, "frame file")?;
+        let fm = meta
+            .frames
+            .iter()
+            .find(|f| f.file.eq_ignore_ascii_case(file))
+            .ok_or_else(|| {
+                SpriteError::invalid(format!(
+                    "{file:?} is not a frame listed in {}",
+                    meta_path.display()
+                ))
+            })?;
+        if !picked.iter().any(|p| p.file.eq_ignore_ascii_case(&fm.file)) {
+            picked.push(fm.clone());
+        }
+    }
+    picked.sort_by_key(|f| (f.dir, f.frame));
+    let mut directions: Vec<Vec<IndexedImage>> = Vec::new();
+    let mut last_dir = None;
+    for fm in &picked {
+        let name = plain_file_name(&fm.file, "sprite.json frame file")?;
+        let kind = image_kind_of(name).unwrap_or(ImageKind::Png);
+        let mut img = load_quantized(&dir.join(name), kind, palette, &no_key)?;
+        img.offset_x = fm.offset_x;
+        img.offset_y = fm.offset_y;
+        if last_dir != Some(fm.dir) {
+            directions.push(Vec::new());
+            last_dir = Some(fm.dir);
+        }
+        if let Some(current) = directions.last_mut() {
+            current.push(img);
+        }
+    }
+    meta.frames = picked;
+    Ok((Sprite { directions }, Some(meta)))
+}
+
 fn sprite_from_meta(
     dir: &Path,
     meta: &ExportMeta,
@@ -263,19 +387,8 @@ fn sprite_from_meta(
     }
     let mut grid: Vec<Vec<Option<IndexedImage>>> = vec![vec![None; per]; dirs];
     for fm in &meta.frames {
-        // a file name only: sprite.json must not point outside its folder
-        let name = Path::new(&fm.file);
-        if name.file_name().map(Path::new) != Some(name) || fm.file.contains(['/', '\\']) {
-            return Err(SpriteError::invalid(format!(
-                "sprite.json frame file {:?} is not a plain file name",
-                fm.file
-            )));
-        }
-        let kind = name
-            .extension()
-            .and_then(|e| e.to_str())
-            .and_then(ImageKind::from_extension)
-            .unwrap_or(ImageKind::Png);
+        let name = plain_file_name(&fm.file, "sprite.json frame file")?;
+        let kind = image_kind_of(name).unwrap_or(ImageKind::Png);
         let slot = grid
             .get_mut(fm.dir as usize)
             .and_then(|d| d.get_mut(fm.frame as usize))

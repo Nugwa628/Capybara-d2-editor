@@ -36,6 +36,7 @@ fn drawing_order_is_tile_then_sub_tile_table_then_index() {
         offset: (0, 0),
         order_flag: 0,
         frames_per_direction: 1,
+        directions: 1,
     });
     let key = |x, y, index| {
         PlacedObject {
@@ -179,6 +180,7 @@ fn an_object_resolves_loads_and_composites() {
     assert_eq!(layer.box_origin, (-2, -6));
     assert_eq!(layer.image.pixels[0], 10, "frame 0 by default");
     assert_eq!(frame.frames_per_direction, 2, "the COF's frame count");
+    assert_eq!(frame.directions, 1, "the COF's direction count");
     // the animation tick advances the frame
     let ticked = ObjectOptions {
         animation_tick: Some(1),
@@ -199,6 +201,59 @@ fn an_object_resolves_loads_and_composites() {
     assert_eq!((img.width, img.height), (4, 4));
     assert_eq!(origin, (-2, -6));
     assert_eq!(img.get(0, 0), Some([10, 5, 245, 255]));
+}
+
+/// A four direction, one frame COF (layer TR) and a matching DC6 whose
+/// direction `d` is filled with pixel `30 + d`.
+fn four_direction_game(dir: &std::path::Path) -> Overlay {
+    let mut cof = vec![1u8, 1, 4, 20];
+    cof.extend_from_slice(&[0; 24]);
+    cof.extend_from_slice(&[1, 1, 0, 0, 0, b'H', b'T', b'H', 0]);
+    cof.push(0); // keyframes
+    cof.extend_from_slice(&[1, 1, 1, 1]); // priority: TR in every direction
+    let frame = |pixel: u8| {
+        let mut img = IndexedImage::new(4, 4, -2, -6);
+        img.pixels.fill(pixel);
+        img.alpha.fill(255);
+        img
+    };
+    let dc6 = Dc6::from_frames(&[
+        vec![frame(30)],
+        vec![frame(31)],
+        vec![frame(32)],
+        vec![frame(33)],
+    ])
+    .unwrap()
+    .to_bytes()
+    .unwrap();
+    write(dir, COF_PATH, &cof);
+    write(dir, SPRITE_PATH, &dc6);
+    Overlay::new(vec![Box::new(FolderSource::new(dir, "synthetic"))])
+}
+
+#[test]
+fn object_frames_carry_the_cof_direction_count() {
+    let dir = tempfile::tempdir().unwrap();
+    let overlay = four_direction_game(dir.path());
+    let (catalog, _) = ObjectCatalog::build(&overlay, GameVersion::V113c).unwrap();
+    let sprites = ObjectSprites::new(&overlay, &catalog);
+    let ds1 = ds1_with(&[(7, 3)]);
+    let (placed, missing) = sprites.place(&ds1, &ObjectOptions::default());
+    assert!(missing.is_empty(), "{missing:?}");
+    let frame = &placed[0].frame;
+    assert_eq!(frame.directions, 4);
+    assert_eq!(frame.frames_per_direction, 1);
+    // Every user direction maps onto one of the four file directions.
+    let info = catalog.resolve(ds1.effective_act(), ds1.version, &ds1.objects[0]);
+    let mut seen = std::collections::BTreeSet::new();
+    for user_dir in 0..32 {
+        let f = sprites
+            .frame_of_info(&info, &ObjectOptions::default(), Some(0), user_dir)
+            .unwrap();
+        assert_eq!(f.directions, 4);
+        seen.insert(f.layers[0].image.pixels[0]);
+    }
+    assert_eq!(seen.into_iter().collect::<Vec<_>>(), [30, 31, 32, 33]);
 }
 
 #[test]
