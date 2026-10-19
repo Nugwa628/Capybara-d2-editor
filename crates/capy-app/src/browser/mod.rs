@@ -18,7 +18,9 @@ use std::sync::Mutex;
 
 use bevy_egui::egui;
 use capy_edit::{CellValue, LayerRef};
-use capy_index::{AssetKind, AssetRow, FavoriteGroup, Hit, QueryError, SavedSearch, UserDb, parse_query};
+use capy_index::{
+    AssetKind, AssetRow, FavoriteGroup, Hit, QueryError, SavedSearch, UserDb, parse_query,
+};
 use d2_assets::GamePath;
 
 use self::live::LiveQuery;
@@ -62,6 +64,9 @@ pub enum SearchStatus {
     /// The query does not parse, or the search failed.
     Failed(String),
 }
+
+/// The maps that use an asset, with their cell counts (or why not known).
+pub type UsedIn = Result<Vec<(String, u32)>, String>;
 
 /// What one search shows.
 #[derive(Default)]
@@ -147,7 +152,7 @@ pub struct BrowserState {
     lookups: Vec<String>,
     lookups_pending: HashSet<String>,
     /// "Used in" lists by asset id; `None` while asked.
-    pub used_in: HashMap<i64, Option<Result<Vec<(String, u32)>, String>>>,
+    pub used_in: HashMap<i64, Option<UsedIn>>,
     /// The "Maps that use it" window: the key.
     pub used_in_window: Option<String>,
     user: Mutex<Option<UserDb>>,
@@ -236,7 +241,7 @@ impl BrowserState {
     }
 
     /// The maps using `asset_id`, asking the worker the first time.
-    pub fn used_in(&mut self, asset_id: i64) -> Option<&Result<Vec<(String, u32)>, String>> {
+    pub fn used_in(&mut self, asset_id: i64) -> Option<&UsedIn> {
         if !self.used_in.contains_key(&asset_id) {
             let sent = self
                 .worker
@@ -256,7 +261,10 @@ impl BrowserState {
         path: &std::path::Path,
         f: impl FnOnce(&UserDb) -> capy_index::Result<T>,
     ) -> Result<T, String> {
-        let slot = self.user.get_mut().map_err(|_| "user.db is unusable".to_owned())?;
+        let slot = self
+            .user
+            .get_mut()
+            .map_err(|_| "user.db is unusable".to_owned())?;
         if slot.is_none() {
             match UserDb::open(path) {
                 Ok(db) => *slot = Some(db),
@@ -307,7 +315,11 @@ impl BrowserState {
 
 /// The text a search key is made of: everything that changes the answer.
 fn search_key(profile: &str, scope: &str, dt1s: &[String], query: &str) -> String {
-    format!("{profile}\u{1}{scope}\u{1}{}\u{1}{}", dt1s.join("|"), query.trim())
+    format!(
+        "{profile}\u{1}{scope}\u{1}{}\u{1}{}",
+        dt1s.join("|"),
+        query.trim()
+    )
 }
 
 /// `true` for keys of sprite files.
@@ -457,7 +469,12 @@ impl AppState {
                 return;
             }
         };
-        let key = search_key(profile, self.browser.scope.slug(), &dt1s, &self.browser.query);
+        let key = search_key(
+            profile,
+            self.browser.scope.slug(),
+            &dt1s,
+            &self.browser.query,
+        );
         self.browser.live.edit(&key, now);
         if let Some((id, _)) = self.browser.live.poll(now) {
             let queries = scope::scoped_queries(&query, self.browser.scope, &dt1s);
@@ -562,8 +579,10 @@ impl AppState {
                     }
                     let slot = match image {
                         Some(t) => {
-                            let color =
-                                egui::ColorImage::from_rgba_unmultiplied([t.width, t.height], &t.rgba);
+                            let color = egui::ColorImage::from_rgba_unmultiplied(
+                                [t.width, t.height],
+                                &t.rgba,
+                            );
                             ThumbSlot::Ready(ctx.load_texture(
                                 format!("asset-thumb-{asset_id}"),
                                 color,
@@ -635,7 +654,11 @@ impl AppState {
     }
 
     /// Runs a user.db change; reloads the lists and reports errors.
-    fn user_change(&mut self, what: &str, f: impl FnOnce(&UserDb) -> capy_index::Result<()>) -> bool {
+    fn user_change(
+        &mut self,
+        what: &str,
+        f: impl FnOnce(&UserDb) -> capy_index::Result<()>,
+    ) -> bool {
         let result = self.user(f);
         self.browser.lists.dirty = true;
         match result {
@@ -660,7 +683,10 @@ impl AppState {
     pub fn note_paint(&mut self, index: usize, layer: LayerRef, value: CellValue) {
         let key = match &self.browser.brush_key {
             Some((key, v)) if *v == value => Some(key.clone()),
-            _ => self.docs.get(index).and_then(|d| asset_key_of(d, layer, value)),
+            _ => self
+                .docs
+                .get(index)
+                .and_then(|d| asset_key_of(d, layer, value)),
         };
         let (Some(key), Some(profile)) = (key, self.browser_profile()) else {
             return;
@@ -736,7 +762,9 @@ impl AppState {
 
     pub fn favorite_remove(&mut self, group: i64, key: &str) {
         if let Some(profile) = self.need_profile() {
-            self.user_change("Remove favorite", |db| db.remove_favorite(group, &profile, key));
+            self.user_change("Remove favorite", |db| {
+                db.remove_favorite(group, &profile, key)
+            });
         }
     }
 
@@ -764,7 +792,13 @@ impl AppState {
 
     /// Drag-and-drop of a group header.
     pub fn group_move(&mut self, group: i64, drop: &Drop<i64>) {
-        let ids: Vec<i64> = self.browser.lists.groups.iter().map(|(g, _)| g.id).collect();
+        let ids: Vec<i64> = self
+            .browser
+            .lists
+            .groups
+            .iter()
+            .map(|(g, _)| g.id)
+            .collect();
         if let Some(pos) = order::move_position(&ids, &group, drop) {
             self.user_change("Move group", |db| db.move_group(group, pos));
         }
@@ -933,10 +967,11 @@ impl AppState {
     /// Makes the tile `key` the paint brush for the active layer and picks
     /// the Paint tool.
     pub fn set_brush_from_key(&mut self, key: &str) -> Result<(), String> {
-        let (dt1, id) = brush::parse_tile_key(key).ok_or_else(|| format!("{key} is not a tile key"))?;
-        let (active, version) = self
-            .active_doc()
-            .map_or((LayerRef::Floor(0), 18), |d| (d.active_layer, d.ds1.version));
+        let (dt1, id) =
+            brush::parse_tile_key(key).ok_or_else(|| format!("{key} is not a tile key"))?;
+        let (active, version) = self.active_doc().map_or((LayerRef::Floor(0), 18), |d| {
+            (d.active_layer, d.ds1.version)
+        });
         let (layer, value) = brush::brush_for(id, active, version)?;
         crate::ui::cancel_map_gesture(self);
         self.edit.pick(layer, value);
@@ -1073,7 +1108,9 @@ mod tests {
 
     #[test]
     fn sprite_paths_are_recognised() {
-        assert!(is_sprite_path("data\\global\\monsters\\zm\\cof\\ZMNUHTH.COF"));
+        assert!(is_sprite_path(
+            "data\\global\\monsters\\zm\\cof\\ZMNUHTH.COF"
+        ));
         assert!(is_sprite_path("a.dc6") && is_sprite_path("a.dcc"));
         assert!(!is_sprite_path("a.dt1") && !is_sprite_path("a.ds1"));
     }
@@ -1088,7 +1125,10 @@ mod tests {
         assert_eq!(s.edit.current_layer, Some(LayerRef::Floor(0)));
         assert_eq!(s.edit.current.cell, 0x0030_01C2);
         assert_eq!(s.edit.tool, crate::edit::tools::Tool::Paint);
-        assert_eq!(s.browser.brush_key.as_ref().map(|(k, _)| k.as_str()), Some(key));
+        assert_eq!(
+            s.browser.brush_key.as_ref().map(|(k, _)| k.as_str()),
+            Some(key)
+        );
         assert!(s.set_brush_from_key("data\\x.ds1").is_err());
         // Without a profile nothing is recorded, and nothing breaks.
         let value = s.edit.current;

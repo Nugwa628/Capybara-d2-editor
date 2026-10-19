@@ -262,9 +262,16 @@ fn whole_export<'a>(
     }
     let mut picked: Vec<String> = files
         .iter()
-        .filter_map(|f| f.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()))
+        .filter_map(|f| {
+            f.file_name()
+                .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        })
         .collect();
-    let mut listed: Vec<String> = meta.frames.iter().map(|f| f.file.to_ascii_lowercase()).collect();
+    let mut listed: Vec<String> = meta
+        .frames
+        .iter()
+        .map(|f| f.file.to_ascii_lowercase())
+        .collect();
     picked.sort();
     listed.sort();
     (picked == listed).then_some(dir)
@@ -641,7 +648,10 @@ mod tests {
         };
         let text = batch_outcome(&report, 1.0);
         assert!(text.starts_with("Cancelled"), "{text}");
-        assert!(text.contains("3 of 10") && text.contains("3 converted"), "{text}");
+        assert!(
+            text.contains("3 of 10") && text.contains("3 converted"),
+            "{text}"
+        );
         report.cancelled = false;
         assert!(batch_outcome(&report, 1.0).starts_with("Done"));
     }
@@ -732,8 +742,7 @@ mod tests {
         let mut shifted = sprite.clone();
         shifted.directions[1][1].offset_x = 17;
         let game = r"data\global\monsters\zz\a.dcc";
-        export_frames(&shifted, SpriteFormat::Dcc, &pal, "grey", Some(game), &dir)
-            .expect("export");
+        export_frames(&shifted, SpriteFormat::Dcc, &pal, "grey", Some(game), &dir).expect("export");
         let exported: Vec<PathBuf> = [
             "d00_f000.png",
             "d00_f001.png",

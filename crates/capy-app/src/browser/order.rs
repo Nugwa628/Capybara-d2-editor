@@ -107,8 +107,8 @@ mod tests {
             fav("vanilla", "y"),
         ];
         // The mxl view shows a b c; drag c before a.
-        let p = favorite_position(&items, "mxl", "c", &Drop::Before("a".to_owned()))
-            .expect("moves");
+        let p =
+            favorite_position(&items, "mxl", "c", &Drop::Before("a".to_owned())).expect("moves");
         let after = apply(&items, &fav("mxl", "c"), p);
         let shown: Vec<&str> = after
             .iter()

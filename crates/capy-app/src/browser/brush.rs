@@ -110,7 +110,11 @@ pub fn stored_orientation(orientation: u8, version: i32) -> Option<u32> {
 
 /// The brush for tile `id` with `active` as the active layer of a DS1 of
 /// `version`: the layer to paint and the value.
-pub fn brush_for(id: TileId, active: LayerRef, version: i32) -> Result<(LayerRef, CellValue), String> {
+pub fn brush_for(
+    id: TileId,
+    active: LayerRef,
+    version: i32,
+) -> Result<(LayerRef, CellValue), String> {
     let layer = layer_for(id.orientation, active);
     let value = match family(id.orientation) {
         Family::Floor => CellValue {
@@ -118,7 +122,9 @@ pub fn brush_for(id: TileId, active: LayerRef, version: i32) -> Result<(LayerRef
             orientation: 0,
         },
         Family::Shadow => CellValue {
-            cell: Cell(SHADOW_PROP1 | SHADOW_BIT).with_indices(id.main, id.sub).0,
+            cell: Cell(SHADOW_PROP1 | SHADOW_BIT)
+                .with_indices(id.main, id.sub)
+                .0,
             orientation: 0,
         },
         Family::Wall => CellValue {
@@ -154,13 +160,13 @@ mod tests {
     fn keys_parse_and_print() {
         let key = "data\\global\\tiles\\mxl\\zone\\whimsy\\whimsyfloor.dt1#0/23/0/0";
         let (path, t) = parse_tile_key(key).expect("tile key");
-        assert_eq!(path, "data\\global\\tiles\\mxl\\zone\\whimsy\\whimsyfloor.dt1");
+        assert_eq!(
+            path,
+            "data\\global\\tiles\\mxl\\zone\\whimsy\\whimsyfloor.dt1"
+        );
         assert_eq!(t, id(0, 23, 0));
         assert_eq!(tile_key(path, t), key);
-        assert_eq!(
-            parse_tile_key("a.dt1#5/12/3/2").map(|(_, t)| t.n),
-            Some(2)
-        );
+        assert_eq!(parse_tile_key("a.dt1#5/12/3/2").map(|(_, t)| t.n), Some(2));
         for bad in [
             "data\\x.ds1",
             "a.dt1#0/1/2",

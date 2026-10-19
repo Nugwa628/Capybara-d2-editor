@@ -16,9 +16,7 @@ use capy_index::{AssetKind, AssetRow};
 
 use crate::browser::order::Drop;
 use crate::browser::scope::Scope;
-use crate::browser::{
-    LIST_BELOW, PromptKind, THUMB_MAX, THUMB_MIN, TextPrompt, display_name,
-};
+use crate::browser::{LIST_BELOW, PromptKind, THUMB_MAX, THUMB_MIN, TextPrompt, display_name};
 use crate::index_task::IndexState;
 use crate::state::AppState;
 
@@ -91,7 +89,9 @@ fn query_bar(ui: &mut Ui, state: &mut AppState) {
         let edit = ui.add(
             egui::TextEdit::singleline(&mut state.browser.query)
                 .id(Id::new("browser_query"))
-                .hint_text("Search: grass  type:wall  act:1  color:green  tag:x  idx:5/2  file:  similar:")
+                .hint_text(
+                    "Search: grass  type:wall  act:1  color:green  tag:x  idx:5/2  file:  similar:",
+                )
                 .desired_width(ui.available_width() - 28.0),
         );
         if edit.has_focus() {
@@ -116,7 +116,9 @@ fn query_bar(ui: &mut Ui, state: &mut AppState) {
 
 /// The query with a caret under the bad position.
 pub fn parse_error(ui: &mut Ui, query: &str, position: usize, detail: &str) {
-    let chars = query.get(..position.min(query.len())).map_or(position, |s| s.chars().count());
+    let chars = query
+        .get(..position.min(query.len()))
+        .map_or(position, |s| s.chars().count());
     ui.label(
         RichText::new(format!("{query}\n{}^ {detail}", " ".repeat(chars)))
             .monospace()
@@ -143,7 +145,7 @@ fn scope_bar(ui: &mut Ui, state: &mut AppState) {
             }
         }
         ui.weak(format!("{:.0}px", state.config.browser_thumb))
-        .on_hover_text("Ctrl+mouse wheel over the panel resizes the thumbnails");
+            .on_hover_text("Ctrl+mouse wheel over the panel resizes the thumbnails");
     });
     if state.browser.scope == Scope::MapTileSet && !has_map {
         state.browser.scope = Scope::Profile;
@@ -175,11 +177,7 @@ fn saved_searches(ui: &mut Ui, state: &mut AppState) {
             }
             for s in &saved {
                 ui.horizontal(|ui| {
-                    if ui
-                        .button(&s.name)
-                        .on_hover_text(&s.query)
-                        .clicked()
-                    {
+                    if ui.button(&s.name).on_hover_text(&s.query).clicked() {
                         apply = Some(s.query.clone());
                         ui.close();
                     }
@@ -230,7 +228,11 @@ fn status_line(ui: &mut Ui, state: &mut AppState) {
                     return;
                 }
                 None => {
-                    let busy = if state.browser.live.busy() { " ..." } else { "" };
+                    let busy = if state.browser.live.busy() {
+                        " ..."
+                    } else {
+                        ""
+                    };
                     format!("{} result(s) in {} ms{busy}", r.hits.len(), r.millis)
                 }
             }
@@ -295,7 +297,13 @@ fn paint_badges(ui: &Ui, rect: Rect, starred: bool, outside: bool, star_rect: Re
     if outside {
         let c = rect.left_top() + Vec2::splat(8.0);
         painter.circle_filled(c, 7.0, WARN);
-        painter.text(c, Align2::CENTER_CENTER, "!", FontId::proportional(11.0), Color32::BLACK);
+        painter.text(
+            c,
+            Align2::CENTER_CENTER,
+            "!",
+            FontId::proportional(11.0),
+            Color32::BLACK,
+        );
     }
 }
 
@@ -343,8 +351,10 @@ fn grid_tile(
     size: f32,
 ) -> TileEvents {
     let label_h = 16.0;
-    let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(size + 6.0, size + label_h + 6.0), Sense::click_and_drag());
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::new(size + 6.0, size + label_h + 6.0),
+        Sense::click_and_drag(),
+    );
     let thumb = Rect::from_min_size(rect.min + Vec2::splat(3.0), Vec2::splat(size));
     paint_thumb(ui, state, asset, thumb);
     let starred = state.browser.lists.starred.contains(&asset.key);
@@ -415,7 +425,11 @@ fn list_row(
     );
     paint_badges(ui, badge, starred, outside, star_rect);
     let text_left = icon.right() + 6.0;
-    let text_right = if outside { badge.left() - 4.0 } else { rect.right() - 2.0 };
+    let text_right = if outside {
+        badge.left() - 4.0
+    } else {
+        rect.right() - 2.0
+    };
     let mut job = egui::text::LayoutJob::default();
     label_job(&mut job, asset, alias, 12.0, true);
     job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - text_left).max(10.0));
@@ -528,8 +542,11 @@ fn strip_tile(ui: &mut Ui, state: &mut AppState, key: &str) -> Option<(egui::Res
     let asset = match state.browser.asset(key) {
         Some(Some(a)) => a.clone(),
         Some(None) => {
-            ui.add_sized(Vec2::splat(STRIP), egui::Label::new(RichText::new("?").weak()))
-                .on_hover_text(format!("{key}\nis not in this profile's index"));
+            ui.add_sized(
+                Vec2::splat(STRIP),
+                egui::Label::new(RichText::new("?").weak()),
+            )
+            .on_hover_text(format!("{key}\nis not in this profile's index"));
             return None;
         }
         None => {
@@ -665,7 +682,8 @@ fn favorite_group(
         && dragged.0 != group.id
     {
         let y = header_resp.rect.top();
-        ui.painter().hline(header_resp.rect.x_range(), y, Stroke::new(2.0, SELECTED));
+        ui.painter()
+            .hline(header_resp.rect.x_range(), y, Stroke::new(2.0, SELECTED));
     }
     if let Some(dragged) = header_resp.dnd_release_payload::<GroupDrag>() {
         state.group_move(dragged.0, &Drop::Before(group.id));
@@ -686,7 +704,8 @@ fn favorite_group(
                 && d.key != **key
             {
                 let x = resp.rect.left() - 2.0;
-                ui.painter().vline(x, resp.rect.y_range(), Stroke::new(2.0, SELECTED));
+                ui.painter()
+                    .vline(x, resp.rect.y_range(), Stroke::new(2.0, SELECTED));
             }
             if let Some(d) = resp.dnd_release_payload::<FavDrag>()
                 && d.group == group.id
@@ -699,14 +718,20 @@ fn favorite_group(
             let ev = events(ui, state, resp, &asset, None, None);
             handle(state, key, ev);
         }
-        let (end, end_resp) =
-            ui.allocate_exact_size(Vec2::new(STRIP, STRIP), Sense::hover());
+        let (end, end_resp) = ui.allocate_exact_size(Vec2::new(STRIP, STRIP), Sense::hover());
         let hovering = end_resp.dnd_hover_payload::<FavDrag>().is_some()
             || end_resp.dnd_hover_payload::<TileDrag>().is_some();
         ui.painter().rect_stroke(
             end,
             CornerRadius::same(3),
-            Stroke::new(1.0, if hovering { SELECTED } else { Color32::from_gray(70) }),
+            Stroke::new(
+                1.0,
+                if hovering {
+                    SELECTED
+                } else {
+                    Color32::from_gray(70)
+                },
+            ),
             StrokeKind::Inside,
         );
         ui.painter().text(
@@ -762,7 +787,7 @@ fn results_grid(ui: &mut Ui, state: &mut AppState, panel: Rect) {
             area = area.vertical_scroll_offset(i as f32 * (row_h + spacing.y));
         }
         area.show_rows(ui, row_h, n, |ui, range| {
-            let hits: Vec<_> = state.browser.results.hits[range].to_vec();
+            let hits = hits_in(state, range);
             for h in hits {
                 let ev = list_row(ui, state, &h.asset, h.alias.as_deref(), row_h);
                 handle(state, &h.asset.key, ev);
@@ -787,7 +812,7 @@ fn results_grid(ui: &mut Ui, state: &mut AppState, panel: Rect) {
         for row in range {
             let start = row * cols;
             let end = (start + cols).min(n);
-            let hits: Vec<_> = state.browser.results.hits[start..end].to_vec();
+            let hits = hits_in(state, start..end);
             ui.horizontal(|ui| {
                 for h in hits {
                     let ev = grid_tile(ui, state, &h.asset, h.alias.as_deref(), size);
@@ -796,6 +821,17 @@ fn results_grid(ui: &mut Ui, state: &mut AppState, panel: Rect) {
             });
         }
     });
+}
+
+/// The results in `range` (none when they changed meanwhile).
+fn hits_in(state: &AppState, range: std::ops::Range<usize>) -> Vec<capy_index::Hit> {
+    state
+        .browser
+        .results
+        .hits
+        .get(range)
+        .map(<[capy_index::Hit]>::to_vec)
+        .unwrap_or_default()
 }
 
 /// Enter with the grid focused uses the selection.
@@ -845,7 +881,11 @@ fn tile_menu(ctx: &egui::Context, state: &mut AppState) {
     .open_bool(&mut menu.open)
     .show(|ui| {
         ui.set_min_width(220.0);
-        ui.label(RichText::new(key.rsplit('\\').next().unwrap_or(&key)).monospace().weak());
+        ui.label(
+            RichText::new(key.rsplit('\\').next().unwrap_or(&key))
+                .monospace()
+                .weak(),
+        );
         ui.separator();
         if ui.button("Use as brush / open").clicked() {
             action = Some(MenuAction::Use);
@@ -1078,16 +1118,18 @@ fn used_in_window(ctx: &egui::Context, state: &mut AppState) {
                 Some(Ok(maps)) => {
                     let maps = maps.clone();
                     ui.weak(format!("{} map(s); click to open", maps.len()));
-                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                        for (path, cells) in maps {
-                            if ui
-                                .selectable_label(false, format!("{path}  ({cells} cells)"))
-                                .clicked()
-                            {
-                                to_open = Some(path);
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            for (path, cells) in maps {
+                                if ui
+                                    .selectable_label(false, format!("{path}  ({cells} cells)"))
+                                    .clicked()
+                                {
+                                    to_open = Some(path);
+                                }
                             }
-                        }
-                    });
+                        });
                 }
             }
         });

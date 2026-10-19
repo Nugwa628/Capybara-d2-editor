@@ -703,8 +703,9 @@ impl AppState {
 
     /// Crowded DCC cells of `target`'s sprite (0 when there is none).
     pub fn crowded_dcc_cells(&self, target: Target) -> usize {
-        self.target_data(target)
-            .map_or(0, |d| capy_paint::dcc_cell_violations(&d.sprite.directions).len())
+        self.target_data(target).map_or(0, |d| {
+            capy_paint::dcc_cell_violations(&d.sprite.directions).len()
+        })
     }
 
     /// Writes `write` now, or asks first when it is a DCC with crowded cells.
@@ -1252,7 +1253,8 @@ mod tests {
     #[test]
     fn a_dcc_write_with_crowded_cells_asks_first() {
         let (tmp, mut s) = state();
-        s.open_sprite_file(&crowded_sprite_file(tmp.path())).expect("open");
+        s.open_sprite_file(&crowded_sprite_file(tmp.path()))
+            .expect("open");
         assert_eq!(s.crowded_dcc_cells(Target::Viewer), 1);
         // As DCC: nothing is written, the question is asked.
         let out = tmp.path().join("out.dcc");

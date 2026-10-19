@@ -218,7 +218,6 @@ pub fn build_frames(
 mod tests {
     use super::*;
 
-
     #[test]
     fn cof_paths_follow_token_mode_class() {
         let mut info = ObjectInfo {

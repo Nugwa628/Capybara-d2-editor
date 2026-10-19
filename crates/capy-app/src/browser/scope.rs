@@ -172,7 +172,10 @@ mod tests {
         }
         // No map: nothing to search.
         assert!(scoped_queries(&q, Scope::MapTileSet, &[]).is_empty());
-        assert!(in_tile_set("DATA\\global\\tiles\\act1\\town\\floor.dt1", &dt1s));
+        assert!(in_tile_set(
+            "DATA\\global\\tiles\\act1\\town\\floor.dt1",
+            &dt1s
+        ));
         assert!(!in_tile_set("data\\global\\tiles\\act2\\floor.dt1", &dt1s));
     }
 
@@ -206,7 +209,10 @@ mod tests {
         );
         let keys: Vec<&str> = merged.iter().map(|h| h.asset.key.as_str()).collect();
         assert_eq!(keys, vec!["c", "a", "b", "d"]);
-        assert_eq!(merge_hits(vec![vec![hit("a", 1.0), hit("b", 0.5)]], 1).len(), 1);
+        assert_eq!(
+            merge_hits(vec![vec![hit("a", 1.0), hit("b", 0.5)]], 1).len(),
+            1
+        );
         assert!(merge_hits(Vec::new(), 5).is_empty());
     }
 }

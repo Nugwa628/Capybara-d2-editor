@@ -48,7 +48,10 @@ fn seed_index(home: &Path) {
         .join("capy-index-mxl")
         .join("index.db");
     if !shared.is_file() {
-        eprintln!("no shared index at {}; the app builds one", shared.display());
+        eprintln!(
+            "no shared index at {}; the app builds one",
+            shared.display()
+        );
         return;
     }
     let cache = home.join("capybara").join("cache");
@@ -129,7 +132,10 @@ fn search_brush_paint_favorite_alias_and_ctrl_k() {
 
     // user.db holds the use, the favorite and the alias.
     let db = UserDb::open(&home.path().join("capybara").join("user.db")).unwrap();
-    assert_eq!(db.recents("mxl", 10).unwrap().first().map(String::as_str), Some(KEY));
+    assert_eq!(
+        db.recents("mxl", 10).unwrap().first().map(String::as_str),
+        Some(KEY)
+    );
     assert_eq!(db.alias("mxl", KEY).unwrap().as_deref(), Some(ALIAS));
     let group = db
         .favorite_groups()
@@ -152,7 +158,11 @@ fn search_brush_paint_favorite_alias_and_ctrl_k() {
     ] {
         assert!(shots.join(name).is_file(), "{name}");
     }
-    eprintln!("screenshots in {} (install {})", shots.display(), mxl.display());
+    eprintln!(
+        "screenshots in {} (install {})",
+        shots.display(),
+        mxl.display()
+    );
 }
 
 /// A key that is not in the index fails the script with exit code 1.

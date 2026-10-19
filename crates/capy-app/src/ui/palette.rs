@@ -11,8 +11,8 @@
 //! With an empty query it lists the recently used tiles.
 
 use bevy_egui::egui::{
-    self, Align2, Color32, CornerRadius, FontId, Id, Key, Modifiers, Rect, RichText, Sense,
-    Stroke, StrokeKind, Vec2,
+    self, Align2, Color32, CornerRadius, FontId, Id, Key, Modifiers, Rect, RichText, Sense, Stroke,
+    StrokeKind, Vec2,
 };
 use capy_index::AssetRow;
 

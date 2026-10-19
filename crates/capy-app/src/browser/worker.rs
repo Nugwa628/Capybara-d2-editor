@@ -305,11 +305,8 @@ mod tests {
     fn png_thumbnails_decode_and_garbage_does_not() {
         let mut png = Vec::new();
         let img = image::RgbaImage::from_pixel(3, 2, image::Rgba([1, 2, 3, 255]));
-        img.write_to(
-            &mut std::io::Cursor::new(&mut png),
-            image::ImageFormat::Png,
-        )
-        .expect("encode");
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .expect("encode");
         let t = decode_png(&png).expect("decodes");
         assert_eq!((t.width, t.height, t.rgba.len()), (3, 2, 24));
         assert!(decode_png(b"not a png").is_none());
@@ -343,7 +340,7 @@ mod tests {
                 }
                 Response::Thumb { image, .. } => assert!(image.is_none()),
                 Response::Lookup { rows, .. } => assert_eq!(rows[0].1, None),
-                Response::UsedIn { .. } => panic!("not asked"),
+                Response::UsedIn { .. } => unreachable!("not asked"),
             }
         }
     }
