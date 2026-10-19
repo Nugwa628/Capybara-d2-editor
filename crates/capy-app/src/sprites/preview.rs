@@ -1,34 +1,14 @@
 //! The map editor's Sprite preview box: the animated composite of the one
 //! selected object, through `capy_render::objects::ObjectSprites`. The
-//! object catalog (game tables) is built once per profile on a worker
-//! thread; the frames are built when the selection or direction changes.
-
-use std::sync::mpsc::{Receiver, channel};
-use std::sync::{Arc, Mutex};
+//! object catalog (game tables) is `AppState::object_catalog`; the frames
+//! are built when the selection or direction changes.
 
 use capy_render::objects::{ObjectOptions, ObjectSprites};
 use d2_assets::objects::{ObjectCatalog, ObjectInfo, SpriteBase};
 use d2_assets::{GamePath, Overlay};
-use d2_formats::cof::Cof;
 use d2_formats::palette::Palette;
 
 use super::viewer::Tex;
-
-pub enum CatalogSlot {
-    None,
-    Building {
-        epoch: u64,
-        rx: Mutex<Receiver<Result<ObjectCatalog, String>>>,
-    },
-    Ready {
-        epoch: u64,
-        catalog: Arc<ObjectCatalog>,
-    },
-    Failed {
-        epoch: u64,
-        error: String,
-    },
-}
 
 /// What the preview shows, to know when to rebuild.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,7 +35,6 @@ pub struct Built {
 }
 
 pub struct PreviewState {
-    pub catalog: CatalogSlot,
     pub key: Option<PreviewKey>,
     pub built: Option<Built>,
     /// User direction (mapped per COF like the map renderer does).
@@ -66,68 +45,10 @@ pub struct PreviewState {
 impl Default for PreviewState {
     fn default() -> Self {
         PreviewState {
-            catalog: CatalogSlot::None,
             key: None,
             built: None,
             direction: 0,
             playing: true,
-        }
-    }
-}
-
-impl PreviewState {
-    /// The catalog for `epoch`, starting its build when needed.
-    pub fn catalog(
-        &mut self,
-        epoch: u64,
-        overlay: &Arc<Overlay>,
-        version: d2_assets::GameVersion,
-    ) -> Result<Option<Arc<ObjectCatalog>>, String> {
-        let current = match &self.catalog {
-            CatalogSlot::Building { epoch: e, .. }
-            | CatalogSlot::Ready { epoch: e, .. }
-            | CatalogSlot::Failed { epoch: e, .. } => Some(*e),
-            CatalogSlot::None => None,
-        };
-        if current != Some(epoch) {
-            let (tx, rx) = channel();
-            let overlay = overlay.clone();
-            let spawned = std::thread::Builder::new()
-                .name("object-catalog".to_owned())
-                .spawn(move || {
-                    let r = ObjectCatalog::build(&overlay, version)
-                        .map(|(c, _)| c)
-                        .map_err(|e| e.to_string());
-                    let _ = tx.send(r);
-                });
-            self.catalog = match spawned {
-                Ok(_) => CatalogSlot::Building {
-                    epoch,
-                    rx: Mutex::new(rx),
-                },
-                Err(e) => CatalogSlot::Failed {
-                    epoch,
-                    error: e.to_string(),
-                },
-            };
-        }
-        if let CatalogSlot::Building { rx, .. } = &self.catalog {
-            let got = rx.lock().ok().and_then(|r| r.try_recv().ok());
-            match got {
-                Some(Ok(catalog)) => {
-                    self.catalog = CatalogSlot::Ready {
-                        epoch,
-                        catalog: Arc::new(catalog),
-                    }
-                }
-                Some(Err(error)) => self.catalog = CatalogSlot::Failed { epoch, error },
-                None => {}
-            }
-        }
-        match &self.catalog {
-            CatalogSlot::Ready { catalog, .. } => Ok(Some(catalog.clone())),
-            CatalogSlot::Failed { error, .. } => Err(error.clone()),
-            _ => Ok(None),
         }
     }
 }
@@ -173,20 +94,11 @@ pub fn build_frames(
     palette: &Palette,
 ) -> Result<(u8, Vec<RawFrame>, Option<u32>), String> {
     let path = cof_path(info).ok_or_else(|| format!("{} has no sprite", info.name))?;
-    // Only the direction count for the picker; frames come from the renderer.
-    let bytes = overlay
-        .read_bytes(&path)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("{path} not found"))?;
-    let cof = Cof::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
-    if cof.directions == 0 {
-        return Err(format!("{path} has no directions"));
-    }
     let sprites = ObjectSprites::new(overlay, catalog);
     let opts = ObjectOptions::default();
     let first = sprites
         .frame_of_info(info, &opts, Some(0), direction)
-        .map_err(|r| format!("{r:?}"))?;
+        .map_err(|r| r.to_string())?;
     let count = first.frames_per_direction.max(1);
     let mut frames = Vec::with_capacity(usize::from(count));
     let raw = |frame: &capy_render::ObjectFrame| {
@@ -198,7 +110,7 @@ pub fn build_frames(
     for f in 1..count {
         let frame = sprites
             .frame_of_info(info, &opts, Some(f), direction)
-            .map_err(|r| format!("{r:?}"))?;
+            .map_err(|r| r.to_string())?;
         frames.push(raw(&frame));
     }
     // Objects animate at their FrameDelta; monsters at the AnimData speed.
@@ -211,7 +123,8 @@ pub fn build_frames(
         let key = path.file_name().to_owned();
         anim.get(&key).map(|r| r.speed)
     });
-    Ok((cof.directions, frames, delta))
+    // The COF's direction count, for the direction picker.
+    Ok((first.directions.max(1), frames, delta))
 }
 
 #[cfg(test)]

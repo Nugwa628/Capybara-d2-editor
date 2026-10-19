@@ -8,9 +8,13 @@
 //! material, one draw call, so the GPU rasterises triangles in index order and
 //! blends them in that order. No depth or z sorting is involved.
 
-use capy_render::{DrawItem, MissingTile, TileGeometry, TileRef};
+#[cfg(test)]
+use capy_render::TileRef;
+use capy_render::{DrawItem, MissingTile, TileGeometry};
 
-use super::atlas::{AtlasKey, AtlasLayout};
+#[cfg(test)]
+use super::atlas::AtlasLayout;
+use super::atlas::{AtlasKey, Rect};
 use crate::iso;
 
 /// Cell size at 1:1.
@@ -41,10 +45,7 @@ pub fn is_shadow(item: &DrawItem) -> bool {
 }
 
 pub fn atlas_key(item: &DrawItem) -> AtlasKey {
-    AtlasKey {
-        tile: item.tile.clone(),
-        shadow: is_shadow(item),
-    }
+    AtlasKey::tile(item.tile.clone(), is_shadow(item))
 }
 
 /// World-space (1:1 pixels, y down) position of an item's top-left corner when
@@ -70,6 +71,7 @@ pub fn quad_origin(item: &DrawItem, geom: &TileGeometry, div: u32) -> (i32, i32)
 /// One quad per item, in item order, laid out for zoom `1:div`. `geometry`
 /// looks up a tile's bitmap geometry. Items missing from the layout (which
 /// cannot happen for a layout built from the same list) are skipped.
+#[cfg(test)]
 pub fn build_quads(
     items: &[DrawItem],
     layout: &AtlasLayout,
@@ -87,30 +89,36 @@ pub fn build_quads(
         let Some(rect) = layout.rects.get(&atlas_key(item)) else {
             continue;
         };
-        if rect.w == 0 || rect.h == 0 {
-            continue;
-        }
         let Some(geom) = geometry(&item.tile) else {
             continue;
         };
-        let (ox, oy) = quad_origin(item, &geom, div);
-        let (x0, y0) = (ox as f32, -(oy as f32));
-        let (x1, y1) = (x0 + rect.w as f32, y0 - rect.h as f32);
-        let (u0, v0) = (rect.x as f32 * inv, rect.y as f32 * inv);
-        let (u1, v1) = (
-            (rect.x + rect.w) as f32 * inv,
-            (rect.y + rect.h) as f32 * inv,
-        );
-        let base = geo.positions.len() as u32;
-        // Top-left, top-right, bottom-right, bottom-left.
-        geo.positions
-            .extend([[x0, y0, 0.0], [x1, y0, 0.0], [x1, y1, 0.0], [x0, y1, 0.0]]);
-        geo.uvs.extend([[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
-        geo.layers.extend([[rect.layer as f32, 0.0, 0.0, 1.0]; 4]);
-        geo.indices
-            .extend([base, base + 2, base + 1, base, base + 3, base + 2]);
+        push_quad(&mut geo, quad_origin(item, &geom, div), rect, inv);
     }
     geo
+}
+
+/// Appends one axis-aligned quad showing `rect` of the atlas with its
+/// top-left corner at `origin` (1:1 world pixels, y down). Empty rectangles
+/// add nothing.
+pub fn push_quad(geo: &mut TexGeometry, origin: (i32, i32), rect: &Rect, inv: f32) {
+    if rect.w == 0 || rect.h == 0 {
+        return;
+    }
+    let (x0, y0) = (origin.0 as f32, -(origin.1 as f32));
+    let (x1, y1) = (x0 + rect.w as f32, y0 - rect.h as f32);
+    let (u0, v0) = (rect.x as f32 * inv, rect.y as f32 * inv);
+    let (u1, v1) = (
+        (rect.x + rect.w) as f32 * inv,
+        (rect.y + rect.h) as f32 * inv,
+    );
+    let base = geo.positions.len() as u32;
+    // Top-left, top-right, bottom-right, bottom-left.
+    geo.positions
+        .extend([[x0, y0, 0.0], [x1, y0, 0.0], [x1, y1, 0.0], [x0, y1, 0.0]]);
+    geo.uvs.extend([[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
+    geo.layers.extend([[rect.layer as f32, 0.0, 0.0, 1.0]; 4]);
+    geo.indices
+        .extend([base, base + 2, base + 1, base, base + 3, base + 2]);
 }
 
 /// Triangles for the outlines (a thin diamond ring per missing tile), as
@@ -171,7 +179,7 @@ mod tests {
     use capy_render::{DrawPass, TileClass};
 
     use super::*;
-    use crate::render::atlas::{PaletteKey, Rect};
+    use crate::render::atlas::PaletteKey;
 
     fn item(order: u32, pass: DrawPass, dt1: usize, tile: usize, sx: i32, sy: i32) -> DrawItem {
         DrawItem {
@@ -195,14 +203,12 @@ mod tests {
                 gamma_bits: 0,
             },
             rects: entries.iter().cloned().collect::<HashMap<_, _>>(),
+            sprites: Vec::new(),
         }
     }
 
     fn key(dt1: usize, tile: usize, shadow: bool) -> AtlasKey {
-        AtlasKey {
-            tile: TileRef { dt1, tile },
-            shadow,
-        }
+        AtlasKey::tile(TileRef { dt1, tile }, shadow)
     }
 
     fn geom(class: TileClass, zero_line: i32) -> TileGeometry {

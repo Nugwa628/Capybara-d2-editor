@@ -106,6 +106,11 @@ pub struct Config {
     pub select_scope: SelectScope,
     /// Thumbnail edge of the Tiles browser in points (Ctrl+wheel).
     pub browser_thumb: f32,
+    /// View > "Animate objects": play object and NPC animations on the map.
+    pub animate_objects: bool,
+    /// View > "Object markers": diamond handles on every object, not only
+    /// with the Objects tool.
+    pub object_markers: bool,
     pub mode: AppMode,
     pub window: WindowConfig,
     pub layer_visibility: LayerVisibility,
@@ -123,6 +128,8 @@ impl Default for Config {
             max_age_days: 0,
             select_scope: SelectScope::default(),
             browser_thumb: 64.0,
+            animate_objects: true,
+            object_markers: false,
             mode: AppMode::default(),
             window: WindowConfig::default(),
             layer_visibility: LayerVisibility::default(),

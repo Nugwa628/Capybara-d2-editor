@@ -86,6 +86,27 @@
 //!                                       # max_age_days, select_scope, layer.<kind>
 //! history-tab | settings open|close | add-install [folder] | close-dialogs
 //! ```
+//!
+//! Objects and NPC paths (sub-tile coordinates, 5 per cell; path commands
+//! work on the one selected object):
+//!
+//! ```text
+//! animate on                            # View > Animate objects (on | off)
+//! object-frame-tick 12                  # show animation tick 12 (or: off)
+//! place-object 2 37 60 75               # type id subx suby; selects the new object
+//! assert-objects 45
+//! select-object 44
+//! path-add 62 80 2                      # x y [action], appended
+//! path-move 0 63 80                     # point x y
+//! path-action 0 3                       # point action
+//! path-delete 2
+//! assert-path 44 3                      # object, number of points (0 = none)
+//! objects-mode add                      # select | add | path (picks the Objects tool)
+//! picker-search torch                   # the Add object picker's search
+//! picker-choose 2 37                    # the picker's entry to place
+//! import-ini C:\ds1edit\assets\act1.ini # File > Import DS1Edit ini mappings
+//! center-cell 30 25                     # centre the view on a cell
+//! ```
 
 use std::path::PathBuf;
 
@@ -240,6 +261,46 @@ pub enum Cmd {
     /// Open "Add game install..." (optionally for a folder); writes nothing.
     AddInstall(Option<String>),
     CloseDialogs,
+    Animate(bool),
+    /// `None` = follow the clock again.
+    ObjectFrameTick(Option<u32>),
+    PlaceObject {
+        kind: i32,
+        id: i32,
+        x: i32,
+        y: i32,
+    },
+    AssertObjects(usize),
+    PathAdd {
+        x: i32,
+        y: i32,
+        action: i32,
+    },
+    PathMove {
+        index: usize,
+        x: i32,
+        y: i32,
+    },
+    PathAction {
+        index: usize,
+        action: i32,
+    },
+    PathDelete(usize),
+    AssertPath {
+        object: usize,
+        points: usize,
+    },
+    ObjectsMode(crate::objects::ObjectMode),
+    PickerSearch(String),
+    PickerChoose {
+        kind: i32,
+        id: i32,
+    },
+    ImportIni(PathBuf),
+    CenterCell {
+        x: u32,
+        y: u32,
+    },
 }
 
 /// The kinds `assert-history` accepts.
@@ -861,6 +922,105 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
             need(0, "no arguments")?;
             Cmd::CloseDialogs
         }
+        "animate" => {
+            need(1, "on|off")?;
+            Cmd::Animate(parse_on(args[0])?)
+        }
+        "object-frame-tick" => {
+            need(1, "<tick>|off")?;
+            Cmd::ObjectFrameTick(if args[0].eq_ignore_ascii_case("off") {
+                None
+            } else {
+                Some(parse_u32(args[0], "tick")?)
+            })
+        }
+        "place-object" => {
+            need(4, "<type> <id> <subx> <suby>")?;
+            Cmd::PlaceObject {
+                kind: parse_i32(args[0], "type")?,
+                id: parse_i32(args[1], "id")?,
+                x: parse_i32(args[2], "subx")?,
+                y: parse_i32(args[3], "suby")?,
+            }
+        }
+        "assert-objects" => {
+            need(1, "<n>")?;
+            Cmd::AssertObjects(parse_usize(args[0], "n")?)
+        }
+        "path-add" => {
+            if !(2..=3).contains(&args.len()) {
+                return Err("path-add: expected <x> <y> [action]".to_owned());
+            }
+            Cmd::PathAdd {
+                x: parse_i32(args[0], "x")?,
+                y: parse_i32(args[1], "y")?,
+                action: match args.get(2) {
+                    Some(a) => parse_i32(a, "action")?,
+                    None => 1,
+                },
+            }
+        }
+        "path-move" => {
+            need(3, "<point> <x> <y>")?;
+            Cmd::PathMove {
+                index: parse_usize(args[0], "point")?,
+                x: parse_i32(args[1], "x")?,
+                y: parse_i32(args[2], "y")?,
+            }
+        }
+        "path-action" => {
+            need(2, "<point> <action>")?;
+            Cmd::PathAction {
+                index: parse_usize(args[0], "point")?,
+                action: parse_i32(args[1], "action")?,
+            }
+        }
+        "path-delete" => {
+            need(1, "<point>")?;
+            Cmd::PathDelete(parse_usize(args[0], "point")?)
+        }
+        "assert-path" => {
+            need(2, "<object> <points>")?;
+            Cmd::AssertPath {
+                object: parse_usize(args[0], "object")?,
+                points: parse_usize(args[1], "points")?,
+            }
+        }
+        "objects-mode" => {
+            need(1, "select|add|path")?;
+            use crate::objects::ObjectMode;
+            Cmd::ObjectsMode(match args[0].to_ascii_lowercase().as_str() {
+                "select" => ObjectMode::Select,
+                "add" | "place" => ObjectMode::Place,
+                "path" => ObjectMode::Path,
+                other => {
+                    return Err(format!(
+                        "objects-mode {other:?} must be select, add or path"
+                    ));
+                }
+            })
+        }
+        "picker-search" => Cmd::PickerSearch(rest.to_owned()),
+        "picker-choose" => {
+            need(2, "<type> <id>")?;
+            Cmd::PickerChoose {
+                kind: parse_i32(args[0], "type")?,
+                id: parse_i32(args[1], "id")?,
+            }
+        }
+        "center-cell" => {
+            need(2, "<x> <y>")?;
+            Cmd::CenterCell {
+                x: parse_u32(args[0], "x")?,
+                y: parse_u32(args[1], "y")?,
+            }
+        }
+        "import-ini" => {
+            if rest.is_empty() {
+                return Err("import-ini: expected <file>".to_owned());
+            }
+            Cmd::ImportIni(PathBuf::from(rest))
+        }
         other => return Err(format!("unknown command {other:?}")),
     };
     Ok(Some(cmd))
@@ -1303,6 +1463,107 @@ close-dialogs
             "setting gamma",
             "settings maybe",
             "autosave-now please",
+        ] {
+            assert!(parse_line(bad).is_err(), "{bad:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn object_commands_parse() {
+        use crate::objects::ObjectMode;
+        let text = r"
+animate on
+object-frame-tick 12
+object-frame-tick off
+place-object 2 37 60 75
+assert-objects 45
+path-add 62 80
+path-add 62 85 3
+path-move 0 63 80
+path-action 1 2
+path-delete 2
+assert-path 44 3
+objects-mode path
+picker-search torch 1
+picker-choose 1 12
+import-ini C:\ds1edit\act 1.ini
+center-cell 3 4
+";
+        let lines = parse_script(text).expect("parses");
+        let cmds: Vec<&Cmd> = lines.iter().map(|(_, c)| c).collect();
+        assert_eq!(cmds[0], &Cmd::Animate(true));
+        assert_eq!(cmds[1], &Cmd::ObjectFrameTick(Some(12)));
+        assert_eq!(cmds[2], &Cmd::ObjectFrameTick(None));
+        assert_eq!(
+            cmds[3],
+            &Cmd::PlaceObject {
+                kind: 2,
+                id: 37,
+                x: 60,
+                y: 75
+            }
+        );
+        assert_eq!(cmds[4], &Cmd::AssertObjects(45));
+        assert_eq!(
+            cmds[5],
+            &Cmd::PathAdd {
+                x: 62,
+                y: 80,
+                action: 1
+            }
+        );
+        assert_eq!(
+            cmds[6],
+            &Cmd::PathAdd {
+                x: 62,
+                y: 85,
+                action: 3
+            }
+        );
+        assert_eq!(
+            cmds[7],
+            &Cmd::PathMove {
+                index: 0,
+                x: 63,
+                y: 80
+            }
+        );
+        assert_eq!(
+            cmds[8],
+            &Cmd::PathAction {
+                index: 1,
+                action: 2
+            }
+        );
+        assert_eq!(cmds[9], &Cmd::PathDelete(2));
+        assert_eq!(
+            cmds[10],
+            &Cmd::AssertPath {
+                object: 44,
+                points: 3
+            }
+        );
+        assert_eq!(cmds[11], &Cmd::ObjectsMode(ObjectMode::Path));
+        assert_eq!(cmds[12], &Cmd::PickerSearch("torch 1".to_owned()));
+        assert_eq!(cmds[13], &Cmd::PickerChoose { kind: 1, id: 12 });
+        assert_eq!(
+            cmds[14],
+            &Cmd::ImportIni(PathBuf::from(r"C:\ds1edit\act 1.ini"))
+        );
+        assert_eq!(cmds[15], &Cmd::CenterCell { x: 3, y: 4 });
+        for bad in [
+            "animate maybe",
+            "object-frame-tick soon",
+            "place-object 2 37 60",
+            "place-object a 37 60 75",
+            "path-add 1",
+            "path-add 1 2 3 4",
+            "path-move 0 1",
+            "path-action x 2",
+            "assert-path 1",
+            "objects-mode draw",
+            "picker-choose 2",
+            "import-ini",
         ] {
             assert!(parse_line(bad).is_err(), "{bad:?} must be rejected");
         }

@@ -26,6 +26,9 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             {
                 super::map_tools::cancel_gesture(state);
                 state.edit.tool = tool;
+                if tool == Tool::Objects {
+                    state.objects.focus = true;
+                }
             }
         }
         ui.separator();
@@ -73,7 +76,26 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             }
         }
         if tool == Tool::Objects {
-            ui.weak("Click an object, drag to move, Delete removes");
+            use crate::objects::ObjectMode;
+            for (mode, label) in [
+                (ObjectMode::Select, "Select"),
+                (ObjectMode::Place, "Add"),
+                (ObjectMode::Path, "Path"),
+            ] {
+                if ui
+                    .selectable_label(state.objects.mode == mode, label)
+                    .clicked()
+                {
+                    super::objects::set_mode(state, mode);
+                }
+            }
+            ui.weak(match state.objects.mode {
+                ObjectMode::Select => "Click an object, drag to move, Delete removes",
+                ObjectMode::Place => "Click on the map to place the Objects panel's choice",
+                ObjectMode::Path => {
+                    "Select an NPC, then click to add path points, drag to move, Delete removes"
+                }
+            });
         }
         if let Some(doc) = state.active_doc() {
             ui.separator();

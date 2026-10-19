@@ -1,9 +1,9 @@
 //! The browser's scope toggles, as extra query filters.
 //!
-//! Filters of one [`Query`] are ANDed, so "any of these DT1s" or "any sprite
-//! kind" becomes one query per alternative; the worker runs them all and
-//! [`merge_hits`] puts the answers together (best score first, ties in the
-//! order of the alternatives, which for a map is its DT1 load order).
+//! Filters of one [`Query`] are ANDed. "Any of the map's DT1s" is a single
+//! query with [`Filter::AnyFile`]; "any sprite kind" becomes one query per
+//! kind, which the worker runs and [`merge_hits`] puts together (best score
+//! first, ties in the order of the alternatives).
 
 use capy_index::{AssetKind, Filter, Hit, Query};
 
@@ -64,16 +64,14 @@ pub fn scoped_queries(query: &Query, scope: Scope, map_dt1s: &[String]) -> Vec<Q
     match scope {
         Scope::Profile if has_type(query) => vec![query.clone()],
         Scope::Profile => vec![with(query, Filter::Type(AssetKind::Tile))],
+        Scope::MapTileSet if map_dt1s.is_empty() => Vec::new(),
         Scope::MapTileSet => {
             let tiles = if has_type(query) {
                 query.clone()
             } else {
                 with(query, Filter::Type(AssetKind::Tile))
             };
-            map_dt1s
-                .iter()
-                .map(|dt1| with(&tiles, Filter::File(dt1.clone())))
-                .collect()
+            vec![with(&tiles, Filter::AnyFile(map_dt1s.to_vec()))]
         }
         Scope::Sprites if has_type(query) => vec![query.clone()],
         Scope::Sprites => [AssetKind::Dc6, AssetKind::Dcc, AssetKind::Cof]
@@ -152,24 +150,29 @@ mod tests {
     }
 
     #[test]
-    fn map_scope_is_one_query_per_dt1() {
+    fn map_scope_is_one_query_over_every_dt1() {
         let dt1s = vec![
             "data\\global\\tiles\\act1\\town\\floor.dt1".to_owned(),
             "data\\global\\tiles\\act1\\town\\fence.dt1".to_owned(),
         ];
         let q = parse_query("type:floor color:green").expect("q");
         let out = scoped_queries(&q, Scope::MapTileSet, &dt1s);
-        assert_eq!(out.len(), 2);
-        for (query, dt1) in out.iter().zip(&dt1s) {
-            assert_eq!(query.filters.last(), Some(&Filter::File(dt1.clone())));
-            assert!(query.filters.contains(&Filter::Color("green".into())));
-            let tile_filters = query
-                .filters
-                .iter()
-                .filter(|f| **f == Filter::Type(AssetKind::Tile))
-                .count();
-            assert_eq!(tile_filters, 1, "type:floor already narrows to tiles");
-        }
+        assert_eq!(out.len(), 1);
+        let query = &out[0];
+        assert_eq!(query.filters.last(), Some(&Filter::AnyFile(dt1s.clone())));
+        assert!(query.filters.contains(&Filter::Color("green".into())));
+        let tile_filters = query
+            .filters
+            .iter()
+            .filter(|f| **f == Filter::Type(AssetKind::Tile))
+            .count();
+        assert_eq!(tile_filters, 1, "type:floor already narrows to tiles");
+        // Without a type the scope adds `type:tile`.
+        let plain = scoped_queries(&parse_query("grass").expect("q"), Scope::MapTileSet, &dt1s);
+        assert_eq!(
+            plain[0].filters,
+            vec![Filter::Type(AssetKind::Tile), Filter::AnyFile(dt1s.clone())]
+        );
         // No map: nothing to search.
         assert!(scoped_queries(&q, Scope::MapTileSet, &[]).is_empty());
         assert!(in_tile_set(

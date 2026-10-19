@@ -16,6 +16,7 @@ mod hooks;
 mod index_task;
 mod installs;
 mod iso;
+mod objects;
 mod paths;
 mod render;
 mod script_run;

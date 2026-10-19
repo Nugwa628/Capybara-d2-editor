@@ -25,6 +25,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
 
     if state.active_doc().is_none() {
         state.hover_cell = None;
+        state.pointer = None;
         ui.painter_at(rect).text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
@@ -131,6 +132,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         _ => None,
     };
     state.hover_cell = hover_cell;
+    state.pointer = hover_pos.filter(|_| !panning);
 
     // Editing: the active tool's gestures, then the overlays under the
     // hover outline.

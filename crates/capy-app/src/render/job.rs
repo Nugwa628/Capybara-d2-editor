@@ -1,17 +1,27 @@
 //! The CPU half of rendering a map, run on a worker thread: load the DT1s,
-//! take the draw list, bake the atlas and lay out the quads. Everything here
-//! is plain data in and out, so it is tested without Bevy.
+//! take the draw list (with objects when the object tables are loaded), bake
+//! the atlas (tiles and every frame of every object sprite) and lay out the
+//! runs. Everything here is plain data in and out, so it is tested without
+//! Bevy.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use capy_render::{DrawItem, MissingTile, TileSet, Visibility, draw_list};
+use capy_render::{
+    DrawEntry, DrawItem, MissingObject, MissingTile, ObjectOptions, ObjectSprites, TileSet,
+    Visibility, draw_list_with_objects,
+};
+use d2_assets::objects::ObjectCatalog;
 use d2_assets::{GamePath, Overlay};
+use d2_formats::animdata::AnimData;
+use d2_formats::cof::path_token;
 use d2_formats::ds1::Ds1;
 use d2_formats::palette::{Palette, act_palette_path};
 
 use super::atlas::{self, AtlasKey, AtlasLayout, AtlasPixels, PaletteKey};
-use super::geometry::{self, TexGeometry};
+use super::geometry;
+use super::scene::{self, ObjectAnim, ObjectEntry, Piece, Run, SceneEntry};
 
 /// Everything the textured mesh of a document depends on. When it changes
 /// the mesh (and maybe the atlas) is rebuilt.
@@ -24,6 +34,9 @@ pub struct BuildKey {
     pub palette_act: u8,
     /// The DT1s in load order; also the tileset cache key.
     pub dt1_files: Vec<GamePath>,
+    /// The session epoch of the object tables the objects were drawn with;
+    /// `None` = terrain only (tables not loaded yet, or unavailable).
+    pub objects: Option<u64>,
 }
 
 impl BuildKey {
@@ -35,8 +48,8 @@ impl BuildKey {
     }
 }
 
-/// Everything visible, including special tiles: the set an atlas must cover so
-/// that toggling layers never needs a re-bake.
+/// Everything visible, including special tiles and objects: the set an atlas
+/// must cover so that toggling layers never needs a re-bake.
 pub fn visibility_all() -> Visibility {
     Visibility {
         floors: [true; 2],
@@ -61,65 +74,214 @@ pub struct BuildInput {
     /// Zoom divisor the quads are laid out for (not part of [`BuildKey`]:
     /// a zoom change only re-lays the quads out).
     pub div: u32,
+    /// Animation tick the object runs are laid out for (`None` = frame 0).
+    pub tick: Option<u32>,
+}
+
+/// Where object sprites come from: a long-lived `ObjectSprites` (its cache
+/// keeps the frame `Arc`s, and so the atlas keys, stable across builds).
+pub struct ObjectSource<'a> {
+    pub sprites: &'a ObjectSprites<'a>,
+    pub catalog: &'a ObjectCatalog,
+    pub animdata: Option<&'a AnimData>,
 }
 
 pub struct BuildOutput {
-    pub items: Arc<Vec<DrawItem>>,
-    pub geometry: TexGeometry,
+    pub entries: Arc<Vec<SceneEntry>>,
+    pub pieces: Vec<Piece>,
+    /// The runs of each piece, laid out for `div` and `tick`.
+    pub runs: Vec<Vec<Run>>,
     pub missing: Vec<MissingTile>,
+    pub missing_objects: Vec<MissingObject>,
     pub layout: Arc<AtlasLayout>,
     /// `Some` when the atlas was (re)built and must be uploaded.
     pub pixels: Option<AtlasPixels>,
-    /// 1:1 map-space bounds of everything drawn.
+    /// 1:1 map-space bounds of every tile drawn.
     pub bounds: Option<(i32, i32, i32, i32)>,
+    /// Tiles drawn.
+    pub tile_count: usize,
+    /// Object entries drawn (shadows included).
+    pub object_count: usize,
     pub elapsed: Duration,
 }
 
-/// The draw list, an atlas (reused when `prior` already holds every tile) and
-/// the quads in draw order.
-pub fn build_map(input: BuildInput) -> Result<BuildOutput, String> {
+/// The animation of object `index` of `ds1`, starting from the frame the
+/// draw list holds (frame 0): every frame of its direction, and its speed
+/// as `ObjectSprites` computes it (`objects.rs` `frame_of_info`).
+fn object_anim(
+    src: &ObjectSource<'_>,
+    ds1: &Ds1,
+    index: usize,
+    first: &Arc<capy_render::ObjectFrame>,
+) -> ObjectAnim {
+    let Some(object) = ds1.objects.get(index) else {
+        return ObjectAnim {
+            frames: vec![Arc::clone(first)],
+            delta: 256,
+        };
+    };
+    let info = src
+        .catalog
+        .resolve(ds1.effective_act(), ds1.version, object);
+    let direction = info.direction.unwrap_or(0);
+    let opts = ObjectOptions::default();
+    let count = first.frames_per_direction.max(1);
+    let mut frames = Vec::with_capacity(usize::from(count));
+    frames.push(Arc::clone(first));
+    for f in 1..count {
+        let frame = src
+            .sprites
+            .frame_of_info(&info, &opts, Some(f), direction)
+            .unwrap_or_else(|_| Arc::clone(first));
+        frames.push(frame);
+    }
+    let animdata_speed = || {
+        let token = path_token(info.token.as_deref()?);
+        let mode = match path_token(&info.mode) {
+            m if m.is_empty() => "nu".to_owned(),
+            m => m,
+        };
+        let class = match path_token(&info.weapon_class) {
+            c if c.is_empty() => "hth".to_owned(),
+            c => c,
+        };
+        src.animdata?
+            .get(&format!("{token}{mode}{class}"))
+            .map(|r| r.speed)
+    };
+    let delta = info
+        .frame_delta
+        .or_else(animdata_speed)
+        .filter(|d| *d != 0)
+        .unwrap_or(256);
+    ObjectAnim { frames, delta }
+}
+
+/// The draw list as scene entries, each object with its whole animation
+/// (shared through `anims`, keyed by object index).
+fn scene_entries(
+    entries: Vec<DrawEntry>,
+    ds1: &Ds1,
+    objects: Option<&ObjectSource<'_>>,
+    anims: &mut HashMap<usize, Arc<ObjectAnim>>,
+) -> Vec<SceneEntry> {
+    entries
+        .into_iter()
+        .filter_map(|e| match e {
+            DrawEntry::Tile(t) => Some(SceneEntry::Tile(t)),
+            DrawEntry::Object(o) => {
+                let src = objects?;
+                let anim = anims
+                    .entry(o.object)
+                    .or_insert_with(|| Arc::new(object_anim(src, ds1, o.object, &o.frame)))
+                    .clone();
+                Some(SceneEntry::Object(ObjectEntry {
+                    pass: o.pass,
+                    object: o.object,
+                    x: o.x,
+                    y: o.y,
+                    anim,
+                }))
+            }
+        })
+        .collect()
+}
+
+/// Atlas keys (with their images) the entries need: their tiles, and every
+/// frame of their objects.
+fn needed_keys(
+    entries: &[SceneEntry],
+    tiles: &TileSet,
+) -> Result<Vec<(AtlasKey, Arc<d2_formats::IndexedImage>)>, String> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for e in entries {
+        if let SceneEntry::Tile(item) = e {
+            let key = geometry::atlas_key(item);
+            if seen.insert(key.clone()) {
+                let image = tiles.image(&item.tile).map_err(|e| e.to_string())?;
+                out.push((key, image));
+            }
+        }
+    }
+    for (key, image) in scene::sprite_keys(entries) {
+        if seen.insert(key.clone()) {
+            out.push((key, image));
+        }
+    }
+    Ok(out)
+}
+
+/// The draw list, an atlas (reused when `prior` already holds every image)
+/// and the runs in draw order.
+pub fn build_map(
+    input: BuildInput,
+    objects: Option<&ObjectSource<'_>>,
+) -> Result<BuildOutput, String> {
     let started = Instant::now();
-    let (items, missing) =
-        draw_list(&input.ds1, &input.tiles, &input.vis).map_err(|e| e.to_string())?;
-    let needed: Vec<AtlasKey> = items.iter().map(geometry::atlas_key).collect();
+    let opts = ObjectOptions::default();
+    let source = objects.map(|o| (o.sprites, &opts));
+    let list = draw_list_with_objects(&input.ds1, &input.tiles, &input.vis, source)
+        .map_err(|e| e.to_string())?;
+    let mut anims = HashMap::new();
+    let entries = scene_entries(list.entries, &input.ds1, objects, &mut anims);
+    let needed = needed_keys(&entries, &input.tiles)?;
 
     let reusable = input
         .prior
         .as_ref()
-        .filter(|p| p.palette == input.palette_key && p.covers(&needed))
+        .filter(|p| p.palette == input.palette_key && p.covers(needed.iter().map(|(k, _)| k)))
         .cloned();
     let (layout, pixels) = match reusable {
         Some(layout) => (layout, None),
         None => {
             // Cover every layer toggle: bake what the all-visible list needs.
-            let (full, _) = draw_list(&input.ds1, &input.tiles, &visibility_all())
+            let full = draw_list_with_objects(&input.ds1, &input.tiles, &visibility_all(), source)
                 .map_err(|e| e.to_string())?;
-            let mut entries = Vec::with_capacity(full.len());
-            let mut seen = std::collections::HashSet::new();
-            for item in &full {
-                let key = geometry::atlas_key(item);
-                if seen.insert(key.clone()) {
-                    let image = input.tiles.image(&item.tile).map_err(|e| e.to_string())?;
-                    entries.push((key, image));
-                }
-            }
+            let full = scene_entries(full.entries, &input.ds1, objects, &mut anims);
+            let all = needed_keys(&full, &input.tiles)?;
             let gamma = f32::from_bits(input.palette_key.gamma_bits);
             let palette = input.palette.with_gamma(gamma);
             let (layout, pixels) =
-                atlas::build(&entries, &palette, input.palette_key).map_err(|e| e.to_string())?;
+                atlas::build(&all, &palette, input.palette_key).map_err(|e| e.to_string())?;
             (Arc::new(layout), Some(pixels))
         }
     };
+    let pieces = scene::pieces(&entries);
     let tiles = input.tiles.clone();
-    let geometry = geometry::build_quads(&items, &layout, input.div, &|r| tiles.geometry(r));
-    let bounds = capy_render::map_screen_bounds(&items, &input.tiles);
+    let runs = pieces
+        .iter()
+        .map(|p| {
+            scene::build_piece(
+                &entries,
+                p,
+                &layout,
+                input.div,
+                &|r| tiles.geometry(r),
+                input.tick,
+            )
+        })
+        .collect();
+    let tile_items: Vec<DrawItem> = entries
+        .iter()
+        .filter_map(|e| match e {
+            SceneEntry::Tile(t) => Some(t.clone()),
+            SceneEntry::Object(_) => None,
+        })
+        .collect();
+    let bounds = capy_render::map_screen_bounds(&tile_items, &input.tiles);
+    let object_count = entries.len() - tile_items.len();
     Ok(BuildOutput {
-        items: Arc::new(items),
-        geometry,
-        missing,
+        entries: Arc::new(entries),
+        pieces,
+        runs,
+        missing: list.missing,
+        missing_objects: list.missing_objects,
         layout,
         pixels,
         bounds,
+        tile_count: tile_items.len(),
+        object_count,
         elapsed: started.elapsed(),
     })
 }
@@ -132,6 +294,15 @@ pub fn load_palette(overlay: &Overlay, act: u8) -> Result<Palette, String> {
         .map_err(|e| format!("reading {path}: {e}"))?
         .ok_or_else(|| format!("{path} is not in the profile"))?;
     Palette::parse_dat(&bytes).map_err(|e| format!("parsing {path}: {e}"))
+}
+
+/// Loads `animdata.d2` (monster animation speeds); `None` when absent.
+pub fn load_animdata(overlay: &Overlay) -> Option<AnimData> {
+    let bytes = overlay
+        .read_bytes(&GamePath::new("data\\global\\animdata.d2"))
+        .ok()
+        .flatten()?;
+    AnimData::parse(&bytes).ok()
 }
 
 /// Loads the DT1s of a map. Unreadable ones come back as warnings.
@@ -226,27 +397,42 @@ mod tests {
             },
             prior,
             div: 1,
+            tick: None,
         }
+    }
+
+    fn items(out: &BuildOutput) -> Vec<DrawItem> {
+        out.entries
+            .iter()
+            .filter_map(|e| match e {
+                SceneEntry::Tile(t) => Some(t.clone()),
+                SceneEntry::Object(_) => None,
+            })
+            .collect()
     }
 
     #[test]
     fn quads_follow_the_draw_list_one_for_one() {
-        let out = build_map(input(Visibility::default(), None)).expect("build");
+        let out = build_map(input(Visibility::default(), None), None).expect("build");
         // Three floors + one shadow; the (9, 9) cell is missing.
-        assert_eq!(out.items.len(), 4);
-        assert_eq!(out.geometry.quad_count(), out.items.len());
+        let items = items(&out);
+        assert_eq!(items.len(), 4);
+        assert_eq!(out.pieces.len(), 1, "terrain only: one piece");
+        assert_eq!(out.runs[0].len(), 1, "one premultiplied run");
+        let geometry = &out.runs[0][0].geo;
+        assert_eq!(geometry.quad_count(), items.len());
         assert_eq!(out.missing.len(), 1);
         assert_eq!((out.missing[0].x, out.missing[0].y), (2, 2));
-        for (k, item) in out.items.iter().enumerate() {
+        for (k, item) in items.iter().enumerate() {
             assert_eq!(
-                out.geometry.positions[4 * k][0],
+                geometry.positions[4 * k][0],
                 item.screen_x as f32,
                 "quad {k} is item {k}"
             );
         }
         // The shadow is drawn after the floor of its cell and is a separate
         // atlas entry from the floor tiles.
-        let passes: Vec<DrawPass> = out.items.iter().map(|i| i.pass).collect();
+        let passes: Vec<DrawPass> = items.iter().map(|i| i.pass).collect();
         assert!(passes.contains(&DrawPass::Shadows));
         assert!(out.pixels.is_some());
         assert!(out.bounds.is_some());
@@ -254,22 +440,22 @@ mod tests {
 
     #[test]
     fn toggling_a_layer_reuses_the_atlas() {
-        let first = build_map(input(Visibility::default(), None)).expect("build");
+        let first = build_map(input(Visibility::default(), None), None).expect("build");
         let vis = Visibility {
             shadow: false,
             ..Visibility::default()
         };
-        let second = build_map(input(vis, Some(first.layout.clone()))).expect("rebuild");
+        let second = build_map(input(vis, Some(first.layout.clone())), None).expect("rebuild");
         assert!(
             second.pixels.is_none(),
             "no re-bake for a visibility change"
         );
-        assert_eq!(second.items.len(), 3);
+        assert_eq!(items(&second).len(), 3);
         assert!(Arc::ptr_eq(&first.layout, &second.layout));
         // A different palette key forces a new bake.
         let mut changed = input(Visibility::default(), Some(first.layout.clone()));
         changed.palette_key.gamma_bits = 1.3f32.to_bits();
-        assert!(build_map(changed).expect("gamma").pixels.is_some());
+        assert!(build_map(changed, None).expect("gamma").pixels.is_some());
     }
 
     #[test]
@@ -278,28 +464,32 @@ mod tests {
             shadow: false,
             ..Visibility::default()
         };
-        let hidden_first = build_map(input(vis, None)).expect("build");
+        let hidden_first = build_map(input(vis, None), None).expect("build");
         // The atlas already holds the shadow entry although it is not drawn.
-        let shadow_in_atlas = hidden_first.layout.rects.keys().any(|k| k.shadow);
+        let shadow_in_atlas = hidden_first
+            .layout
+            .rects
+            .keys()
+            .any(AtlasKey::is_shadow_tile);
         assert!(shadow_in_atlas);
-        let shown = build_map(input(
-            Visibility::default(),
-            Some(hidden_first.layout.clone()),
-        ))
+        let shown = build_map(
+            input(Visibility::default(), Some(hidden_first.layout.clone())),
+            None,
+        )
         .expect("show");
         assert!(shown.pixels.is_none());
-        assert_eq!(shown.items.len(), 4);
+        assert_eq!(items(&shown).len(), 4);
     }
 
     #[test]
     fn baked_shadow_texels_are_premultiplied_in_the_pixels() {
-        let out = build_map(input(Visibility::default(), None)).expect("build");
+        let out = build_map(input(Visibility::default(), None), None).expect("build");
         let pixels = out.pixels.expect("pixels");
         let rect = out
             .layout
             .rects
             .iter()
-            .find(|(k, _)| k.shadow)
+            .find(|(k, _)| k.is_shadow_tile())
             .map(|(_, r)| *r)
             .expect("shadow rect");
         let i = (((rect.y + rect.h / 2) * pixels.size + rect.x + 80) * 4) as usize;

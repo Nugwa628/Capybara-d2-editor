@@ -56,6 +56,9 @@ struct Shot {
     started: Instant,
     requested: bool,
     frames: u32,
+    /// When the map was first seen drawn: the settle time counts from
+    /// there, so the atlas upload and pipelines are done.
+    drawn_since: Option<Instant>,
 }
 
 #[derive(Resource, Default)]
@@ -250,6 +253,9 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
     if let Some(step) = history_step(state, cmd, awaiting_autosave) {
         return step;
     }
+    if let Some(step) = objects_step(state, cmd) {
+        return step;
+    }
     // Screenshots also work without a map (Sprites mode).
     if let Cmd::Screenshot(file) = cmd {
         return Step::Wait(Wait::Shot(Shot {
@@ -257,6 +263,7 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
             started: Instant::now(),
             requested: false,
             frames: 0,
+            drawn_since: None,
         }));
     }
     let Some(index) = state.active else {
@@ -384,6 +391,7 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
             started: Instant::now(),
             requested: false,
             frames: 0,
+            drawn_since: None,
         })),
         Cmd::PreviewPaste { x, y, mode } => {
             let Some(clip) = state.edit.clipboard.clone() else {
@@ -410,8 +418,24 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
                 ));
             }
             doc.object_sel = vec![*i];
+            state.objects.path.follow_object(Some(*i));
             Step::Next
         }
+        // Handled by `objects_step`.
+        Cmd::Animate(_)
+        | Cmd::ObjectFrameTick(_)
+        | Cmd::PlaceObject { .. }
+        | Cmd::AssertObjects(_)
+        | Cmd::PathAdd { .. }
+        | Cmd::PathMove { .. }
+        | Cmd::PathAction { .. }
+        | Cmd::PathDelete(_)
+        | Cmd::AssertPath { .. }
+        | Cmd::ObjectsMode(_)
+        | Cmd::PickerSearch(_)
+        | Cmd::PickerChoose { .. }
+        | Cmd::ImportIni(_)
+        | Cmd::CenterCell { .. } => Step::Next,
         // Handled by `sprite_step`.
         Cmd::SpritePreview
         | Cmd::Mode(_)
@@ -1054,6 +1078,216 @@ fn history_step(
     })
 }
 
+/// The one selected object of the active map, for the path commands.
+fn script_object(state: &AppState, what: &str) -> Result<(usize, usize), String> {
+    state
+        .single_object()
+        .ok_or_else(|| format!("{what}: select exactly one object first (select-object <index>)"))
+}
+
+/// Runs an object / NPC path command; `None` for every other command.
+fn objects_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
+    let needs_map = !matches!(
+        cmd,
+        Cmd::Animate(_) | Cmd::ObjectFrameTick(_) | Cmd::ImportIni(_)
+    );
+    let is_object_cmd = matches!(
+        cmd,
+        Cmd::Animate(_)
+            | Cmd::ObjectFrameTick(_)
+            | Cmd::PlaceObject { .. }
+            | Cmd::AssertObjects(_)
+            | Cmd::PathAdd { .. }
+            | Cmd::PathMove { .. }
+            | Cmd::PathAction { .. }
+            | Cmd::PathDelete(_)
+            | Cmd::AssertPath { .. }
+            | Cmd::ObjectsMode(_)
+            | Cmd::PickerSearch(_)
+            | Cmd::PickerChoose { .. }
+            | Cmd::ImportIni(_)
+            | Cmd::CenterCell { .. }
+    );
+    if !is_object_cmd {
+        return None;
+    }
+    if needs_map && state.active.is_none() {
+        return Some(Step::Fail(
+            "no map is open (use `open <game path>` first)".to_owned(),
+        ));
+    }
+    let index = state.active.unwrap_or(0);
+    let exec = |state: &mut AppState, op: EditOp, what: &str| -> Result<(), String> {
+        if state.exec_upgrading(index, op) {
+            Ok(())
+        } else {
+            Err(format!("{what} failed{}", last_log(state)))
+        }
+    };
+    let result: Result<(), String> = match cmd {
+        Cmd::Animate(on) => {
+            state.config.animate_objects = *on;
+            state.config_dirty = true;
+            Ok(())
+        }
+        Cmd::ObjectFrameTick(tick) => {
+            state.objects.frame_tick = *tick;
+            Ok(())
+        }
+        Cmd::PlaceObject { kind, id, x, y } => {
+            let before = state.docs[index].ds1.objects.len();
+            exec(
+                state,
+                EditOp::AddObject(d2_formats::ds1::Object {
+                    kind: *kind,
+                    id: *id,
+                    x: *x,
+                    y: *y,
+                    flags: 0,
+                }),
+                "place-object",
+            )
+            .and_then(|()| {
+                let doc = &state.docs[index];
+                if doc.ds1.objects.len() == before + 1 && doc.object_sel == vec![before] {
+                    Ok(())
+                } else {
+                    Err("place-object: the new object is not selected".to_owned())
+                }
+            })
+        }
+        Cmd::AssertObjects(n) => {
+            let actual = state.docs[index].ds1.objects.len();
+            if actual == *n {
+                Ok(())
+            } else {
+                Err(format!("assert-objects {n}: the map has {actual}"))
+            }
+        }
+        Cmd::PathAdd { x, y, action } => {
+            script_object(state, "path-add").and_then(|(_, object)| {
+                exec(
+                    state,
+                    EditOp::AddPathPoint {
+                        object,
+                        point: d2_formats::ds1::PathPoint {
+                            x: *x,
+                            y: *y,
+                            action: *action,
+                        },
+                        at: None,
+                    },
+                    "path-add",
+                )
+            })
+        }
+        Cmd::PathMove { index: i, x, y } => {
+            script_object(state, "path-move").and_then(|(_, object)| {
+                exec(
+                    state,
+                    EditOp::MovePathPoint {
+                        object,
+                        index: *i,
+                        x: *x,
+                        y: *y,
+                    },
+                    "path-move",
+                )
+            })
+        }
+        Cmd::PathAction { index: i, action } => {
+            script_object(state, "path-action").and_then(|(_, object)| {
+                exec(
+                    state,
+                    EditOp::SetPathAction {
+                        object,
+                        index: *i,
+                        action: *action,
+                    },
+                    "path-action",
+                )
+            })
+        }
+        Cmd::PathDelete(i) => script_object(state, "path-delete").and_then(|(_, object)| {
+            exec(
+                state,
+                EditOp::DeletePathPoints {
+                    object,
+                    indices: vec![*i],
+                },
+                "path-delete",
+            )
+        }),
+        Cmd::AssertPath { object, points } => {
+            let actual = state.docs[index]
+                .edit
+                .path_of(*object)
+                .map_or(0, |p| p.points.len());
+            if actual == *points {
+                Ok(())
+            } else {
+                Err(format!(
+                    "assert-path {object} {points}: the object's path has {actual} point(s)"
+                ))
+            }
+        }
+        Cmd::ObjectsMode(mode) => {
+            crate::ui::cancel_map_gesture(state);
+            state.edit.tool = crate::edit::tools::Tool::Objects;
+            state.objects.mode = *mode;
+            state.objects.focus = true;
+            Ok(())
+        }
+        Cmd::PickerSearch(text) => {
+            state.objects.picker.query = text.clone();
+            state.objects.focus = true;
+            Ok(())
+        }
+        Cmd::PickerChoose { kind, id } => {
+            let act = state.docs[index].ds1.effective_act();
+            match state.placeables(act) {
+                // The object tables are still loading.
+                None => return Some(Step::Retry),
+                Some(list) if list.iter().any(|i| (i.ds1_kind, i.ds1_id) == (*kind, *id)) => {
+                    state.objects.picker.chosen = Some((*kind, *id));
+                    state.objects.focus = true;
+                    Ok(())
+                }
+                Some(_) => Err(format!(
+                    "picker-choose {kind} {id}: not placeable in act {}",
+                    act + 1
+                )),
+            }
+        }
+        Cmd::CenterCell { x, y } => {
+            if !state.docs[index].fitted {
+                return Some(Step::Retry); // the first UI pass fits the view
+            }
+            state.jump_to_cell(*x, *y);
+            Ok(())
+        }
+        Cmd::ImportIni(file) => {
+            if matches!(state.catalog, crate::state::CatalogState::Building) {
+                return Some(Step::Retry);
+            }
+            state
+                .import_ini_files(std::slice::from_ref(file))
+                .and_then(|r| {
+                    if r.applied == 0 {
+                        Err(format!("import-ini: no mapping applied ({})", r.summary()))
+                    } else {
+                        Ok(())
+                    }
+                })
+        }
+        _ => return None,
+    };
+    Some(match result {
+        Ok(()) => Step::Next,
+        Err(e) => Step::Fail(e),
+    })
+}
+
 /// The images directly inside `dir`, in natural name order.
 fn list_images(dir: &std::path::Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
@@ -1107,12 +1341,21 @@ fn poll_shot(commands: &mut Commands, state: &mut AppState, mut shot: Shot) -> S
     let drawn = state.config.mode == AppMode::Sprites
         || state.active_doc().is_none_or(|d| {
             d.fitted
-                && matches!(
+                && (matches!(
                     d.render.state,
-                    RenderState::Ready | RenderState::Failed(_) | RenderState::ProfileClosed
-                )
+                    RenderState::Failed(_) | RenderState::ProfileClosed
+                ) || (d.render.state == RenderState::Ready && state.objects_settled(d)))
         });
-    let settled = shot.started.elapsed().as_secs_f32() >= SETTLE_SECS && shot.frames >= 30;
+    if !drawn {
+        shot.drawn_since = None;
+    } else if shot.drawn_since.is_none() {
+        shot.drawn_since = Some(Instant::now());
+    }
+    let settled = shot.started.elapsed().as_secs_f32() >= SETTLE_SECS
+        && shot
+            .drawn_since
+            .is_some_and(|t| t.elapsed().as_secs_f32() >= SETTLE_SECS / 2.0)
+        && shot.frames >= 30;
     if drawn && settled {
         if let Some(dir) = shot.file.parent() {
             let _ = std::fs::create_dir_all(dir);

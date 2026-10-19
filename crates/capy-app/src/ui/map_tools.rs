@@ -15,6 +15,7 @@ use crate::edit::paste::{PasteTint, tint_cells};
 use crate::edit::state::Gesture;
 use crate::edit::tools::{BoxDrag, LassoPath, Mods, Tool, scope_layers, select_op, stroke_cells};
 use crate::iso::{self, View};
+use crate::objects::ObjectMode;
 use crate::state::AppState;
 
 /// Distance (points) within which a click grabs an object marker.
@@ -257,7 +258,11 @@ fn begin_gesture(
                 state.note_paint(index, layer, value);
             }
         }
-        Tool::Objects => begin_object_gesture(state, index, f, p, mods),
+        Tool::Objects => match state.objects.mode {
+            ObjectMode::Select => begin_object_gesture(state, index, f, p, mods),
+            ObjectMode::Place => place_at(state, index, f, p),
+            ObjectMode::Path => begin_path_gesture(state, index, f, p, mods),
+        },
     }
 }
 
@@ -322,6 +327,7 @@ fn update_gesture(state: &mut AppState, index: usize, f: &ViewFrame, p: Pos2) {
             path.push((tile.0 as f32, tile.1 as f32));
         }
         Gesture::Objects { current, .. } => *current = tile,
+        Gesture::PathNode { .. } => state.objects.path.drag_to(subtile_at(f, p)),
         Gesture::Brush {
             layer, last, erase, ..
         } => {
@@ -400,6 +406,13 @@ pub fn end_gesture(state: &mut AppState, apply: bool) {
                 state.exec(index, EditOp::MoveObjects { indices, dx, dy });
             }
         }
+        Gesture::PathNode { .. } => {
+            if let Some(cmd) = state.objects.path.release()
+                && apply
+            {
+                state.run_path_command(cmd);
+            }
+        }
         _ => {}
     }
 }
@@ -421,12 +434,25 @@ pub fn object_tile_pos(x: i32, y: i32) -> (f64, f64) {
     ((f64::from(x) + 0.5) / SUB, (f64::from(y) + 0.5) / SUB)
 }
 
-fn begin_object_gesture(state: &mut AppState, index: usize, f: &ViewFrame, p: Pos2, mods: Mods) {
-    let doc = &mut state.docs[index];
-    if !doc.objects_visible {
-        return;
-    }
-    let hit = doc
+/// The sub-tile under a screen point (objects and path points live on
+/// sub-tiles, 5 per cell edge).
+pub fn subtile_at(f: &ViewFrame, p: Pos2) -> (i32, i32) {
+    let (u, v) = f.screen_to_tile(p);
+    ((u * SUB).floor() as i32, (v * SUB).floor() as i32)
+}
+
+/// Screen rectangle of a 1:1 object box from the renderer.
+fn box_on_screen(f: &ViewFrame, b: [i32; 4]) -> Rect {
+    let shift = f64::from(crate::render::WORLD_SHIFT_X);
+    let a = f.screen_of_iso([f64::from(b[0]) + shift, f64::from(b[1])]);
+    let c = f.screen_of_iso([f64::from(b[2]) + shift, f64::from(b[3])]);
+    Rect::from_two_pos(a, c)
+}
+
+/// The object under a screen point: a marker within grab distance first,
+/// else the topmost drawn sprite whose box holds the point.
+fn object_at(doc: &MapDoc, f: &ViewFrame, p: Pos2) -> Option<usize> {
+    let marker = doc
         .ds1
         .objects
         .iter()
@@ -438,7 +464,22 @@ fn begin_object_gesture(state: &mut AppState, index: usize, f: &ViewFrame, p: Po
         .filter(|&(_, d)| d <= OBJECT_GRAB)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(i, _)| i);
-    match hit {
+    marker.or_else(|| {
+        doc.render
+            .object_boxes
+            .iter()
+            .rev()
+            .find(|(i, b)| *i < doc.ds1.objects.len() && box_on_screen(f, *b).contains(p))
+            .map(|(i, _)| *i)
+    })
+}
+
+fn begin_object_gesture(state: &mut AppState, index: usize, f: &ViewFrame, p: Pos2, mods: Mods) {
+    let doc = &mut state.docs[index];
+    if !doc.objects_visible {
+        return;
+    }
+    match object_at(doc, f, p) {
         Some(i) => {
             if mods.shift {
                 if let Some(pos) = doc.object_sel.iter().position(|&s| s == i) {
@@ -463,6 +504,65 @@ fn begin_object_gesture(state: &mut AppState, index: usize, f: &ViewFrame, p: Po
             if !mods.shift {
                 doc.object_sel.clear();
             }
+        }
+    }
+}
+
+/// "Add": place the picker's choice on the sub-tile under the cursor.
+fn place_at(state: &mut AppState, index: usize, f: &ViewFrame, p: Pos2) {
+    let Some((kind, id)) = state.objects.picker.chosen else {
+        state.notify("Choose an object in the Objects panel first");
+        state.objects.focus = true;
+        return;
+    };
+    let (x, y) = subtile_at(f, p);
+    let doc = &state.docs[index];
+    let (w, h) = (i64::from(doc.ds1.width) * 5, i64::from(doc.ds1.height) * 5);
+    if x < 0 || y < 0 || i64::from(x) >= w || i64::from(y) >= h {
+        state.notify("That is outside the map");
+        return;
+    }
+    if !doc.objects_visible
+        && let Some(doc) = state.docs.get_mut(index)
+    {
+        doc.objects_visible = true;
+    }
+    state.place_object(index, kind, id, x, y);
+}
+
+/// The path node under a screen point.
+fn path_node_at(points: &[d2_formats::ds1::PathPoint], f: &ViewFrame, p: Pos2) -> Option<usize> {
+    points
+        .iter()
+        .enumerate()
+        .map(|(i, q)| {
+            let (u, v) = object_tile_pos(q.x, q.y);
+            (i, f.tile_to_screen(u, v).distance(p))
+        })
+        .filter(|&(_, d)| d <= OBJECT_GRAB)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
+/// "Path": with one object selected, a click adds a point or grabs a node;
+/// without, it selects an object.
+fn begin_path_gesture(state: &mut AppState, index: usize, f: &ViewFrame, p: Pos2, mods: Mods) {
+    let Some((_, object)) = state.single_object() else {
+        begin_object_gesture(state, index, f, p, mods);
+        state.edit.gesture = None; // select only, no drag
+        return;
+    };
+    state.objects.path.follow_object(Some(object));
+    let points = state.selected_path();
+    let hit = path_node_at(&points, f, p);
+    let at = subtile_at(f, p);
+    match state.objects.path.press(hit, at, points.len()) {
+        Some(cmd) => {
+            state.run_path_command(cmd);
+        }
+        None => {
+            let doc = state.docs[index].id;
+            state.edit.gesture = Some(Gesture::PathNode { doc });
         }
     }
 }
@@ -630,6 +730,10 @@ fn diamond_points(c: Pos2, r: f32) -> Vec<Pos2> {
     ]
 }
 
+/// Object handles: the diamond markers (with the Objects tool, with View >
+/// Object markers, or for objects that draw no sprite), the outline of the
+/// selected objects' sprites, the selected object's NPC path and, while
+/// placing, the sub-tile under the cursor.
 fn draw_objects(painter: &Painter, state: &AppState, f: &ViewFrame) {
     let Some(doc) = state.active_doc() else {
         return;
@@ -638,6 +742,11 @@ fn draw_objects(painter: &Painter, state: &AppState, f: &ViewFrame) {
         return;
     }
     let r = marker_radius(f);
+    let objects_tool = state.edit.tool == Tool::Objects;
+    let sprites_drawn = doc.render.objects_epoch.is_some();
+    let all_markers = objects_tool || state.config.object_markers || !sprites_drawn;
+    let missing: std::collections::HashSet<usize> =
+        doc.render.missing_objects.iter().map(|(i, _)| *i).collect();
     // While dragging, the selected markers show where they would land.
     let drag = match &state.edit.gesture {
         Some(Gesture::Objects { start, current, .. }) => {
@@ -645,8 +754,24 @@ fn draw_objects(painter: &Painter, state: &AppState, f: &ViewFrame) {
         }
         _ => None,
     };
+    // Outline the selected objects' sprites.
+    let outline = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 235, 120, 200));
+    for (i, b) in doc.render.object_boxes.iter() {
+        if doc.object_sel.contains(i) && drag.is_none() {
+            painter.rect_stroke(
+                box_on_screen(f, *b),
+                0.0,
+                outline,
+                egui::StrokeKind::Outside,
+            );
+        }
+    }
     for (i, o) in doc.ds1.objects.iter().enumerate() {
         let selected = doc.object_sel.contains(&i);
+        let no_sprite = missing.contains(&i);
+        if !(all_markers || selected || no_sprite) {
+            continue;
+        }
         let (mut u, mut v) = object_tile_pos(o.x, o.y);
         if let (true, Some((du, dv))) = (selected, drag) {
             let (du, dv) = ((du * SUB).round() / SUB, (dv * SUB).round() / SUB);
@@ -662,6 +787,11 @@ fn draw_objects(painter: &Painter, state: &AppState, f: &ViewFrame) {
                 Color32::from_rgb(255, 235, 120),
                 Stroke::new(1.5, Color32::WHITE),
             )
+        } else if no_sprite {
+            (
+                Color32::from_rgb(200, 90, 230),
+                Stroke::new(1.0, Color32::from_rgb(40, 0, 60)),
+            )
         } else {
             (
                 Color32::from_rgb(235, 140, 40),
@@ -669,6 +799,96 @@ fn draw_objects(painter: &Painter, state: &AppState, f: &ViewFrame) {
             )
         };
         painter.add(Shape::convex_polygon(diamond_points(c, r), fill, edge));
+    }
+    draw_path(painter, state, f);
+    if objects_tool
+        && state.objects.mode == ObjectMode::Place
+        && state.edit.gesture.is_none()
+        && let Some(pos) = state.pointer
+        && f.rect.contains(pos)
+    {
+        let (x, y) = subtile_at(f, pos);
+        let (u, v) = object_tile_pos(x, y);
+        let c = f.tile_to_screen(u, v);
+        let ghost = Color32::from_rgba_unmultiplied(120, 255, 160, 150);
+        painter.add(Shape::convex_polygon(
+            diamond_points(c, r),
+            ghost,
+            Stroke::new(1.0, Color32::WHITE),
+        ));
+        painter.text(
+            c + Vec2::new(r + 4.0, -r),
+            egui::Align2::LEFT_BOTTOM,
+            format!("{x}, {y}"),
+            egui::FontId::monospace(11.0),
+            Color32::WHITE,
+        );
+    }
+}
+
+/// The selected object's NPC path: lines from the object through the
+/// numbered nodes.
+fn draw_path(painter: &Painter, state: &AppState, f: &ViewFrame) {
+    let Some((index, object)) = state.single_object() else {
+        return;
+    };
+    let doc = &state.docs[index];
+    let Some(path) = doc.edit.path_of(object) else {
+        return;
+    };
+    let Some(owner) = doc.ds1.objects.get(object) else {
+        return;
+    };
+    let editing = state.edit.tool == Tool::Objects && state.objects.mode == ObjectMode::Path;
+    let tool = &state.objects.path;
+    let screen = |x: i32, y: i32| {
+        let (u, v) = object_tile_pos(x, y);
+        f.tile_to_screen(u, v)
+    };
+    let nodes: Vec<Pos2> = path
+        .points
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let (x, y) = tool.dragged(i).filter(|_| editing).unwrap_or((p.x, p.y));
+            screen(x, y)
+        })
+        .collect();
+    let line = Stroke::new(2.0, Color32::from_rgb(90, 200, 255));
+    let mut prev = screen(owner.x, owner.y);
+    for &n in &nodes {
+        painter.line_segment([prev, n], line);
+        prev = n;
+    }
+    let r = (marker_radius(f) * 0.9).max(6.0);
+    for (i, (&n, p)) in nodes.iter().zip(&path.points).enumerate() {
+        let selected = editing && tool.selected == Some(i);
+        let fill = if selected {
+            Color32::from_rgb(255, 235, 120)
+        } else {
+            Color32::from_rgb(30, 110, 170)
+        };
+        painter.circle(n, r, fill, Stroke::new(1.5, Color32::WHITE));
+        painter.text(
+            n,
+            egui::Align2::CENTER_CENTER,
+            format!("{}", i + 1),
+            egui::FontId::monospace(r.max(9.0)),
+            if selected {
+                Color32::BLACK
+            } else {
+                Color32::WHITE
+            },
+        );
+        if p.action != 1 {
+            painter.text(
+                n + Vec2::new(r + 2.0, r),
+                egui::Align2::LEFT_TOP,
+                format!("a{}", p.action),
+                egui::FontId::monospace(10.0),
+                Color32::from_rgb(180, 230, 255),
+            );
+        }
     }
 }
 

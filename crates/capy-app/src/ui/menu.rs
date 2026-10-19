@@ -85,6 +85,21 @@ fn file_menu(ui: &mut Ui, state: &mut AppState) {
     }
     ui.weak(format!("CHANGED.txt: {changed} file(s)"));
 
+    if ui
+        .add_enabled(
+            has_profile,
+            egui::Button::new("Import DS1Edit ini mappings..."),
+        )
+        .on_hover_text(
+            "DS1Edit's assets\\*.ini (<LvlTypesId> <LvlPrestDef> <path> per line): each map \
+             listed uses that LvlType and Def from now on (saved per profile)",
+        )
+        .clicked()
+    {
+        state.pick_ini_files();
+        ui.close();
+    }
+
     ui.separator();
     if ui.button("Settings...").clicked() {
         state.settings.open = true;
@@ -127,7 +142,9 @@ fn edit_menu(ui: &mut Ui, state: &mut AppState) {
         )
         .clicked()
     {
-        state.undo();
+        if !super::shortcuts::refuse_in_snapshot(state) {
+            state.undo();
+        }
         ui.close();
     }
     if ui
@@ -137,7 +154,9 @@ fn edit_menu(ui: &mut Ui, state: &mut AppState) {
         )
         .clicked()
     {
-        state.redo();
+        if !super::shortcuts::refuse_in_snapshot(state) {
+            state.redo();
+        }
         ui.close();
     }
     ui.separator();
@@ -145,7 +164,9 @@ fn edit_menu(ui: &mut Ui, state: &mut AppState) {
         .add_enabled(has_sel, egui::Button::new("Cut").shortcut_text("Ctrl+X"))
         .clicked()
     {
-        state.cut_selection();
+        if !super::shortcuts::refuse_in_snapshot(state) {
+            state.cut_selection();
+        }
         ui.close();
     }
     if ui
@@ -159,7 +180,9 @@ fn edit_menu(ui: &mut Ui, state: &mut AppState) {
         .add_enabled(has_doc, egui::Button::new("Paste").shortcut_text("Ctrl+V"))
         .clicked()
     {
-        state.begin_paste();
+        if !super::shortcuts::refuse_in_snapshot(state) {
+            state.begin_paste();
+        }
         ui.close();
     }
     if ui
@@ -169,7 +192,9 @@ fn edit_menu(ui: &mut Ui, state: &mut AppState) {
         )
         .clicked()
     {
-        super::shortcuts::delete(state);
+        if !super::shortcuts::refuse_in_snapshot(state) {
+            super::shortcuts::delete(state);
+        }
         ui.close();
     }
     ui.separator();
@@ -248,6 +273,38 @@ fn view_menu(ui: &mut Ui, state: &mut AppState, dock: &mut Dock) {
         egui::Checkbox::new(&mut state.edit.grid, "Cell grid"),
     )
     .on_hover_text("G");
+    if ui
+        .add_enabled(
+            map_mode,
+            egui::Checkbox::new(&mut state.config.animate_objects, "Animate objects"),
+        )
+        .on_hover_text("Play object and NPC animations at their game speed (25 Hz clock)")
+        .changed()
+    {
+        state.config_dirty = true;
+    }
+    if ui
+        .add_enabled(
+            map_mode,
+            egui::Checkbox::new(&mut state.config.object_markers, "Object markers"),
+        )
+        .on_hover_text("Diamond handles on every object, not only with the Objects tool")
+        .changed()
+    {
+        state.config_dirty = true;
+    }
+    let mut objects = dock.has_objects();
+    if ui
+        .add_enabled(map_mode, egui::Checkbox::new(&mut objects, "Objects panel"))
+        .changed()
+    {
+        if objects {
+            dock.show_objects();
+        } else if let Some(location) = dock.map.find_tab(&super::Panel::Objects) {
+            let _ = dock.map.remove_tab(location);
+        }
+        ui.close();
+    }
     let mut preview = dock.has_sprite_preview();
     if ui
         .add_enabled(

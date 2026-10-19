@@ -155,7 +155,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             ui.checkbox(&mut doc.objects_visible, "Objects");
             ui.weak(format!("({})", doc.ds1.objects.len()));
         });
-        ui.weak("Objects show as diamond markers; sprites come later.");
+        ui.weak("Objects and NPCs draw as sprites; markers show with the Objects tool.");
     }
     if let Some(op) = op {
         state.exec(index, op);

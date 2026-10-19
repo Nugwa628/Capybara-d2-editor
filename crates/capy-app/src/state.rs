@@ -144,6 +144,8 @@ pub struct AppState {
     pub map_rect: Option<egui::Rect>,
     pub pixels_per_point: f32,
     pub hover_cell: Option<(i32, i32)>,
+    /// The pointer over the Map panel (egui points), for tool previews.
+    pub pointer: Option<egui::Pos2>,
     pub scroll_accum: f32,
     /// Set by the UI; the app shell clears it after handling.
     pub request_fit: bool,
@@ -159,6 +161,8 @@ pub struct AppState {
     pub history: HistoryState,
     /// The Settings window and "Add game install...".
     pub settings: SettingsUi,
+    /// Object tables, placement picker, NPC path tool, animation.
+    pub objects: crate::objects::ObjectsState,
 }
 
 const MAX_LOG: usize = 2000;
@@ -195,6 +199,7 @@ impl AppState {
             map_rect: None,
             pixels_per_point: 1.0,
             hover_cell: None,
+            pointer: None,
             scroll_accum: 0.0,
             request_fit: false,
             quit_requested: false,
@@ -203,6 +208,7 @@ impl AppState {
             browser: BrowserState::default(),
             history: HistoryState::default(),
             settings: SettingsUi::default(),
+            objects: crate::objects::ObjectsState::default(),
         }
     }
 
@@ -285,6 +291,7 @@ impl AppState {
         self.poll_sprites();
         self.poll_history();
         self.poll_settings();
+        self.poll_objects();
         let events: Vec<TaskEvent> = match self.rx.lock() {
             Ok(rx) => rx.try_iter().collect(),
             Err(_) => return,
@@ -503,7 +510,7 @@ impl AppState {
         self.refresh_infos_for(&path, &profile);
     }
 
-    fn refresh_infos_for(&mut self, path: &GamePath, profile: &str) {
+    pub(crate) fn refresh_infos_for(&mut self, path: &GamePath, profile: &str) {
         let indices: Vec<usize> = self
             .docs
             .iter()

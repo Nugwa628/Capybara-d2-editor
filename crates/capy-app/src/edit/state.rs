@@ -45,6 +45,8 @@ pub enum Gesture {
         current: (f64, f64),
         indices: Vec<usize>,
     },
+    /// Dragging an NPC path node (the Path tool holds the drag itself).
+    PathNode { doc: u64 },
 }
 
 impl Gesture {
@@ -53,7 +55,8 @@ impl Gesture {
             Gesture::Box { doc, .. }
             | Gesture::Lasso { doc, .. }
             | Gesture::Brush { doc, .. }
-            | Gesture::Objects { doc, .. } => *doc,
+            | Gesture::Objects { doc, .. }
+            | Gesture::PathNode { doc } => *doc,
         }
     }
 }
