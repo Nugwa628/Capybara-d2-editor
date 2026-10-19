@@ -3,9 +3,11 @@
 //! * Headless render parity (P5 acceptance): `render` of the 18 oracle maps
 //!   through `capy_cli::run_in`, compared with DS1Edit's renders in
 //!   `testdata\private\oracle-renders\` exactly like
-//!   `crates/capy-render/tests/oracle.rs` does.
+//!   `crates/capy-render/tests/oracle.rs` does (terrain, objects masked), plus
+//!   the default render with objects, unmasked.
 //! * `render` of a Median XL map by game path, with no explicit LvlType.
-//! * `index status` on a fresh home, `maps list --filter`.
+//! * `index status` on a fresh home, `maps list --filter`, and the editor's
+//!   `config.toml` overrides in `maps list` and `render`.
 //!
 //! The render tests are heavy: they run in release builds or with
 //! `CAPY_RENDER_TESTS=1`, and skip quietly when the installs are absent.
@@ -51,7 +53,7 @@ fn private_dir() -> PathBuf {
 /// object that is excluded from the comparison, in 1:1 pixels relative to the
 /// object's anchor `((x - y) * 16, (x + y) * 8)`: `(left, top, right,
 /// bottom)`. Scaled by `1/zoom_div` for zoomed renders. (The oracle draws
-/// animated object sprites, which this renderer does not.)
+/// animated object sprites at random frames, which no render reproduces.)
 const OBJECT_MASK: (i32, i32, i32, i32) = (-96, -224, 96, 48);
 
 /// Zoom divisor of the oracle renders (1:4).
@@ -163,6 +165,24 @@ fn parse_missing(stdout: &str) -> usize {
         .unwrap()
 }
 
+/// `objects: D drawn, M missing` of the render's result line.
+fn parse_objects(stdout: &str) -> (usize, usize) {
+    let rest = stdout
+        .split("objects: ")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no object counts in:\n{stdout}"));
+    let numbers: Vec<usize> = rest
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|t| !t.is_empty())
+        .take(2)
+        .map(|t| t.parse().unwrap())
+        .collect();
+    (numbers[0], numbers[1])
+}
+
+/// The terrain layers alone (`Visibility::default()` without objects).
+const TERRAIN: &str = "floors,walls,shadow,roofs";
+
 #[test]
 fn headless_render_matches_the_oracle() {
     if !heavy_enabled() {
@@ -181,9 +201,23 @@ fn headless_render_matches_the_oracle() {
         .open(&home.dir.path().join("saves"))
         .unwrap();
 
+    // tol16/wide16: terrain-only render, objects masked (the P5 parity
+    // metric). terr16: the same render unmasked. obj16: the default render
+    // (objects drawn at frame 0), unmasked; the oracle draws each animated
+    // object at a random frame, so this is a lower bound.
     eprintln!(
-        "{:<28} {:>11} {:>11} {:>9} {:>8} {:>8} {:>5}",
-        "map", "ours", "oracle", "shift", "tol16", "wide16", "miss"
+        "{:<28} {:>11} {:>11} {:>9} {:>8} {:>8} {:>8} {:>8} {:>5} {:>5} {:>5}",
+        "map",
+        "ours",
+        "oracle",
+        "shift",
+        "tol16",
+        "wide16",
+        "terr16",
+        "obj16",
+        "miss",
+        "objs",
+        "omiss"
     );
     let mut failures = Vec::new();
     let mut checked = 0;
@@ -191,28 +225,45 @@ fn headless_render_matches_the_oracle() {
         if only.as_deref().is_some_and(|o| !entry.name.contains(o)) {
             continue;
         }
-        let png = tmp.path().join(format!("{}.png", entry.name));
         let (lvltype, def) = (
             entry.lvltypes_id.to_string(),
             entry.lvlprest_def.to_string(),
         );
-        let (code, stdout, stderr) = home.run(&[
-            "render",
-            &entry.ds1,
-            "--profile",
-            "vanilla",
-            "--lvltype",
-            &lvltype,
-            "--def",
-            &def,
-            "--zoom",
-            "1:4",
-            "--out",
-            png.to_str().unwrap(),
-        ]);
-        assert_eq!(code, 0, "{}: exit code\n{stdout}\n{stderr}", entry.name);
+        let render = |png: &Path, layers: Option<&str>| {
+            let mut args = vec![
+                "render",
+                &entry.ds1,
+                "--profile",
+                "vanilla",
+                "--lvltype",
+                &lvltype,
+                "--def",
+                &def,
+                "--zoom",
+                "1:4",
+                "--out",
+                png.to_str().unwrap(),
+            ];
+            if let Some(layers) = layers {
+                args.extend(["--layers", layers]);
+            }
+            let (code, stdout, stderr) = home.run(&args);
+            assert_eq!(code, 0, "{}: exit code\n{stdout}\n{stderr}", entry.name);
+            let image = RgbaImage::from_png(&std::fs::read(png).unwrap()).unwrap();
+            (image, stdout)
+        };
+        let (ours, stdout) = render(
+            &tmp.path().join(format!("{}_terrain.png", entry.name)),
+            Some(TERRAIN),
+        );
+        let (with_objects, objects_stdout) =
+            render(&tmp.path().join(format!("{}.png", entry.name)), None);
+        assert!(
+            stdout.contains("objects: off"),
+            "{}: terrain-only render drew objects\n{stdout}",
+            entry.name
+        );
 
-        let ours = RgbaImage::from_png(&std::fs::read(&png).unwrap()).unwrap();
         let oracle = RgbaImage::from_png(
             &std::fs::read(renders.join(format!("{}.png", entry.name))).unwrap(),
         )
@@ -225,25 +276,34 @@ fn headless_render_matches_the_oracle() {
         )
         .unwrap();
         let origin = parse_origin(&stdout);
+        assert_eq!(
+            parse_origin(&objects_stdout),
+            origin,
+            "{}: objects moved the canvas",
+            entry.name
+        );
         let mask = object_mask(&ds1, origin, ours.width, ours.height, 1);
-        let report = |tolerance, mask: &[bool]| {
+        let report = |image: &RgbaImage, tolerance, mask: Option<&[bool]>| {
             compare_images_with(
-                &ours,
+                image,
                 &oracle,
                 &CompareOptions {
                     tolerance,
                     max_shift: 16,
                     coverage: Coverage::Both,
-                    mask: Some(mask),
+                    mask,
                 },
             )
         };
-        let r16 = report(16, &mask);
+        let r16 = report(&ours, 16, Some(&mask));
         let wide_mask = object_mask(&ds1, origin, ours.width, ours.height, 2);
-        let wide16 = report(16, &wide_mask).diff.within_tolerance;
+        let wide16 = report(&ours, 16, Some(&wide_mask)).diff.within_tolerance;
+        let terrain16 = report(&ours, 16, None).diff.within_tolerance;
+        let objects16 = report(&with_objects, 16, None).diff.within_tolerance;
         let missing = parse_missing(&stdout);
+        let (drawn, missing_objects) = parse_objects(&objects_stdout);
         eprintln!(
-            "{:<28} {:>5}x{:<5} {:>5}x{:<5} {:>4},{:<4} {:>8.4} {:>8.4} {:>5}",
+            "{:<28} {:>5}x{:<5} {:>5}x{:<5} {:>4},{:<4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>5} {:>5} {:>5}",
             entry.name,
             ours.width,
             ours.height,
@@ -253,15 +313,39 @@ fn headless_render_matches_the_oracle() {
             r16.diff.best_shift.1,
             r16.diff.within_tolerance,
             wide16,
+            terrain16,
+            objects16,
             missing,
+            drawn,
+            missing_objects,
         );
         if (ours.width, ours.height) != (oracle.width, oracle.height) {
             failures.push(format!("{}: canvas size differs", entry.name));
+        }
+        if (with_objects.width, with_objects.height) != (ours.width, ours.height) {
+            failures.push(format!("{}: objects changed the canvas size", entry.name));
         }
         if r16.diff.within_tolerance < 0.95 {
             failures.push(format!(
                 "{}: within_tolerance(16) = {:.4}",
                 entry.name, r16.diff.within_tolerance
+            ));
+        }
+        if drawn + missing_objects > ds1.objects.len() {
+            failures.push(format!(
+                "{}: {drawn} drawn + {missing_objects} missing objects of {}",
+                entry.name,
+                ds1.objects.len()
+            ));
+        }
+        // Drawing the objects must not make the unmasked score worse than
+        // the terrain alone (the rule of capy-render's object oracle test).
+        // It is not held to the masked score: the mask hides exactly the
+        // pixels where the oracle's random animation frames differ.
+        if objects16 < terrain16 - 0.0005 {
+            failures.push(format!(
+                "{}: objects made the unmasked score worse ({terrain16:.4} -> {objects16:.4})",
+                entry.name
             ));
         }
         checked += 1;
@@ -330,7 +414,7 @@ fn a_ds1_file_outside_the_profile_needs_a_lvltype() {
         "--out",
         png.to_str().unwrap(),
     ]);
-    assert_eq!(code, 2, "{stderr}");
+    assert_eq!(code, 1, "{stderr}");
     assert!(stderr.contains("--lvltype"), "{stderr}");
     assert!(!png.exists());
 
@@ -416,4 +500,70 @@ fn maps_list_filters_case_insensitively() {
         home.run(&["maps", "list", "--profile", "vanilla", "--filter", "towne1"]);
     assert_eq!(code, 0);
     assert_eq!(again, stdout);
+}
+
+#[test]
+fn config_toml_overrides_apply_to_maps_list_and_render() {
+    if !heavy_enabled() {
+        eprintln!("skipped: debug build (set CAPY_RENDER_TESTS=1 or use --release)");
+        return;
+    }
+    let Some(vanilla) = vanilla_dir() else {
+        eprintln!("skipped: vanilla install not found");
+        return;
+    };
+    let home = Home::with_profile(&Profile::vanilla(&vanilla));
+    let towne1 = r"data\global\tiles\act1\town\towne1.ds1";
+    // As the editor saves it; the other profile's entry must be ignored.
+    let config = format!(
+        "gamma = 1.3\n\n[[overrides]]\nprofile = \"vanilla\"\nds1 = '{towne1}'\nlvl_type = 2\n\n\
+         [[overrides]]\nprofile = \"mxl\"\nds1 = '{towne1}'\nlvl_type = 3\n"
+    );
+    std::fs::write(home.dir.path().join("config.toml"), &config).unwrap();
+
+    let (code, stdout, stderr) = home.run(&[
+        "maps",
+        "list",
+        "--profile",
+        "vanilla",
+        "--filter",
+        r"act1\town",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let sources: Vec<(&str, &str)> = stdout.lines().filter_map(|l| l.split_once('\t')).collect();
+    assert!(sources.len() > 1, "{stdout}");
+    for (path, source) in &sources {
+        let expected = *path == towne1;
+        assert_eq!(*source == "Override", expected, "{path}: {source}");
+    }
+
+    let png = home.dir.path().join("towne1.png");
+    let render = |extra: &[&str]| {
+        let mut args = vec![
+            "render",
+            towne1,
+            "--profile",
+            "vanilla",
+            "--zoom",
+            "1:8",
+            "--out",
+            png.to_str().unwrap(),
+        ];
+        args.extend_from_slice(extra);
+        home.run(&args)
+    };
+    let (code, stdout, stderr) = render(&[]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("source=Override lvltype=2 "), "{stdout}");
+    // An explicit --lvltype wins over the saved override.
+    let (code, stdout, stderr) = render(&["--lvltype", "1"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("lvltype=1 "), "{stdout}");
+    // A malformed config.toml is a warning; the catalog's own choice is used.
+    std::fs::write(home.dir.path().join("config.toml"), "[[overrides]\n").unwrap();
+    let (code, stdout, stderr) = render(&[]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stderr.contains("warning: config.toml"), "{stderr}");
+    assert!(stdout.contains("source=LvlPrest lvltype=1 "), "{stdout}");
+    assert_eq!(parse_missing(&stdout), 0, "{stdout}");
 }

@@ -1724,6 +1724,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]

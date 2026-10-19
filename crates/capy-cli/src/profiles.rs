@@ -3,7 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
-use d2_assets::{Overlay, Profile};
+use d2_assets::{GameVersion, Overlay, Profile};
 
 use crate::{CmdResult, Ctx, Fail};
 
@@ -53,6 +53,15 @@ pub fn saves_of(ctx: &Ctx<'_>, profile: &Profile) -> PathBuf {
     profile.saves_dir(&ctx.saves_dir())
 }
 
+/// The version as profile TOMLs spell it: `1.13c`, `1.14d` or `d2r`.
+pub fn version_label(version: GameVersion) -> &'static str {
+    match version {
+        GameVersion::V113c => "1.13c",
+        GameVersion::V114d => "1.14d",
+        GameVersion::D2r => "d2r",
+    }
+}
+
 pub fn list(ctx: &mut Ctx<'_>) -> CmdResult {
     let dir = ctx.profiles_dir();
     let profiles = Profile::load_dir(&dir)
@@ -62,7 +71,12 @@ pub fn list(ctx: &mut Ctx<'_>) -> CmdResult {
         return Ok(());
     }
     for p in &profiles {
-        ctx.say(format!("{}\t{:?}\t{}", p.id, p.game_version, p.name));
+        ctx.say(format!(
+            "{}\t{}\t{}",
+            p.id,
+            version_label(p.game_version),
+            p.name
+        ));
     }
     Ok(())
 }
