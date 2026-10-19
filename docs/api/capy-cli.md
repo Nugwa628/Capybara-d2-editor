@@ -14,9 +14,20 @@ pub fn run(args: &[std::ffi::OsString]) -> Option<std::process::ExitCode>;
 
 /// `run` against an explicit `capybara\` root and output streams (tests).
 /// Returns the numeric exit code, or None when `args` is not a CLI verb.
+/// Looks for installs like the exe (`InstallSearch::system`).
 pub fn run_in(
     args: &[std::ffi::OsString],
     root: std::path::PathBuf,
+    out: &mut dyn std::io::Write,
+    err: &mut dyn std::io::Write,
+) -> Option<u8>;
+
+/// `run_in` with the install search injected (tests never read the registry):
+/// `installs` is called only when a verb other than `help` finds no profile.
+pub fn run_in_with(
+    args: &[std::ffi::OsString],
+    root: std::path::PathBuf,
+    installs: &dyn Fn() -> d2_assets::installs::InstallSearch,
     out: &mut dyn std::io::Write,
     err: &mut dyn std::io::Write,
 ) -> Option<u8>;
@@ -44,7 +55,17 @@ profiles list                              (id, version 1.13c|1.14d|d2r, name; t
 help [verb]                                (also --help, -h, /? as the first argument)
 ```
 Profiles resolve by id from `capybara\profiles\<id>.toml`, or a TOML path.
-Writes only `--out` targets and `capybara\cache\`.
+Writes only `--out` targets, `capybara\cache\` and the first-run profiles.
+
+**First run.** Before every verb except `help`, when `capybara\profiles\` holds
+no `*.toml`, the CLI calls `d2_assets::installs::seed_default_profiles` (the
+GUI's first-run seeding: default locations + read-only registry lookup) and
+prints `note: wrote default profile <file>` on stderr per file written. A
+seeding error is printed as a warning and the verb still runs. So `profiles
+list`, `maps list`, `render` and `index` work on a clean folder.
+
+Product name: Capybara's D2 Editor, exe `CapybarasD2Editor.exe` (crate names
+and the `capybara\` folder are unchanged).
 
 `maps list` and `render` (without `--lvltype`) apply the app's per-profile
 overrides: `[[overrides]]` entries of `<capybara root>\config.toml` whose

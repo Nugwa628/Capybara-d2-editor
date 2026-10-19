@@ -4,9 +4,9 @@ use crate::args::VERBS;
 use crate::{CmdResult, Ctx, Fail};
 
 const OVERVIEW: &str = "\
-Capybara Map Editor command line
+Capybara's D2 Editor command line
 
-usage: <exe> <verb> [options]
+usage: CapybarasD2Editor.exe <verb> [options]
 
 verbs:
   render    render a DS1 map to a PNG without opening the editor
@@ -15,7 +15,9 @@ verbs:
   profiles  list the profiles in capybara\\profiles
   help      this text; `help <verb>` for one verb (also --help, -h, /?)
 
-Without a verb the editor starts. Game folders are never written to.
+Without a verb the editor starts. Game folders are never written to. The
+first verb run on a clean capybara folder writes the default profiles of the
+Diablo II and Median XL installs it finds, as the editor's first start does.
 Exit codes: 0 ok, 1 runtime error (including a map whose tile set cannot be
 found), 2 usage error (a bad or missing flag or value).";
 
@@ -65,7 +67,9 @@ const PROFILES: &str = "\
 profiles list
 
   Prints each profile in capybara\\profiles: id, game version (1.13c, 1.14d
-  or d2r), name.";
+  or d2r), name. When the folder has no profile yet, vanilla.toml and mxl.toml
+  are written first for the installs found (the default locations and the
+  Diablo II registry key, read-only).";
 
 const HELP: &str = "\
 help [verb]

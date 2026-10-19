@@ -1,9 +1,12 @@
-//! Command-line side of the Capybara Map Editor (no Bevy).
+//! Command-line side of Capybara's D2 Editor (`CapybarasD2Editor.exe`, no
+//! Bevy).
 //!
 //! `capy-app`'s `main` calls [`run`] first; `None` means "no CLI verb, start
 //! the GUI". The verbs are documented in `docs/api/capy-cli.md`; all of them
-//! are read-only towards game data and write only `--out` targets and
-//! `capybara\cache\`.
+//! are read-only towards game data and write only `--out` targets,
+//! `capybara\cache\` and, on a clean folder, the default profiles in
+//! `capybara\profiles\` (the same first-run seeding the GUI does,
+//! [`d2_assets::installs::seed_default_profiles`]).
 
 mod args;
 mod help;
@@ -20,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use args::Command;
+use d2_assets::installs::{InstallSearch, seed_default_profiles};
 
 /// Folder name next to the executable.
 const HOME_DIR_NAME: &str = "capybara";
@@ -62,6 +66,10 @@ impl Ctx<'_> {
 
     pub fn warn(&mut self, text: impl AsRef<str>) {
         let _ = writeln!(self.err, "warning: {}", text.as_ref());
+    }
+
+    pub fn note(&mut self, text: impl AsRef<str>) {
+        let _ = writeln!(self.err, "note: {}", text.as_ref());
     }
 }
 
@@ -112,10 +120,27 @@ pub fn run(args: &[OsString]) -> Option<ExitCode> {
 
 /// [`run`] against an explicit `capybara\` root and explicit output streams
 /// (used by tests, which must not touch process-wide state). Returns the
-/// numeric exit code, or `None` when `args` is not a CLI verb.
+/// numeric exit code, or `None` when `args` is not a CLI verb. Installs are
+/// looked for as the exe does ([`InstallSearch::system`]: the default
+/// locations and the registry, read-only); [`run_in_with`] injects them.
 pub fn run_in(
     args: &[OsString],
     root: PathBuf,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Option<u8> {
+    run_in_with(args, root, &InstallSearch::system, out, err)
+}
+
+/// [`run_in`] with the install search injected: `installs` is called only
+/// when a verb other than `help` finds no profile in `capybara\profiles\`,
+/// and the default profiles are then seeded from what it returns
+/// ([`seed_default_profiles`]), each file written reported as a `note:` on
+/// `err`. A failed seeding is a warning; the verb still runs.
+pub fn run_in_with(
+    args: &[OsString],
+    root: PathBuf,
+    installs: &dyn Fn() -> InstallSearch,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Option<u8> {
@@ -129,11 +154,28 @@ pub fn run_in(
         }
     };
     let mut ctx = Ctx { root, out, err };
+    if !matches!(command, Command::Help(_)) {
+        seed_profiles(&mut ctx, installs);
+    }
     let result = dispatch(&mut ctx, command);
     if let Err(Fail::Usage(message) | Fail::Runtime(message)) = &result {
         let _ = writeln!(ctx.err, "error: {message}");
     }
     Some(exit_code(&result))
+}
+
+/// First use of a clean folder: write the default profiles of the installs
+/// found, as the GUI's first start does.
+fn seed_profiles(ctx: &mut Ctx<'_>, installs: &dyn Fn() -> InstallSearch) {
+    let dir = ctx.profiles_dir();
+    match seed_default_profiles(&dir, installs) {
+        Ok(written) => {
+            for file in written {
+                ctx.note(format!("wrote default profile {}", file.display()));
+            }
+        }
+        Err(e) => ctx.warn(format!("cannot write the default profiles: {e}")),
+    }
 }
 
 /// Exit code of a command's result: 0 ok; 1 for a runtime condition (a file
