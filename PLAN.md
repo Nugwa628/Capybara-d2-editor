@@ -113,6 +113,18 @@ Status: **P0 done** (2026-10-19; all acceptance tests pass, full corpus). In par
 - **There is no terrain-only switch** in the reference CLI or ini; the headless render always includes objects and object shadows. The P1 comparison therefore masks a box around every DS1 object (see `capy-render` tests) instead of rendering terrain-only.
 - Headless exit code is 0 even on failure; success is detected from stdout and the PNG.
 
+### Renderer vs oracle (2026-10-19, measured)
+- `capy-render` matches all 18 oracle maps: canvas sizes equal, best shift (0,0), `within_tolerance(16)` 0.9915–1.0000 with objects masked; the five object-free maps are pixel-exact. All 8 Median XL test maps render with 0 missing tiles (`testdata\private\mxl-renders\`).
+- Rules measured against the oracle (they refine the first draft of `docs/api/capy-render.md`):
+  - Pass 1 is a single per-cell loop: lower walls, floors, shadows for each cell (`preview.c:3688`). Within a cell, layers of one family sort by `prop1` (orientation 10 = 255).
+  - Orientation 3 also draws the matching **orientation 4** tile (`preview.c:1131-1160`).
+  - Only orientations 18/19 fall back: to the swapped orientation, then the swapped orientation with sub 0 (`ds1.c:153-193`).
+  - Special tiles (10/11) ignore the hidden bit; animated floors show frame 0.
+  - Zoom scales each tile with point sampling at source column `N*k + N/2`; it is not composite-then-shrink.
+  - DT1 shadows: 50% mode, `out = d*127/255 + s*(128/255)^2`.
+- **Variant choice default = DS1Edit's rule (`VariantRule::ReferenceQuirk`, `misc.c:156-187`)**, lead decision. In vanilla every multi-candidate group is a rarity tie (rarities are almost all 1); the documented "first highest" rule matched only 8/18 oracle maps, DS1Edit's matched 18/18. The real game picks randomly among nonzero-rarity blocks, so neither rule is "the game"; matching the editor modders know wins. `Documented` stays available as an option.
+- **Palette = Levels `Pal` when the map's Level is known**, else the reference rule (LvlTypes act, overridden when all File entries sit under one `ActN\`, which makes LvlTypes 35 use Act 4). Median XL needs `Pal` (e.g. Level 241: LvlTypes act 5, `Pal` 2 = jungle); for vanilla test maps both agree.
+
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
 |---|---|---|
