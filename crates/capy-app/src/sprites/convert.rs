@@ -168,35 +168,34 @@ pub fn build_import(
                     .map_err(|e| format!("{}: {e}", dir.display()))?;
                 return finish_import(sprite, settings, meta);
             }
-            // Some frames of an export: they carry real alpha too, so no colour
-            // key (`import_frames` does the same for a whole export).
-            let opts = if meta.is_some() {
-                QuantizeOptions {
-                    transparent_rgb: None,
-                    ..opts.clone()
+            let frames = match (meta.is_some(), same_folder(&settings.files)) {
+                // Some frames of an export: the library reads them with their
+                // sprite.json offsets and no colour key, in export order.
+                (true, Some(dir)) => {
+                    let names: Vec<String> = settings
+                        .files
+                        .iter()
+                        .filter_map(|f| f.file_name().map(|n| n.to_string_lossy().into_owned()))
+                        .collect();
+                    let (sprite, _) =
+                        capy_sprite::import_frames_subset(dir, &names, palette, &opts)
+                            .map_err(|e| format!("{}: {e}", dir.display()))?;
+                    sprite.directions.into_iter().flatten().collect()
                 }
-            } else {
-                opts.clone()
-            };
-            let mut directions: Vec<Vec<IndexedImage>> = vec![Vec::with_capacity(per); dirs];
-            for (i, file) in settings.files.iter().enumerate() {
-                let rgba = import_image(&read(file)?, kind_of(file)?)
-                    .map_err(|e| format!("{}: {e}", file.display()))?;
-                let mut img = quantize(&rgba, palette, &opts);
-                let name = file.file_name().map(|n| n.to_string_lossy().into_owned());
-                match meta
-                    .as_ref()
-                    .and_then(|m| m.frames.iter().find(|f| Some(&f.file) == name.as_ref()))
-                {
-                    Some(fm) => {
-                        img.offset_x = fm.offset_x;
-                        img.offset_y = fm.offset_y;
+                // Loose images: colour key as set, anchored bottom-centre.
+                _ => {
+                    let mut frames = Vec::with_capacity(settings.files.len());
+                    for file in &settings.files {
+                        let rgba = import_image(&read(file)?, kind_of(file)?)
+                            .map_err(|e| format!("{}: {e}", file.display()))?;
+                        let mut img = quantize(&rgba, palette, &opts);
+                        center_offset(&mut img);
+                        frames.push(img);
                     }
-                    None => center_offset(&mut img),
+                    frames
                 }
-                directions[i / per].push(img);
-            }
-            Sprite { directions }
+            };
+            lay_out(frames, dirs, per)?
         }
         Layout::Sheet => {
             let [file] = settings.files.as_slice() else {
@@ -226,6 +225,28 @@ pub fn build_import(
         sprite = split_large(sprite)?;
     }
     Ok((sprite, meta))
+}
+
+/// The one folder all `files` are in.
+fn same_folder(files: &[PathBuf]) -> Option<&Path> {
+    let dir = files.first()?.parent()?;
+    files.iter().all(|f| f.parent() == Some(dir)).then_some(dir)
+}
+
+/// `frames` as `dirs` directions of `per` frames, in order.
+fn lay_out(frames: Vec<IndexedImage>, dirs: usize, per: usize) -> Result<Sprite, String> {
+    if frames.len() != dirs * per {
+        return Err(format!(
+            "{dirs} directions x {per} frames needs {} images, {} were read",
+            dirs * per,
+            frames.len()
+        ));
+    }
+    let mut directions: Vec<Vec<IndexedImage>> = vec![Vec::with_capacity(per); dirs];
+    for (i, img) in frames.into_iter().enumerate() {
+        directions[i / per.max(1)].push(img);
+    }
+    Ok(Sprite { directions })
 }
 
 fn finish_import(
