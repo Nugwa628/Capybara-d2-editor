@@ -433,7 +433,7 @@ pub fn index_histogram(kind: SpriteKind, bytes: &[u8]) -> Result<[u64; 256]>;
 ///   decoded frames equal the mapped input frames; the byte layout may
 ///   change. A mapping never adds colours to a 4x4 cell, so the cell limit
 ///   still holds.
-/// Files `parse` rejects (including the six DT1 4.1 files) are errors.
+/// Files `parse` rejects (including the DT1 4.1 files (six per install)) are errors.
 pub fn remap_indices(kind: SpriteKind, bytes: &[u8], table: &IndexTable) -> Result<Vec<u8>>;
 ```
 As implemented:
