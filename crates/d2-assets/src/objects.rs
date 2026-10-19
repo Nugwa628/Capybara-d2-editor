@@ -19,16 +19,19 @@
 //! DS1Edit `obj.txt` (MIT, credited in `NOTICE`), which is embedded here. Its
 //! rows also carry the sprite tokens the editor draws.
 //!
-//! The `MonPreset`, `MonStats` and `MonStats2` tables are read from `.txt`
-//! only; the `.bin` forms have no decoder yet.
-// TODO(excel-mon): decode monpreset/monstats/monstats2 .bin in d2-formats and
-// load them here through `tables::load_excel`; until then profiles that ship
-// only `.bin` (Median XL) resolve type 1 from the embedded `obj.txt`.
+//! `MonPreset`, `MonStats`, `MonStats2` and `SuperUniques` are loaded through
+//! [`crate::tables::load_excel`], so 1.13c profiles (Median XL) read the
+//! compiled `.bin`. That form has no names: every link between the tables is a
+//! row number (`MonPreset` -> `PlaceKind` + `PlaceIndex`, `SuperUniques` ->
+//! `ClassRow`, `MonStats` -> `MonStatsExRow`) and `NameStr` is a string id, so
+//! the catalog follows rows where the `.txt` form is followed by `Id` text. The
+//! chain is the same either way: MonPreset, then MonStats or SuperUniques (which
+//! points at a MonStats row), then MonStats2.
 
 use std::collections::HashMap;
 
 use d2_formats::ds1::Object;
-use d2_formats::excel::ExcelTableKind;
+use d2_formats::excel::{ExcelTableKind, monplace_code};
 use d2_formats::tbl::StringTable;
 use d2_formats::txt::{Row, TxtTable};
 
@@ -41,10 +44,13 @@ use crate::tables::load_excel;
 /// DS1Edit's object table, MIT licensed (see `NOTICE`). Latin-1 text.
 const EMBEDDED_OBJ_TXT: &[u8] = include_bytes!("../../../assets/editor/obj.txt");
 
-const EXCEL_DIR: &str = r"data\global\excel\";
 const LNG_DIR: &str = r"data\local\lng\eng\";
-/// String tables in lookup priority order.
-const STRING_TABLES: [&str; 3] = ["patchstring.tbl", "expansionstring.tbl", "string.tbl"];
+/// String tables in lookup priority order, with their compiled-id offsets.
+const STRING_TABLES: [(&str, u32); 3] = [
+    ("patchstring.tbl", 10000),
+    ("expansionstring.tbl", 20000),
+    ("string.tbl", 0),
+];
 
 /// Component codes in COF layer order.
 const PART_CODES: [&str; 16] = [
@@ -181,16 +187,31 @@ struct ObjRow {
     parts: Vec<String>,
 }
 
-/// One `MonStats.txt` row.
-#[derive(Clone, Debug, Default)]
-struct MonRow {
-    id: String,
-    name_key: String,
-    code: String,
-    stats_ex: String,
+/// A display-name reference: the `.txt` key, or the string id the `.bin` keeps.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum NameRef {
+    Key(String),
+    Id(u16),
 }
 
-/// One `MonStats2.txt` row.
+impl Default for NameRef {
+    fn default() -> Self {
+        NameRef::Key(String::new())
+    }
+}
+
+/// One `MonStats` row.
+#[derive(Clone, Debug, Default)]
+struct MonRow {
+    /// The `Id` text; empty when the table came from `.bin`.
+    id: String,
+    name: NameRef,
+    code: String,
+    /// The MonStats2 row (`MonStatsEx`, or the row's own `Id` when blank).
+    stats2: Option<usize>,
+}
+
+/// One `MonStats2` row.
 #[derive(Clone, Debug, Default)]
 struct Mon2Row {
     parts: Vec<String>,
@@ -198,33 +219,39 @@ struct Mon2Row {
     size: (i32, i32),
 }
 
-/// One `SuperUniques.txt` row.
+/// One `SuperUniques` row.
 #[derive(Clone, Debug, Default)]
 struct SuperRow {
-    name_key: String,
-    class: String,
+    name: NameRef,
+    /// The MonStats row of `Class`.
+    class_row: Option<usize>,
 }
 
+/// What a MonPreset row places.
 #[derive(Clone, Debug)]
-struct PresetRow {
-    place: String,
+enum Place {
+    /// A SuperUniques row (whose class is a MonStats row).
+    Super(usize),
+    /// A MonStats row.
+    Stats(usize),
+    /// A MonPlace marker (group, nothing, ...), with its text.
+    Marker(String),
+    /// An index past its table.
+    Missing,
 }
 
-/// `MonPreset`, `MonStats`, `MonStats2` and `SuperUniques` as `.txt`.
+/// `MonPreset`, `MonStats`, `MonStats2` and `SuperUniques`, with every link
+/// between them resolved to row numbers.
 #[derive(Debug, Default)]
 struct MonTables {
     /// All MonPreset rows in file order.
-    preset: Vec<PresetRow>,
+    preset: Vec<Place>,
     /// First flat index of each act's block, and its row count.
     act_base: [usize; ACTS],
     act_len: [usize; ACTS],
     stats: Vec<MonRow>,
-    /// Lower-cased `Id` to row (first match wins).
-    stats_by_id: HashMap<String, usize>,
-    /// Lower-cased `Id` to MonStats2 row data.
-    stats2: HashMap<String, Mon2Row>,
-    /// Lower-cased `Superunique` name to its row.
-    supers: HashMap<String, SuperRow>,
+    stats2: Vec<Mon2Row>,
+    supers: Vec<SuperRow>,
 }
 
 /// One row of the embedded DS1Edit `obj.txt`.
@@ -344,6 +371,25 @@ fn parse_objpreset(table: &TxtTable) -> Vec<u32> {
     out
 }
 
+/// The game skips every row whose first cell is `Expansion`, whatever its other
+/// cells hold (`monstats2.txt` has an `EOL` cell on it), and row numbers count
+/// the other rows only.
+fn mon_data_rows(table: &TxtTable) -> impl Iterator<Item = Row<'_>> {
+    table.rows().filter(|row| {
+        !row.cells()
+            .first()
+            .is_some_and(|c| c.trim().eq_ignore_ascii_case("expansion"))
+    })
+}
+
+/// A compiled row reference column: `-1` (blank) and out-of-range values are
+/// "no row".
+fn row_ref(row: Row<'_>, column: &str, limit: usize) -> Option<usize> {
+    row.get_i64(column)
+        .and_then(|v| usize::try_from(v).ok())
+        .filter(|v| *v < limit)
+}
+
 fn parse_mon_tables(
     preset: &TxtTable,
     stats: &TxtTable,
@@ -351,6 +397,84 @@ fn parse_mon_tables(
     supers: Option<&TxtTable>,
 ) -> MonTables {
     let mut tables = MonTables::default();
+
+    // MonStats2: every compiled row; the `.txt` form is also indexed by `Id`.
+    let mut stats2_by_id: HashMap<String, usize> = HashMap::new();
+    if let Some(stats2) = stats2 {
+        for row in mon_data_rows(stats2) {
+            stats2_by_id
+                .entry(trimmed(row, "Id").to_ascii_lowercase())
+                .or_insert(tables.stats2.len());
+            tables.stats2.push(Mon2Row {
+                parts: flagged_parts(row),
+                base_weapon: trimmed(row, "BaseW").to_owned(),
+                size: (to_i32(num(row, "SizeX")), to_i32(num(row, "SizeY"))),
+            });
+        }
+    }
+
+    // MonStats: `.bin` rows carry a string id, row numbers and no `Id`.
+    let stats_is_bin = stats.column("NameStrId").is_some();
+    let mut stats_by_id: HashMap<String, usize> = HashMap::new();
+    for row in mon_data_rows(stats) {
+        let (id, name, ex) = if stats_is_bin {
+            let name = NameRef::Id(u16::try_from(num(row, "NameStrId")).unwrap_or(0));
+            (
+                String::new(),
+                name,
+                row_ref(row, "MonStatsExRow", tables.stats2.len()),
+            )
+        } else {
+            let id = trimmed(row, "Id").to_owned();
+            stats_by_id
+                .entry(id.to_ascii_lowercase())
+                .or_insert(tables.stats.len());
+            let ex_text = match trimmed(row, "MonStatsEx") {
+                "" => id.as_str(),
+                text => text,
+            };
+            let ex = stats2_by_id.get(&ex_text.to_ascii_lowercase()).copied();
+            (
+                id.clone(),
+                NameRef::Key(trimmed(row, "NameStr").to_owned()),
+                ex,
+            )
+        };
+        tables.stats.push(MonRow {
+            id,
+            name,
+            code: trimmed(row, "Code").to_owned(),
+            stats2: ex,
+        });
+    }
+
+    // SuperUniques: `Class` is a MonStats row.
+    let mut supers_by_name: HashMap<String, usize> = HashMap::new();
+    if let Some(supers) = supers {
+        let is_bin = supers.column("ClassRow").is_some();
+        for row in mon_data_rows(supers) {
+            let (name, class_row) = if is_bin {
+                (
+                    NameRef::Id(u16::try_from(num(row, "NameStrId")).unwrap_or(0)),
+                    row_ref(row, "ClassRow", tables.stats.len()),
+                )
+            } else {
+                supers_by_name
+                    .entry(trimmed(row, "Superunique").to_ascii_lowercase())
+                    .or_insert(tables.supers.len());
+                (
+                    NameRef::Key(trimmed(row, "Name").to_owned()),
+                    stats_by_id
+                        .get(&trimmed(row, "Class").to_ascii_lowercase())
+                        .copied(),
+                )
+            };
+            tables.supers.push(SuperRow { name, class_row });
+        }
+    }
+
+    // MonPreset: acts are blocks of consecutive rows; `Place` names a row.
+    let preset_is_bin = preset.column("PlaceKind").is_some();
     let mut act_seen = [false; ACTS];
     for (flat, row) in preset.rows().enumerate() {
         let act = row
@@ -370,45 +494,37 @@ fn parse_mon_tables(
                 *len += 1;
             }
         }
-        tables.preset.push(PresetRow {
-            place: trimmed(row, "Place").to_owned(),
-        });
-    }
-    for row in data_rows(stats) {
-        let id = trimmed(row, "Id").to_owned();
-        tables
-            .stats_by_id
-            .entry(id.to_ascii_lowercase())
-            .or_insert(tables.stats.len());
-        tables.stats.push(MonRow {
-            id,
-            name_key: trimmed(row, "NameStr").to_owned(),
-            code: trimmed(row, "Code").to_owned(),
-            stats_ex: trimmed(row, "MonStatsEx").to_owned(),
-        });
-    }
-    if let Some(stats2) = stats2 {
-        for row in data_rows(stats2) {
-            tables
-                .stats2
-                .entry(trimmed(row, "Id").to_ascii_lowercase())
-                .or_insert_with(|| Mon2Row {
-                    parts: flagged_parts(row),
-                    base_weapon: trimmed(row, "BaseW").to_owned(),
-                    size: (to_i32(num(row, "SizeX")), to_i32(num(row, "SizeY"))),
-                });
-        }
-    }
-    if let Some(supers) = supers {
-        for row in data_rows(supers) {
-            tables
-                .supers
-                .entry(trimmed(row, "Superunique").to_ascii_lowercase())
-                .or_insert_with(|| SuperRow {
-                    name_key: trimmed(row, "Name").to_owned(),
-                    class: trimmed(row, "Class").to_owned(),
-                });
-        }
+        let place = if preset_is_bin {
+            let index = num(row, "PlaceIndex");
+            match num(row, "PlaceKind") {
+                0 => Place::Marker(
+                    usize::try_from(index)
+                        .ok()
+                        .and_then(monplace_code)
+                        .map_or_else(|| format!("place {index}"), str::to_owned),
+                ),
+                1 => row_ref(row, "PlaceIndex", tables.stats.len())
+                    .map_or(Place::Missing, Place::Stats),
+                2 => row_ref(row, "PlaceIndex", tables.supers.len())
+                    .filter(|s| tables.supers.get(*s).is_some_and(|r| r.class_row.is_some()))
+                    .map_or(Place::Missing, Place::Super),
+                _ => Place::Missing,
+            }
+        } else {
+            let text = trimmed(row, "Place");
+            let key = text.to_ascii_lowercase();
+            // Search order: SuperUniques (when its class exists), MonStats, MonPlace.
+            if let Some(&s) = supers_by_name.get(&key)
+                && tables.supers.get(s).is_some_and(|r| r.class_row.is_some())
+            {
+                Place::Super(s)
+            } else if let Some(&row) = stats_by_id.get(&key) {
+                Place::Stats(row)
+            } else {
+                Place::Marker(text.to_owned())
+            }
+        };
+        tables.preset.push(place);
     }
     tables
 }
@@ -493,56 +609,71 @@ fn is_absent(err: &AssetError) -> bool {
     matches!(err, AssetError::Profile { .. })
 }
 
-/// Reads a table that only exists as `.txt` for us. `Ok(None)` when it is not
-/// usable, with the reason pushed to `warnings`.
-fn load_txt_only(
+/// Loads a monster table through `load_excel` (`.bin` first on 1.13c).
+/// `None` when it is missing or unusable, with the reason pushed to `warnings`.
+fn load_mon_table(
     overlay: &Overlay,
-    stem: &str,
+    kind: ExcelTableKind,
     version: GameVersion,
     warnings: &mut Vec<String>,
 ) -> Option<TxtTable> {
-    let txt_path = GamePath::new(&format!("{EXCEL_DIR}{stem}.txt"));
-    let bin_path = GamePath::new(&format!("{EXCEL_DIR}{stem}.bin"));
-    let has_txt = overlay.resolve(&txt_path).is_some();
-    let has_bin = version.excel().is_some() && overlay.resolve(&bin_path).is_some();
-    // Same preference as `tables::load_excel`: 1.13c reads `.bin` first.
-    let use_txt = match version {
-        GameVersion::V113c => has_txt && !has_bin,
-        GameVersion::V114d | GameVersion::D2r => has_txt,
-    };
-    if use_txt {
-        return match overlay.read_bytes(&txt_path) {
-            Ok(Some(bytes)) => match TxtTable::parse(&bytes) {
-                Ok(table) => Some(table),
-                Err(err) => {
-                    warnings.push(format!("{stem}.txt cannot be parsed: {err}"));
-                    None
-                }
-            },
-            Ok(None) => None,
-            Err(err) => {
-                warnings.push(format!("{stem}.txt cannot be read: {err}"));
-                None
-            }
-        };
+    match load_excel(overlay, kind, version) {
+        Ok(table) => Some(table),
+        Err(err) if is_absent(&err) => {
+            warnings.push(format!("{} is not in the overlay", kind.file_stem()));
+            None
+        }
+        Err(err) => {
+            warnings.push(format!("{} cannot be loaded: {err}", kind.file_stem()));
+            None
+        }
     }
-    if has_bin {
-        warnings.push(format!(
-            "{stem}.bin cannot be decoded yet (TODO(excel-mon))"
-        ));
-    } else {
-        warnings.push(format!("{stem} is not in the overlay"));
-    }
-    None
 }
 
-fn load_strings(overlay: &Overlay, warnings: &mut Vec<String>) -> Vec<StringTable> {
-    let mut out = Vec::new();
-    for name in STRING_TABLES {
+/// The string tables in lookup priority order, with the id offset the compiled
+/// excel tables use for each (`string.tbl` 0, `patchstring.tbl` 10000,
+/// `expansionstring.tbl` 20000).
+#[derive(Debug, Default)]
+struct Strings {
+    tables: Vec<(StringTable, u32)>,
+}
+
+impl Strings {
+    /// The text for `key` from the first table that has it.
+    fn get(&self, key: &str) -> Option<&str> {
+        self.tables.iter().find_map(|(table, _)| table.get(key))
+    }
+
+    /// The key a compiled string id stands for.
+    fn key_for_id(&self, id: u16) -> Option<&str> {
+        let id = u32::from(id);
+        let base = if id >= 20000 {
+            20000
+        } else if id >= 10000 {
+            10000
+        } else {
+            0
+        };
+        let local = u16::try_from(id - base).ok()?;
+        self.tables
+            .iter()
+            .find(|(_, table_base)| *table_base == base)
+            .and_then(|(table, _)| table.entry_by_id(local))
+            .map(|(key, _)| key)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.tables.is_empty()
+    }
+}
+
+fn load_strings(overlay: &Overlay, warnings: &mut Vec<String>) -> Strings {
+    let mut out = Strings::default();
+    for (name, base) in STRING_TABLES {
         let path = GamePath::new(&format!("{LNG_DIR}{name}"));
         match overlay.read_bytes(&path) {
             Ok(Some(bytes)) => match StringTable::parse(&bytes) {
-                Ok(table) => out.push(table),
+                Ok(table) => out.tables.push((table, base)),
                 Err(err) => warnings.push(format!("{name} cannot be parsed: {err}")),
             },
             Ok(None) => {}
@@ -563,12 +694,14 @@ enum MonTarget {
     /// A MonStats row.
     Stats {
         row: usize,
-        /// Set when the row came through a SuperUniques entry: its name key.
-        super_name: Option<String>,
+        /// Set when the row came through a SuperUniques entry: its name.
+        super_name: Option<NameRef>,
     },
     /// A MonPreset `Place` that is neither a superunique nor a monster
     /// (a MonPlace group marker), with the text of the place.
     Place(String),
+    /// A reference past the end of its table.
+    Missing,
 }
 
 /// Resolves DS1 objects against the loaded game tables.
@@ -578,13 +711,14 @@ pub struct ObjectCatalog {
     objpreset: Option<Vec<u32>>,
     mon: Option<MonTables>,
     edit: EditTable,
-    strings: Vec<StringTable>,
+    strings: Strings,
 }
 
 impl ObjectCatalog {
     /// Loads Objects, ObjPreset (when the profile has it; else the embedded
     /// MIT `obj.txt` from DS1Edit, credited in NOTICE), MonPreset/MonStats/
-    /// MonStats2 when available as .txt or decodable .bin, and string tables.
+    /// MonStats2/SuperUniques (`.bin` or `.txt`, as `load_excel` prefers for the
+    /// version), and string tables.
     /// Missing tables become warnings, never errors.
     pub fn build(overlay: &Overlay, version: GameVersion) -> Result<(ObjectCatalog, Vec<String>)> {
         let mut warnings = Vec::new();
@@ -610,10 +744,15 @@ impl ObjectCatalog {
                 .push("no ObjPreset table; type 2 ids use the embedded DS1Edit obj.txt".to_owned());
         }
 
-        let preset = load_txt_only(overlay, "monpreset", version, &mut warnings);
-        let stats = load_txt_only(overlay, "monstats", version, &mut warnings);
-        let stats2 = load_txt_only(overlay, "monstats2", version, &mut warnings);
-        let supers = load_txt_only(overlay, "superuniques", version, &mut warnings);
+        let preset = load_mon_table(overlay, ExcelTableKind::MonPreset, version, &mut warnings);
+        let stats = load_mon_table(overlay, ExcelTableKind::MonStats, version, &mut warnings);
+        let stats2 = load_mon_table(overlay, ExcelTableKind::MonStats2, version, &mut warnings);
+        let supers = load_mon_table(
+            overlay,
+            ExcelTableKind::SuperUniques,
+            version,
+            &mut warnings,
+        );
         let mon = match (preset, stats) {
             (Some(preset), Some(stats)) => Some(parse_mon_tables(
                 &preset,
@@ -730,8 +869,7 @@ impl ObjectCatalog {
             return None;
         }
         self.strings
-            .iter()
-            .find_map(|table| table.get(key))
+            .get(key)
             .map(str::trim)
             .filter(|t| !t.is_empty())
     }
@@ -749,6 +887,17 @@ impl ObjectCatalog {
             key.to_owned()
         } else {
             fallback.to_owned()
+        }
+    }
+
+    /// The display name for a `NameStr`/`Name` reference.
+    fn name_of(&self, name: &NameRef, fallback: &str) -> String {
+        match name {
+            NameRef::Key(key) => self.pick_name(key, fallback),
+            NameRef::Id(id) => match self.strings.key_for_id(*id) {
+                Some(key) => self.pick_name(key, fallback),
+                None => fallback.to_owned(),
+            },
         }
     }
 
@@ -922,7 +1071,7 @@ impl ObjectCatalog {
             else {
                 return ObjectInfo::unresolved(1, id);
             };
-            Some(self.resolve_place(mon, &row.place))
+            Some(Self::resolve_place(mon, row))
         } else {
             match usize::try_from(id) {
                 Ok(row) if row < mon.stats.len() => Some(MonTarget::Stats {
@@ -946,28 +1095,31 @@ impl ObjectCatalog {
                 self.monster_info(mon, id, row, super_name)
             }
             Some(MonTarget::Place(place)) => self.place_info(act, id, &place),
-            None => ObjectInfo::unresolved(1, id),
+            Some(MonTarget::Missing) | None => ObjectInfo::unresolved(1, id),
         }
     }
 
-    /// MonPreset `Place` search order: SuperUniques, MonStats, then MonPlace.
-    fn resolve_place(&self, mon: &MonTables, place: &str) -> MonTarget {
-        let key = place.to_ascii_lowercase();
-        if let Some(sup) = mon.supers.get(&key)
-            && let Some(&row) = mon.stats_by_id.get(&sup.class.to_ascii_lowercase())
-        {
-            return MonTarget::Stats {
-                row,
-                super_name: Some(sup.name_key.clone()),
-            };
-        }
-        if let Some(&row) = mon.stats_by_id.get(&key) {
-            return MonTarget::Stats {
-                row,
+    /// What a MonPreset row places (its `Place` was resolved at load time in the
+    /// game's search order: SuperUniques, MonStats, then MonPlace).
+    fn resolve_place(mon: &MonTables, place: &Place) -> MonTarget {
+        match place {
+            Place::Super(index) => {
+                let sup = mon.supers.get(*index);
+                match sup.and_then(|s| s.class_row.map(|row| (row, s.name.clone()))) {
+                    Some((row, name)) => MonTarget::Stats {
+                        row,
+                        super_name: Some(name),
+                    },
+                    None => MonTarget::Missing,
+                }
+            }
+            Place::Stats(row) => MonTarget::Stats {
+                row: *row,
                 super_name: None,
-            };
+            },
+            Place::Marker(text) => MonTarget::Place(text.clone()),
+            Place::Missing => MonTarget::Missing,
         }
-        MonTarget::Place(place.to_owned())
     }
 
     fn monster_info(
@@ -975,25 +1127,25 @@ impl ObjectCatalog {
         mon: &MonTables,
         id: i32,
         row: usize,
-        super_name: Option<String>,
+        super_name: Option<NameRef>,
     ) -> ObjectInfo {
         let mut info = ObjectInfo::blank(1, id, SOURCE_MONPRESET);
         let Some(stats) = mon.stats.get(row) else {
             return ObjectInfo::unresolved(1, id);
         };
         info.row = u32::try_from(row).ok();
-        let key = super_name.as_deref().unwrap_or(&stats.name_key);
-        info.name = self.pick_name(key, &stats.id);
+        // The compiled table has no `Id` text to fall back on.
+        let fallback = if stats.id.is_empty() {
+            format!("monster {row}")
+        } else {
+            stats.id.clone()
+        };
+        info.name = self.name_of(super_name.as_ref().unwrap_or(&stats.name), &fallback);
         if !stats.code.is_empty() {
             info.token = Some(stats.code.clone());
             info.sprite_base = Some(SpriteBase::Monsters);
         }
-        let ex = if stats.stats_ex.is_empty() {
-            &stats.id
-        } else {
-            &stats.stats_ex
-        };
-        if let Some(stats2) = mon.stats2.get(&ex.to_ascii_lowercase()) {
+        if let Some(stats2) = stats.stats2.and_then(|ex| mon.stats2.get(ex)) {
             info.parts = stats2.parts.clone();
             info.size = stats2.size;
             if !stats2.base_weapon.is_empty() {

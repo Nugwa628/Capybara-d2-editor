@@ -41,7 +41,8 @@ pub struct ObjectCatalog { /* tables */ }
 impl ObjectCatalog {
     /// Loads Objects, ObjPreset (when the profile has it; else the embedded
     /// MIT `obj.txt` from DS1Edit, credited in NOTICE), MonPreset/MonStats/
-    /// MonStats2 when available as .txt or decodable .bin, and string tables.
+    /// MonStats2/SuperUniques through `tables::load_excel` (`.bin` first on
+    /// 1.13c), and string tables.
     /// Missing tables become warnings, never errors.
     pub fn build(overlay: &Overlay, version: GameVersion) -> Result<(ObjectCatalog, Vec<String>)>;
     /// `act` is the DS1's effective act (0..=4); `ds1_version` selects the
@@ -54,6 +55,9 @@ impl ObjectCatalog {
 // (297→382, 366→404, 514→461, 537/538/539→476/475/474), so a type-1 DS1
 // object can resolve with `class: Object`. Vanilla rows 580-582 referenced by
 // the act×150 table do not exist in the 573-row Objects.txt (unresolved, as in
-// the game). Median XL type 1 needs monpreset/monstats/monstats2 `.bin`
-// decoders (TODO(excel-mon)).
+// the game). Type 1 follows MonPreset -> MonStats (or SuperUniques -> its
+// MonStats class) -> MonStats2 for both forms; the compiled `.bin` form has no
+// Id text, so a monster whose NameStr is blank/"dummy" is named "monster <row>"
+// (Median XL: 89.6% of its type 1 objects have a token; the rest are MonPlace
+// markers, as in vanilla).
 ```

@@ -195,7 +195,7 @@ impl<'a> Row<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ExcelVersion { V113c, V114d }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ExcelTableKind { LvlTypes, LvlPrest, LvlWarp, Objects, ObjPreset, Levels }
+pub enum ExcelTableKind { LvlTypes, LvlPrest, LvlWarp, Objects, ObjPreset, Levels, MonPreset, MonStats, MonStats2, SuperUniques }
 impl ExcelTableKind {
     pub fn file_stem(self) -> &'static str;       // "lvltypes", ...
     pub fn all() -> &'static [ExcelTableKind];
@@ -216,6 +216,41 @@ pub fn detect_version(kind: ExcelTableKind, bytes: &[u8]) -> Option<ExcelVersion
 // LvlWarp), Beta (LvlTypes, LvlPrest, LvlWarp, Levels), Objects
 // "description - not loaded", Flicker, ShrineFunction. ObjPreset (Median XL
 // only) decodes to Act, Id, ObjectsId: table[act*150 + id].
+//
+// Monster tables (record sizes 4, 0x1A8, 0x134, 0x34; vanilla 229/734/609/66
+// rows, Median XL 350/3901/1634/90). The compiler stores NO names: every text
+// that names a row of another table became that row's number, and NameStr /
+// Name became a .tbl string id. So Id (MonStats, MonStats2), Superunique and
+// Place are not decoded; the links decode under `...Row` / `...Id` names
+// instead (-1 = blank). Every column below was compared with the vanilla .txt
+// on every row (a test repeats it when the private corpus is present).
+//  * MonPreset: Act, PlaceKind (0 MonPlace row, 1 MonStats row, 2 SuperUniques
+//    row), PlaceIndex. `monplace_code(index)` names the 37 MonPlace rows
+//    (monplace.bin holds only 0..37; the names exist only in monplace.txt).
+//  * MonStats: hcIdx (= record index; vanilla's stored word is stale for the
+//    last 11 rows), BaseIdRow, NextInClassRow, spawnRow, minion1Row, minion2Row
+//    (MonStats rows), MonStatsExRow (a MONSTATS2 row), NameStrId, Code (trimmed
+//    to the .txt value), the 29 flags isSpawn..rangedtype, TransLvl, Align,
+//    threat, spawnx, spawny, PartyMin/Max, Rarity, MinGrp/MaxGrp,
+//    sparsePopulate, Level, Level(N), Level(H), TCQuestId, TCQuestCP.
+//  * MonStats2 (row = MonStatsExRow; offset 0 is the record index): SizeX,
+//    SizeY, spawnCol, Height, OverlayHeight, pixHeight, MeleeRng, BaseW,
+//    HitClass, HD TR LG RA LA RH LH SH S1..S8, TotalPieces, mDT..mRN, dDT..dRN,
+//    A2mv, S1mv, S2mv, noGfxHitTest..unflatDead, htTop/Left/Width/Height,
+//    localBlood, Bleed, Light, light-r/g/b, Utrans, Utrans(N), Utrans(H),
+//    InfernoLen/Anim/Rollback.
+//  * SuperUniques: NameStrId, ClassRow (MonStats row), hcIdx, Mod1..Mod3,
+//    MinGrp, MaxGrp, AutoPos, EClass, Stacks, Replaceable, Utrans, Utrans(N),
+//    Utrans(H).
+// NameStrId: < 10000 string.tbl, 10000.. patchstring.tbl (id - 10000),
+// 20000.. expansionstring.tbl (id - 20000); a blank/unknown key is the id of
+// "dummy". Resolve with StringTable::entry_by_id. Not decoded (offsets not
+// established): the many MonStats stat columns beyond the list above (HP,
+// resistances, damage, treasure classes, AI params), the text-valued columns
+// (MonProp, AI, sounds, skills, missiles, TreasureClass*), MonStats2 variant
+// lists (HDv..S8v). Unverified order: SizeX/SizeY and the three SuperUniques
+// Utrans bytes are equal in every vanilla row, so their order is the .txt's.
+pub fn monplace_code(index: usize) -> Option<&'static str>;
 
 // ───────────── tables.rs ─────────────
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -270,6 +305,10 @@ impl StringTable {
     pub fn parse(bytes: &[u8]) -> Result<StringTable>;
     pub fn get(&self, key: &str) -> Option<&str>;
     pub fn entries(&self) -> &[(String, String)];
+    /// (key, text) of the node whose string id is `id` (the number compiled
+    /// excel tables store; see ExcelTableKind::MonStats for the 10000/20000 bases).
+    pub fn entry_by_id(&self, id: u16) -> Option<(&str, &str)>;
+    pub fn entry_ids(&self) -> &[u16]; // parallel to entries()
 }
 
 // ───────────── palette.rs (wave 2) ─────────────
