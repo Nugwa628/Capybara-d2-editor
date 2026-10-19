@@ -18,7 +18,8 @@ CapybaraMapEditor.exe <verb> [options]
 | [`help`](#help) | Show help, for all verbs or one |
 
 All verbs only read game data. They write only the `--out` file you name and
-files in `capybara\cache\`.
+files in `capybara\cache\`. They read the editor's `capybara\config.toml`
+(for map overrides) but never change it.
 
 ## General rules
 
@@ -26,8 +27,10 @@ files in `capybara\cache\`.
 - Every flag takes a value, as `--flag value` or `--flag=value`. A value
   can't start with `--`.
 - Giving the same flag twice, or an unknown flag, is a usage error.
-- There is no `--help` flag. Use `help` or `help <verb>`. (`--help` isn't a
-  verb, so it starts the editor.)
+- `--help`, `-h` and `/?` as the first argument work like `help`: they
+  print the help and exit with 0 instead of starting the editor.
+  `--help render` shows the help of one verb. After a verb they are ordinary
+  flags, so `render --help` is a usage error that prints the verb's usage.
 - Output goes to stdout. Errors go to stderr as `error: ...`, and warnings
   as `warning: ...`.
 
@@ -49,9 +52,13 @@ saved in the editor are used here too.
 
 | Code | Meaning |
 |---|---|
-| 0 | Success |
-| 1 | Runtime error: a file can't be read or written, a profile won't open, the render failed |
-| 2 | Usage error: a missing or bad argument. The verb's usage is printed after the error. |
+| 0 | Success, including a render with missing tiles or objects (they are warnings) |
+| 1 | Runtime error: a file can't be read or written, a profile won't open, a map's tile set can't be found, the render failed |
+| 2 | Usage error: a missing, unknown or repeated flag, or a bad value. The verb's usage is printed after the error. |
+
+Code 2 means the command line itself is wrong. Anything that depends on the
+files, such as a `.ds1` outside the profile whose tile set can't be found
+without `--lvltype`, is a runtime error with code 1.
 
 ### Running from cmd or PowerShell
 
@@ -84,11 +91,13 @@ and don't have this quirk.
 
 ## render
 
-Render one map to a PNG, the same way the editor draws its terrain.
+Render one map to a PNG, terrain plus objects and monsters, with the same
+rendering library as the editor.
 
 ```
 render <map> --profile <id|path.toml> [--lvltype N [--def N]] [--zoom 1:N]
-       [--gamma G] [--layers LIST] [--variant reference|documented] --out <file.png>
+       [--gamma G] [--layers LIST] [--variant reference|documented]
+       [--object-frame N] --out <file.png>
 ```
 
 `<map>` is either:
@@ -103,20 +112,27 @@ render <map> --profile <id|path.toml> [--lvltype N [--def N]] [--zoom 1:N]
 |---|---|---|
 | `--profile` | required | Profile id or TOML path. |
 | `--out` | required | PNG file to write. |
-| `--lvltype N` | best match | Use LvlTypes id N instead of the map catalog's choice. A `.ds1` that isn't part of the profile needs it. |
+| `--lvltype N` | saved override, else best match | Use LvlTypes id N instead of the editor's override or the map catalog's choice. A `.ds1` that isn't part of the profile needs it, unless an override exists for its game path. |
 | `--def N` | none | LvlPrest Def to use with `--lvltype` (DS1Edit's command-line form). Needs `--lvltype`. |
 | `--zoom 1:N` | `1:1` | Zoom divisor N from 1 to 16. `1:4` and `4` mean the same. |
 | `--gamma G` | `1.30` | Palette gamma, above 0 and up to 10. 1.30 is DS1Edit's default. |
-| `--layers LIST` | everything except `special` | Comma-separated: `floors`, `walls`, `shadow`, `roofs`, `special`, `objects`, or `all` (everything including `special`). |
+| `--layers LIST` | everything except `special` | Comma-separated: `floors`, `walls`, `shadow`, `roofs`, `special`, `objects`, or `all` (everything including `special`). A list without `objects` renders the terrain only. |
 | `--variant` | `reference` | How to choose among tile variants: `reference` matches DS1Edit; `documented` takes the first tile with the highest rarity. |
+| `--object-frame N` | `0` | Animation frame of every object and monster sprite, 0 to 255. Each sprite wraps N at its own frame count, so a 10-frame torch shows frame `N mod 10`. |
 
 Without `--lvltype`, the tile set is chosen the same way the editor does (see
-[How the tile set and palette are chosen](user-guide.md#how-the-tile-set-and-palette-are-chosen)).
-Overrides you set in the editor are **not** used here; pass `--lvltype`
-instead.
+[How the tile set and palette are chosen](user-guide.md#how-the-tile-set-and-palette-are-chosen)),
+including the LvlType/Def **overrides** you set in the editor for this
+profile. They are read from `capybara\config.toml` (its `[[overrides]]`
+entries whose `profile` is this profile's id). A missing file means no
+overrides. If the file can't be read or isn't valid TOML, or an entry is
+malformed, a warning is printed and the file (or that entry) is ignored.
+An explicit `--lvltype` always wins over an override.
 
-The render is terrain only. `objects` is accepted in `--layers`, but object
-sprites aren't drawn yet (**planned**).
+Objects and monsters are drawn while the `objects` layer is on (the
+default), in DS1Edit's draw order, with their palette shifts and default
+facing. DS1Edit shows animated sprites at a random frame; the CLI shows
+frame `--object-frame` for all of them.
 
 ### Output
 
@@ -129,16 +145,29 @@ map <map>: source=<Source> lvltype=<N> def=<N> act=<N> palette=act<N> dt1s=<N> c
 The last line reports the render:
 
 ```
-rendered 1:<N> gamma <G>: <W>x<H> px, origin <X>,<Y>, missing tiles: <N>, wrote <file>
+rendered 1:<N> gamma <G>: <W>x<H> px, origin <X>,<Y>, missing tiles: <N>, objects: <D> drawn, <M> missing, wrote <file>
 ```
 
-Missing tiles don't make the command fail. It still exits with 0, and prints
-a warning listing the most common missing tiles as
-`<layer>:o<orientation>/m<main>/s<sub> x<count>`. Missing DT1 files are
-warned about too.
+When `--layers` leaves out `objects`, the objects part reads `objects: off`.
 
-If the map isn't part of the profile and its tile set can't be found, the
-command stops with exit code 2 and asks for `--lvltype`.
+Missing tiles and missing objects don't make the command fail. It still
+exits with 0, and prints warnings:
+
+- the most common missing tiles, as
+  `<layer>:o<orientation>/m<main>/s<sub> x<count>`;
+- the objects that draw nothing, as `type <T> id <I> (<reason>) x<count>`.
+  The reasons are `unresolved`, `no sprite token`, `COF not found: <path>`,
+  `COF unusable: <path>` and `no component sprite found for <path>`;
+- objects placed outside the map's cells. They are skipped as in DS1Edit
+  and count as neither drawn nor missing.
+
+Missing DT1 files and the object tables' warnings are printed too. For
+example, vanilla has no ObjPreset table, so DS1Edit's `obj.txt` is used and
+a warning says so.
+
+If the map isn't part of the profile and its tile set can't be found (no
+`--lvltype` and no override), the command stops with exit code 1 and asks
+for `--lvltype`.
 
 ### Examples
 
@@ -148,8 +177,14 @@ Render a vanilla town map at 1:2:
 CapybaraMapEditor.exe render data\global\tiles\act1\town\towne1.ds1 --profile vanilla --zoom 1:2 --out towne1.png
 ```
 
+Render a map with every animated object at its third frame:
+
+```
+CapybaraMapEditor.exe render data\global\tiles\act2\town\lutw.ds1 --profile vanilla --zoom 1:4 --object-frame 2 --out lutw.png
+```
+
 Render a map file from disk with an explicit LvlType and Def, floors and
-walls only:
+walls only (no objects):
 
 ```
 CapybaraMapEditor.exe render C:\work\mymap.ds1 --profile mxl --lvltype 2 --def 40 --layers floors,walls --out mymap.png
@@ -202,10 +237,11 @@ maps list --profile <id|path.toml> [--filter S]
 ```
 
 Each line has a game path, a tab, and the map catalog source of that map's
-LvlType: `LvlPrest`, `PathGuess`, `TileCoverage` or `Ds1Header` (see
-[the user guide](user-guide.md#how-the-tile-set-and-palette-are-chosen) for
-what each means). The overrides you set in the editor aren't read here, so
-`Override` doesn't appear. `--filter` keeps paths that contain `S`, ignoring
+LvlType: `Override`, `LvlPrest`, `PathGuess`, `TileCoverage` or `Ds1Header`
+(see [the user guide](user-guide.md#how-the-tile-set-and-palette-are-chosen)
+for what each means). `Override` marks a map whose LvlType you set in the
+editor. The overrides are read from `capybara\config.toml`, as for
+[`render`](#render). `--filter` keeps paths that contain `S`, ignoring
 case. If nothing matches, nothing is printed.
 
 The list includes maps in your saves folder. The first run for a profile
@@ -233,10 +269,10 @@ Each line is the id, the game version and the name, separated by tabs, for
 example:
 
 ```
-vanilla	V114d	Diablo II 1.14d
+vanilla	1.14d	Diablo II 1.14d
 ```
 
-The version is printed as `V113c`, `V114d` or `D2r`. With no profiles it
+The version is printed as in the profile file: `1.13c`, `1.14d` or `d2r`. With no profiles it
 prints `no profiles in <folder>`. A profile file that can't be read is an
 error (exit code 1).
 
@@ -246,8 +282,12 @@ error (exit code 1).
 
 ```
 help [verb]
+--help [verb]
+-h [verb]
+/? [verb]
 ```
 
 Without a verb, prints an overview of all verbs and the exit codes. With a
 verb (`render`, `index`, `maps`, `profiles` or `help`), prints that verb's
-usage. An unknown verb is a usage error.
+usage. The four spellings are the same command, and exit with 0. An unknown
+verb is a usage error.
