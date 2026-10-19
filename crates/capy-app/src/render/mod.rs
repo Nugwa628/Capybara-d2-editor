@@ -664,10 +664,15 @@ fn drive_builds(
         let Some(wanted) = desired_key(doc, gamma, objects_epoch) else {
             continue; // waiting for the map catalog
         };
-        if dr.built.as_ref() == Some(&wanted)
-            || dr.failed.as_ref() == Some(&wanted)
-            || dr.in_flight.is_some()
-        {
+        if dr.built.as_ref() == Some(&wanted) {
+            // A context refresh that changed nothing (e.g. an override with
+            // the same LvlType) marks the map Loading: it is still drawn.
+            if dr.in_flight.is_none() && state.docs[i].render.state == RenderState::Loading {
+                state.docs[i].render.state = RenderState::Ready;
+            }
+            continue;
+        }
+        if dr.failed.as_ref() == Some(&wanted) || dr.in_flight.is_some() {
             continue;
         }
         let tiles = render

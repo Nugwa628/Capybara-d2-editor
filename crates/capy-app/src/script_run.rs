@@ -434,7 +434,8 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
         | Cmd::ObjectsMode(_)
         | Cmd::PickerSearch(_)
         | Cmd::PickerChoose { .. }
-        | Cmd::ImportIni(_) => Step::Next,
+        | Cmd::ImportIni(_)
+        | Cmd::CenterCell { .. } => Step::Next,
         // Handled by `sprite_step`.
         Cmd::SpritePreview
         | Cmd::Mode(_)
@@ -1105,6 +1106,7 @@ fn objects_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
             | Cmd::PickerSearch(_)
             | Cmd::PickerChoose { .. }
             | Cmd::ImportIni(_)
+            | Cmd::CenterCell { .. }
     );
     if !is_object_cmd {
         return None;
@@ -1254,6 +1256,13 @@ fn objects_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
                     act + 1
                 )),
             }
+        }
+        Cmd::CenterCell { x, y } => {
+            if !state.docs[index].fitted {
+                return Some(Step::Retry); // the first UI pass fits the view
+            }
+            state.jump_to_cell(*x, *y);
+            Ok(())
         }
         Cmd::ImportIni(file) => {
             if matches!(state.catalog, crate::state::CatalogState::Building) {

@@ -26,9 +26,16 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         .id_salt("objects_panel")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            properties(ui, state, index);
-            ui.separator();
-            add_picker(ui, state, index);
+            // While placing, the picker comes first.
+            if state.edit.tool == Tool::Objects && state.objects.mode == ObjectMode::Place {
+                add_picker(ui, state, index);
+                ui.separator();
+                properties(ui, state, index);
+            } else {
+                properties(ui, state, index);
+                ui.separator();
+                add_picker(ui, state, index);
+            }
         });
 }
 

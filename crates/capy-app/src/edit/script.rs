@@ -105,6 +105,7 @@
 //! picker-search torch                   # the Add object picker's search
 //! picker-choose 2 37                    # the picker's entry to place
 //! import-ini C:\ds1edit\assets\act1.ini # File > Import DS1Edit ini mappings
+//! center-cell 30 25                     # centre the view on a cell
 //! ```
 
 use std::path::PathBuf;
@@ -296,6 +297,10 @@ pub enum Cmd {
         id: i32,
     },
     ImportIni(PathBuf),
+    CenterCell {
+        x: u32,
+        y: u32,
+    },
 }
 
 /// The kinds `assert-history` accepts.
@@ -1003,6 +1008,13 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
                 id: parse_i32(args[1], "id")?,
             }
         }
+        "center-cell" => {
+            need(2, "<x> <y>")?;
+            Cmd::CenterCell {
+                x: parse_u32(args[0], "x")?,
+                y: parse_u32(args[1], "y")?,
+            }
+        }
         "import-ini" => {
             if rest.is_empty() {
                 return Err("import-ini: expected <file>".to_owned());
@@ -1475,6 +1487,7 @@ objects-mode path
 picker-search torch 1
 picker-choose 1 12
 import-ini C:\ds1edit\act 1.ini
+center-cell 3 4
 ";
         let lines = parse_script(text).expect("parses");
         let cmds: Vec<&Cmd> = lines.iter().map(|(_, c)| c).collect();
@@ -1537,6 +1550,7 @@ import-ini C:\ds1edit\act 1.ini
             cmds[14],
             &Cmd::ImportIni(PathBuf::from(r"C:\ds1edit\act 1.ini"))
         );
+        assert_eq!(cmds[15], &Cmd::CenterCell { x: 3, y: 4 });
         for bad in [
             "animate maybe",
             "object-frame-tick soon",
