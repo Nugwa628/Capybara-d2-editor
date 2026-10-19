@@ -5,9 +5,9 @@
 //! A layer whose sprite cannot be found or decoded is listed as missing with
 //! the reason; it never fails the whole COF.
 
-use d2_formats::cof::COMPONENT_CODES;
 use capy_sprite::{CofLayerSprite, RgbaFrame, Sprite, SpriteFormat, UnitKind, compose_cof_frame};
 use d2_assets::{GamePath, Overlay};
+use d2_formats::cof::COMPONENT_CODES;
 use d2_formats::cof::Cof;
 use d2_formats::palette::Palette;
 
@@ -125,7 +125,9 @@ pub fn armors(
             let stem = file
                 .strip_suffix(".dcc")
                 .or_else(|| file.strip_suffix(".dc6"))?;
-            let mid = stem.strip_prefix(head.as_str())?.strip_suffix(tail.as_str())?;
+            let mid = stem
+                .strip_prefix(head.as_str())?
+                .strip_suffix(tail.as_str())?;
             (!mid.is_empty() && !mid.contains('\\')).then(|| mid.to_owned())
         })
         .collect();
@@ -196,7 +198,9 @@ impl CofView {
         let mut records = Vec::new();
         for (i, r) in cof.layers.iter().enumerate() {
             if usize::from(r.component) < COMPONENT_CODES.len()
-                && !cof.layers[i + 1..].iter().any(|l| l.component == r.component)
+                && !cof.layers[i + 1..]
+                    .iter()
+                    .any(|l| l.component == r.component)
             {
                 records.push(r.clone());
             }
@@ -293,7 +297,12 @@ impl CofView {
     }
 
     /// Composite of one (file direction, frame) of the visible layers.
-    pub fn compose(&self, dir: usize, frame: usize, palette: &Palette) -> Result<RgbaFrame, String> {
+    pub fn compose(
+        &self,
+        dir: usize,
+        frame: usize,
+        palette: &Palette,
+    ) -> Result<RgbaFrame, String> {
         let (Ok(d), Ok(f)) = (u8::try_from(dir), u8::try_from(frame)) else {
             return Err("direction or frame out of range".to_owned());
         };
@@ -310,7 +319,12 @@ impl CofView {
 }
 
 /// Loads the sprite of one layer: `.dcc` first, then `.dc6`.
-fn resolve_layer(layer: &mut CofLayerView, kind: UnitKind, name: &CofName, overlay: Option<&Overlay>) {
+fn resolve_layer(
+    layer: &mut CofLayerView,
+    kind: UnitKind,
+    name: &CofName,
+    overlay: Option<&Overlay>,
+) {
     layer.sprite = None;
     layer.path = None;
     let candidates = capy_sprite::cof_component_paths(
@@ -358,7 +372,10 @@ mod tests {
     fn cof_paths_split_into_token_mode_class() {
         let c = parse_cof_path("data\\global\\monsters\\zm\\cof\\zmnuhth.cof").expect("parses");
         assert_eq!(c.kind, Some(UnitKind::Monster));
-        assert_eq!((c.token.as_str(), c.mode.as_str(), c.class.as_str()), ("zm", "nu", "hth"));
+        assert_eq!(
+            (c.token.as_str(), c.mode.as_str(), c.class.as_str()),
+            ("zm", "nu", "hth")
+        );
         assert_eq!(c.anim_key(), "zmnuhth");
         assert_eq!(
             c.game_path(UnitKind::Monster).as_str(),
@@ -366,7 +383,14 @@ mod tests {
         );
         let loose = parse_cof_path("C:/mods/AMA1HS.COF").expect("loose");
         assert_eq!(loose.kind, None);
-        assert_eq!((loose.token.as_str(), loose.mode.as_str(), loose.class.as_str()), ("am", "a1", "hs"));
+        assert_eq!(
+            (
+                loose.token.as_str(),
+                loose.mode.as_str(),
+                loose.class.as_str()
+            ),
+            ("am", "a1", "hs")
+        );
         assert!(parse_cof_path("data\\x.dcc").is_none());
         assert!(parse_cof_path("ab.cof").is_none(), "too short");
     }
@@ -389,7 +413,10 @@ mod tests {
         ]);
         assert_eq!(
             variants(&n, UnitKind::Monster, "zm"),
-            vec![("a1".to_owned(), "hth".to_owned()), ("nu".to_owned(), "hth".to_owned())]
+            vec![
+                ("a1".to_owned(), "hth".to_owned()),
+                ("nu".to_owned(), "hth".to_owned())
+            ]
         );
         assert_eq!(
             armors(&n, UnitKind::Monster, "zm", "TR", "nu", "hth"),
@@ -428,6 +455,9 @@ mod tests {
             .compose(0, 0, &super::super::palette::grey_palette())
             .expect("an empty composite");
         assert_eq!((frame.width, frame.height), (0, 0));
-        assert!(view.compose(3, 0, &super::super::palette::grey_palette()).is_err());
+        assert!(
+            view.compose(3, 0, &super::super::palette::grey_palette())
+                .is_err()
+        );
     }
 }

@@ -769,7 +769,10 @@ mode map
                 ..
             }
         ));
-        assert_eq!(cmds[7], &Cmd::SpriteExportFrames(PathBuf::from(r"C:\out dir")));
+        assert_eq!(
+            cmds[7],
+            &Cmd::SpriteExportFrames(PathBuf::from(r"C:\out dir"))
+        );
         assert_eq!(
             cmds[8],
             &Cmd::PaintPencil {

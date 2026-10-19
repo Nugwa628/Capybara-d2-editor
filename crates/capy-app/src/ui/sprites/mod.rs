@@ -81,7 +81,13 @@ pub fn paint_checker(painter: &Painter, rect: Rect, cell: f32) {
 }
 
 /// Uploads straight-alpha RGBA pixels as a nearest-filtered texture.
-pub fn rgba_texture(ctx: &Context, name: &str, w: u32, h: u32, rgba: &[u8]) -> Option<TextureHandle> {
+pub fn rgba_texture(
+    ctx: &Context,
+    name: &str,
+    w: u32,
+    h: u32,
+    rgba: &[u8],
+) -> Option<TextureHandle> {
     let (w, h) = (w as usize, h as usize);
     if w == 0 || h == 0 || rgba.len() < w * h * 4 {
         return None;
@@ -126,10 +132,7 @@ pub fn palette_controls(ui: &mut Ui, state: &mut AppState) {
 
 /// `label` of a colour for tooltips.
 fn swatch_text(index: u8, rgb: [u8; 3]) -> String {
-    format!(
-        "index {index}: #{:02x}{:02x}{:02x}",
-        rgb[0], rgb[1], rgb[2]
-    )
+    format!("index {index}: #{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2])
 }
 
 // ───────────────────────── keyboard ─────────────────────────
@@ -349,7 +352,9 @@ fn discard_prompt(ctx: &Context, state: &mut AppState) {
     egui::Modal::new(Id::new("sprite_discard_modal")).show(ctx, |ui| {
         ui.set_max_width(420.0);
         ui.heading("Discard the unsaved sprite edits?");
-        ui.label("The editor holds changes that were not saved. Opening another sprite replaces them.");
+        ui.label(
+            "The editor holds changes that were not saved. Opening another sprite replaces them.",
+        );
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             if ui.button("Discard and open").clicked() {

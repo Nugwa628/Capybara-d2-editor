@@ -84,7 +84,11 @@ fn playback(ui: &mut Ui, state: &mut AppState) {
         ui.label("Direction");
         let mut dir = v.dir;
         egui::ComboBox::from_id_salt("viewer_dir")
-            .selected_text(if dirs == 0 { "-".to_owned() } else { format!("{dir} / {dirs}") })
+            .selected_text(if dirs == 0 {
+                "-".to_owned()
+            } else {
+                format!("{dir} / {dirs}")
+            })
             .show_ui(ui, |ui| {
                 for d in 0..dirs {
                     ui.selectable_value(&mut dir, d, d.to_string());
@@ -126,14 +130,22 @@ fn cof_panel(ui: &mut Ui, state: &mut AppState) {
     let Some(c) = state.sprites.viewer.cof() else {
         return;
     };
-    let (token, mode, class) = (c.name.token.clone(), c.name.mode.clone(), c.name.class.clone());
+    let (token, mode, class) = (
+        c.name.token.clone(),
+        c.name.mode.clone(),
+        c.name.class.clone(),
+    );
     let variants = c.variants.clone();
     let kind = crate::sprites::cof::folder(c.kind);
     ui.strong(format!("COF {token}{mode}{class}"));
     if let Some(p) = &c.path {
         ui.weak(p.as_str());
     }
-    ui.weak(format!("{kind}\\{token}, {} directions x {} frames", c.directions(), c.frames()));
+    ui.weak(format!(
+        "{kind}\\{token}, {} directions x {} frames",
+        c.directions(),
+        c.frames()
+    ));
     let mut variant = None;
     ui.horizontal(|ui| {
         ui.label("Mode / class");
@@ -169,7 +181,9 @@ fn cof_panel(ui: &mut Ui, state: &mut AppState) {
                             .width(60.0)
                             .show_ui(ui, |ui| {
                                 for a in &l.armors {
-                                    if ui.selectable_label(*a == l.armor, a).clicked() && *a != l.armor {
+                                    if ui.selectable_label(*a == l.armor, a).clicked()
+                                        && *a != l.armor
+                                    {
                                         armors.push((i, a.clone()));
                                     }
                                 }
@@ -300,6 +314,15 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
         state.sprites.viewer.pan = Vec2::ZERO;
     }
     let tex = frame_texture(ui, state);
+    // Fit a freshly opened sprite: the largest whole zoom that leaves room.
+    if state.sprites.viewer.fit
+        && let Some((x0, y0, x1, y1)) = state.sprites.viewer.bounds()
+    {
+        let (bw, bh) = ((x1 - x0).max(1) as f32, (y1 - y0).max(1) as f32);
+        let z = (rect.width() / bw).min(rect.height() / bh) * 0.7;
+        state.sprites.viewer.zoom = (z.floor() as u32).clamp(1, 8);
+        state.sprites.viewer.fit = false;
+    }
     let v = &state.sprites.viewer;
     let z = v.zoom as f32;
     let (bx0, by0, bx1, by1) = v.bounds().unwrap_or((0, 0, 0, 0));
@@ -336,8 +359,14 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
     }
     if v.show_anchor {
         let red = Stroke::new(1.5, Color32::from_rgb(255, 70, 70));
-        painter.line_segment([anchor - Vec2::new(8.0, 0.0), anchor + Vec2::new(8.0, 0.0)], red);
-        painter.line_segment([anchor - Vec2::new(0.0, 8.0), anchor + Vec2::new(0.0, 8.0)], red);
+        painter.line_segment(
+            [anchor - Vec2::new(8.0, 0.0), anchor + Vec2::new(8.0, 0.0)],
+            red,
+        );
+        painter.line_segment(
+            [anchor - Vec2::new(0.0, 8.0), anchor + Vec2::new(0.0, 8.0)],
+            red,
+        );
     }
     let info = match &tex {
         Some(t) => format!(

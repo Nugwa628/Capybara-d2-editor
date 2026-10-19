@@ -39,7 +39,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             return;
         }
         Err(e) => {
-            ui.colored_label(Color32::from_rgb(235, 90, 90), format!("Object tables: {e}"));
+            ui.colored_label(
+                Color32::from_rgb(235, 90, 90),
+                format!("Object tables: {e}"),
+            );
             return;
         }
     };
@@ -78,10 +81,12 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                     .enumerate()
                     .map(|(f, raw)| {
                         let (w, h, rgba, offset) = raw?;
-                        rgba_texture(ui.ctx(), &format!("preview-{f}"), w, h, &rgba).map(|handle| Tex {
-                            handle,
-                            offset,
-                            size: (w, h),
+                        rgba_texture(ui.ctx(), &format!("preview-{f}"), w, h, &rgba).map(|handle| {
+                            Tex {
+                                handle,
+                                offset,
+                                size: (w, h),
+                            }
                         })
                     })
                     .collect(),
@@ -177,11 +182,22 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         if let Some(Some(t)) = built.frames.get(frame) {
             let min = anchor + Vec2::new(t.offset.0 as f32, t.offset.1 as f32) * z;
             let r = Rect::from_min_size(min, Vec2::new(t.size.0 as f32, t.size.1 as f32) * z);
-            painter.image(t.handle.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+            painter.image(
+                t.handle.id(),
+                r,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
         }
         let red = Stroke::new(1.0, Color32::from_rgb(255, 70, 70));
-        painter.line_segment([anchor - Vec2::new(5.0, 0.0), anchor + Vec2::new(5.0, 0.0)], red);
-        painter.line_segment([anchor - Vec2::new(0.0, 5.0), anchor + Vec2::new(0.0, 5.0)], red);
+        painter.line_segment(
+            [anchor - Vec2::new(5.0, 0.0), anchor + Vec2::new(5.0, 0.0)],
+            red,
+        );
+        painter.line_segment(
+            [anchor - Vec2::new(0.0, 5.0), anchor + Vec2::new(0.0, 5.0)],
+            red,
+        );
         painter.text(
             rect.left_bottom() + Vec2::new(4.0, -4.0),
             egui::Align2::LEFT_BOTTOM,

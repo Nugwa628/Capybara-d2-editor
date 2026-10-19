@@ -100,7 +100,12 @@ impl Default for PaletteStore {
 
 impl PaletteStore {
     /// Reads (once per session) a palette through the overlay.
-    fn load(&mut self, choice: &PaletteChoice, overlay: Option<&Overlay>, epoch: u64) -> Option<Palette> {
+    fn load(
+        &mut self,
+        choice: &PaletteChoice,
+        overlay: Option<&Overlay>,
+        epoch: u64,
+    ) -> Option<Palette> {
         if self.epoch != Some(epoch) {
             self.cache.clear();
             self.display = None;

@@ -93,7 +93,9 @@ fn report(state: &mut AppState, r: Result<(), String>) {
 
 fn top_bar(ui: &mut Ui, state: &mut AppState) {
     ui.horizontal_wrapped(|ui| {
-        let Some(e) = state.sprites.editor.as_ref() else { return };
+        let Some(e) = state.sprites.editor.as_ref() else {
+            return;
+        };
         let dirty = if e.is_dirty() { "\u{25CF} " } else { "" };
         ui.strong(format!("{dirty}{}", e.source.label()));
         ui.weak(format!(
@@ -126,7 +128,10 @@ fn top_bar(ui: &mut Ui, state: &mut AppState) {
         }
         ui.separator();
         if ui
-            .add_enabled(state.session.is_some(), egui::Button::new("Save to game path..."))
+            .add_enabled(
+                state.session.is_some(),
+                egui::Button::new("Save to game path..."),
+            )
             .on_hover_text("Ctrl+S")
             .clicked()
         {
@@ -161,7 +166,11 @@ fn top_bar(ui: &mut Ui, state: &mut AppState) {
         let Some(e) = editor(state) else { return };
         let mut z = e.zoom.round();
         if ui
-            .add(egui::Slider::new(&mut z, 1.0..=MAX_ZOOM).suffix("x").text("zoom"))
+            .add(
+                egui::Slider::new(&mut z, 1.0..=MAX_ZOOM)
+                    .suffix("x")
+                    .text("zoom"),
+            )
             .changed()
         {
             e.zoom = z;
@@ -191,7 +200,10 @@ fn tools(ui: &mut Ui, state: &mut AppState) {
                 for (i, t) in PaintTool::ALL.into_iter().enumerate() {
                     let label = format!("{} ({})", t.label(), t.key());
                     if ui
-                        .add_sized([88.0, 22.0], egui::Button::selectable(e.tool == t, short(t)))
+                        .add_sized(
+                            [88.0, 22.0],
+                            egui::Button::selectable(e.tool == t, short(t)),
+                        )
                         .on_hover_text(label)
                         .clicked()
                     {
@@ -395,8 +407,12 @@ fn palette_panel(ui: &mut Ui, state: &mut AppState) {
         for (label, idx) in [("Primary", e.primary()), ("Secondary", e.secondary())] {
             let (r, _) = ui.allocate_exact_size(Vec2::splat(26.0), Sense::hover());
             ui.painter().rect_filled(r, 2.0, color(&palette, idx));
-            ui.painter()
-                .rect_stroke(r, 2.0, Stroke::new(1.0, Color32::WHITE), StrokeKind::Outside);
+            ui.painter().rect_stroke(
+                r,
+                2.0,
+                Stroke::new(1.0, Color32::WHITE),
+                StrokeKind::Outside,
+            );
             ui.label(format!("{label}\n{idx}"))
                 .on_hover_text(swatch_text(idx, palette.colors[usize::from(idx)]));
         }
@@ -415,8 +431,7 @@ fn palette_panel(ui: &mut Ui, state: &mut AppState) {
     ui.separator();
     // 16x16 grid.
     let cell = ((ui.available_width() - 4.0) / 16.0).clamp(8.0, 18.0);
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::splat(cell * 16.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(cell * 16.0), Sense::click());
     let painter = ui.painter_at(rect);
     for i in 0..=255u8 {
         let (x, y) = (f32::from(i % 16), f32::from(i / 16));
@@ -433,7 +448,12 @@ fn palette_panel(ui: &mut Ui, state: &mut AppState) {
         if i == e.primary() {
             painter.rect_stroke(r, 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Inside);
         } else if i == e.secondary() {
-            painter.rect_stroke(r, 0.0, Stroke::new(2.0, Color32::from_gray(90)), StrokeKind::Inside);
+            painter.rect_stroke(
+                r,
+                0.0,
+                Stroke::new(2.0, Color32::from_gray(90)),
+                StrokeKind::Inside,
+            );
         }
     }
     let hit = |pos: Option<Pos2>| -> Option<u8> {
@@ -441,14 +461,20 @@ fn palette_panel(ui: &mut Ui, state: &mut AppState) {
         if !rect.contains(p) {
             return None;
         }
-        let (x, y) = (((p.x - rect.min.x) / cell) as u32, ((p.y - rect.min.y) / cell) as u32);
+        let (x, y) = (
+            ((p.x - rect.min.x) / cell) as u32,
+            ((p.y - rect.min.y) / cell) as u32,
+        );
         u8::try_from(y.min(15) * 16 + x.min(15)).ok()
     };
     if let Some(i) = hit(response.hover_pos()) {
         let text = if i == 0 {
             "index 0: transparent key (not a colour)".to_owned()
         } else {
-            format!("{}  (left: primary, right: secondary)", swatch_text(i, palette.colors[usize::from(i)]))
+            format!(
+                "{}  (left: primary, right: secondary)",
+                swatch_text(i, palette.colors[usize::from(i)])
+            )
         };
         response.clone().on_hover_text(text);
     }
@@ -474,11 +500,19 @@ fn palette_panel(ui: &mut Ui, state: &mut AppState) {
                 let (r, resp) = ui.allocate_exact_size(Vec2::new(width, sw + 2.0), Sense::click());
                 let per = (width / ramp.len().max(1) as f32).max(1.0);
                 for (k, &i) in ramp.iter().enumerate() {
-                    let cr = Rect::from_min_size(r.min + Vec2::new(k as f32 * per, 0.0), Vec2::new(per, sw));
+                    let cr = Rect::from_min_size(
+                        r.min + Vec2::new(k as f32 * per, 0.0),
+                        Vec2::new(per, sw),
+                    );
                     ui.painter().rect_filled(cr, 0.0, color(&palette, i));
                 }
                 if primary_ramp.is_some_and(|id| usize::from(id.0) == n) {
-                    ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, Color32::WHITE), StrokeKind::Outside);
+                    ui.painter().rect_stroke(
+                        r,
+                        0.0,
+                        Stroke::new(1.0, Color32::WHITE),
+                        StrokeKind::Outside,
+                    );
                 }
                 let pick = |p: Option<Pos2>| -> Option<u8> {
                     let p = p?;
@@ -514,7 +548,10 @@ fn dcc_check(ui: &mut Ui, state: &mut AppState) {
         .show(ui, |ui| {
             let list = e.violations().to_vec();
             if list.is_empty() {
-                ui.colored_label(Color32::from_rgb(110, 200, 110), "Every 4x4 cell fits (4 values at most).");
+                ui.colored_label(
+                    Color32::from_rgb(110, 200, 110),
+                    "Every 4x4 cell fits (4 values at most).",
+                );
                 return;
             }
             ui.colored_label(
@@ -598,7 +635,11 @@ fn frames_strip(ui: &mut Ui, state: &mut AppState) {
                 e.step_frame(1);
             }
             ui.separator();
-            if ui.small_button("Insert").on_hover_text("A blank frame after this one (every direction)").clicked() {
+            if ui
+                .small_button("Insert")
+                .on_hover_text("A blank frame after this one (every direction)")
+                .clicked()
+            {
                 result = e.insert_frame(false);
             }
             if ui.small_button("Duplicate").clicked() {
@@ -705,7 +746,9 @@ pub fn copy(state: &mut AppState) {
     let palette = state.sprite_palette();
     let os = state.sprites.use_os_clipboard;
     let Some(e) = editor(state) else { return };
-    let Some(clip) = e.copy().cloned() else { return };
+    let Some(clip) = e.copy().cloned() else {
+        return;
+    };
     if os {
         let rgba = clip.to_rgba(&palette);
         let image = arboard::ImageData {
@@ -714,7 +757,9 @@ pub fn copy(state: &mut AppState) {
             bytes: std::borrow::Cow::Owned(rgba),
         };
         if let Err(err) = arboard::Clipboard::new().and_then(|mut c| c.set_image(image)) {
-            state.warn(format!("Copied inside the editor; the OS clipboard refused the image: {err}"));
+            state.warn(format!(
+                "Copied inside the editor; the OS clipboard refused the image: {err}"
+            ));
         }
     }
 }
@@ -737,7 +782,11 @@ pub fn cut(state: &mut AppState) {
 }
 
 pub fn paste(state: &mut AppState) {
-    let has_clip = state.sprites.editor.as_ref().is_some_and(|e| e.clip.is_some());
+    let has_clip = state
+        .sprites
+        .editor
+        .as_ref()
+        .is_some_and(|e| e.clip.is_some());
     if !has_clip {
         paste_os_image(state);
         return;
@@ -755,7 +804,12 @@ pub fn paste_os_image(state: &mut AppState) {
     let image = arboard::Clipboard::new().and_then(|mut c| c.get_image());
     let Some(e) = editor(state) else { return };
     let r = match image {
-        Ok(img) => e.paste_rgba(img.width as u32, img.height as u32, &img.bytes, Dither::None),
+        Ok(img) => e.paste_rgba(
+            img.width as u32,
+            img.height as u32,
+            &img.bytes,
+            Dither::None,
+        ),
         Err(err) => Err(format!("the clipboard holds no image ({err})")),
     };
     report(state, r);
@@ -769,7 +823,14 @@ fn canvas_texture(ui: &Ui, state: &mut AppState) -> Option<(egui::TextureHandle,
     let palette = state.sprite_display_palette();
     let e = editor(state)?;
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    (e.session.revision(), e.cur, e.onion, e.onion_fade.to_bits(), pal_key).hash(&mut h);
+    (
+        e.session.revision(),
+        e.cur,
+        e.onion,
+        e.onion_fade.to_bits(),
+        pal_key,
+    )
+        .hash(&mut h);
     let key = h.finish();
     if let Some((k, t, o)) = &e.canvas_tex
         && *k == key
@@ -818,7 +879,10 @@ impl View {
         Pos2::new(self.origin.x + x * self.zoom, self.origin.y + y * self.zoom)
     }
     fn to_frame(self, p: Pos2) -> (f32, f32) {
-        ((p.x - self.origin.x) / self.zoom, (p.y - self.origin.y) / self.zoom)
+        (
+            (p.x - self.origin.x) / self.zoom,
+            (p.y - self.origin.y) / self.zoom,
+        )
     }
     fn px_rect(self, x0: i32, y0: i32, x1: i32, y1: i32) -> Rect {
         Rect::from_min_max(
@@ -855,7 +919,10 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
     });
     let mut problem: Option<String> = None;
     let Some(e) = editor(state) else { return };
-    let Some((fw, fh, ox, oy)) = e.frame().map(|f| (f.width, f.height, f.offset_x, f.offset_y)) else {
+    let Some((fw, fh, ox, oy)) = e
+        .frame()
+        .map(|f| (f.width, f.height, f.offset_x, f.offset_y))
+    else {
         return;
     };
     // View: the frame centred, then panned.
@@ -915,9 +982,19 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
     if let Some((t, (tx, ty))) = &tex {
         let sz = t.size();
         let r = view.px_rect(*tx, *ty, *tx + sz[0] as i32, *ty + sz[1] as i32);
-        painter.image(t.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+        painter.image(
+            t.id(),
+            r,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            Color32::WHITE,
+        );
     }
-    painter.rect_stroke(frame_rect, 0.0, Stroke::new(1.0, Color32::from_gray(120)), StrokeKind::Outside);
+    painter.rect_stroke(
+        frame_rect,
+        0.0,
+        Stroke::new(1.0, Color32::from_gray(120)),
+        StrokeKind::Outside,
+    );
     if e.grid && zoom >= 4.0 {
         let grid = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 28));
         let vis = frame_rect.intersect(rect);
@@ -970,7 +1047,10 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
             }
         }
         Some(Gesture::Gradient { start, end }) => {
-            let (a, b) = (view.to_screen(start.0, start.1), view.to_screen(end.0, end.1));
+            let (a, b) = (
+                view.to_screen(start.0, start.1),
+                view.to_screen(end.0, end.1),
+            );
             painter.arrow(a, b - a, ant);
         }
         Some(Gesture::Lasso { points, .. }) => {
@@ -1005,11 +1085,17 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
     // Brush cursor.
     if hovered
         && let Some(p) = pointer
-        && matches!(e.tool, PaintTool::Pencil | PaintTool::Eraser | PaintTool::Shade)
+        && matches!(
+            e.tool,
+            PaintTool::Pencil | PaintTool::Eraser | PaintTool::Shade
+        )
     {
         let (fx, fy) = view.to_frame(p);
         let s = e.brush.size as i32;
-        let (cx, cy) = (fx.floor() as i32 - (s - 1) / 2, fy.floor() as i32 - (s - 1) / 2);
+        let (cx, cy) = (
+            fx.floor() as i32 - (s - 1) / 2,
+            fy.floor() as i32 - (s - 1) / 2,
+        );
         painter.rect_stroke(
             view.px_rect(cx, cy, cx + s, cy + s),
             0.0,
@@ -1028,7 +1114,11 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
                 .filter(|_| x >= 0 && y >= 0 && (x as u32) < fw && (y as u32) < fh)
                 .map(|f| {
                     let i = y as usize * fw as usize + x as usize;
-                    if f.alpha[i] == 0 { "transparent".to_owned() } else { format!("index {}", f.pixels[i]) }
+                    if f.alpha[i] == 0 {
+                        "transparent".to_owned()
+                    } else {
+                        format!("index {}", f.pixels[i])
+                    }
                 })
                 .unwrap_or_default();
             format!("  ({x}, {y}) {idx}")
@@ -1071,7 +1161,8 @@ fn draw_mask(painter: &egui::Painter, view: View, m: &Mask, shift: (i32, i32)) {
                 (0, 1, (px, py + 1.0), (px + 1.0, py + 1.0)),
             ] {
                 if !m.get(x + dx, y + dy) {
-                    painter.line_segment([view.to_screen(a.0, a.1), view.to_screen(b.0, b.1)], stroke);
+                    painter
+                        .line_segment([view.to_screen(a.0, a.1), view.to_screen(b.0, b.1)], stroke);
                     segments += 1;
                 }
             }
@@ -1079,7 +1170,12 @@ fn draw_mask(painter: &egui::Painter, view: View, m: &Mask, shift: (i32, i32)) {
                 // A very ragged selection: show its bounds instead.
                 if let Some((x0, y0, x1, y1)) = m.bounds() {
                     painter.rect_stroke(
-                        view.px_rect(x0 as i32 + sx, y0 as i32 + sy, x1 as i32 + 1 + sx, y1 as i32 + 1 + sy),
+                        view.px_rect(
+                            x0 as i32 + sx,
+                            y0 as i32 + sy,
+                            x1 as i32 + 1 + sx,
+                            y1 as i32 + 1 + sy,
+                        ),
                         0.0,
                         stroke,
                         StrokeKind::Outside,

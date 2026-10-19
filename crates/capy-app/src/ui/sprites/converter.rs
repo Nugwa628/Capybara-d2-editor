@@ -93,7 +93,10 @@ fn matching(ui: &mut Ui, m: &mut MatchSettings, salt: &str) {
         ui.add(egui::Slider::new(&mut m.alpha_threshold, 0..=255))
             .on_hover_text("Pixels with less alpha are transparent");
     });
-    ui.checkbox(&mut m.protect, "Protect transparent (opaque never becomes index 0)");
+    ui.checkbox(
+        &mut m.protect,
+        "Protect transparent (opaque never becomes index 0)",
+    );
 }
 
 fn format_radio(ui: &mut Ui, f: &mut SpriteFormat) {
@@ -128,14 +131,22 @@ fn import(ui: &mut Ui, state: &mut AppState) {
             let names: Vec<String> = files
                 .iter()
                 .take(4)
-                .map(|f| f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+                .map(|f| {
+                    f.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                })
                 .collect();
             let more = files.len().saturating_sub(names.len());
             ui.weak(format!(
                 "{} image(s): {}{}",
                 files.len(),
                 names.join(", "),
-                if more > 0 { format!(" and {more} more") } else { String::new() }
+                if more > 0 {
+                    format!(" and {more} more")
+                } else {
+                    String::new()
+                }
             ));
         }
     }
@@ -160,7 +171,10 @@ fn import(ui: &mut Ui, state: &mut AppState) {
         ui.label("Encode as");
         format_radio(ui, &mut s.format);
     });
-    ui.checkbox(&mut state.sprites.converter.edit_after_import, "Open in the editor too");
+    ui.checkbox(
+        &mut state.sprites.converter.edit_after_import,
+        "Open in the editor too",
+    );
     let ready = !state.sprites.converter.import.files.is_empty();
     if ui.add_enabled(ready, egui::Button::new("Import")).clicked() {
         let _ = state.sprite_import();
@@ -174,11 +188,31 @@ fn export(ui: &mut Ui, state: &mut AppState) {
     let busy = state.sprites.dialogs.is_open();
     let ok = have && !busy;
     let rows: [(Purpose, &str, &str); 5] = [
-        (Purpose::ExportFrames, "Frames + sprite.json...", "One PNG per frame, exact offsets in sprite.json"),
-        (Purpose::ExportSheet, "Sprite sheet...", "One PNG: rows are directions, columns frames"),
-        (Purpose::ExportGif, "Animated GIF...", "The current direction at the viewer's speed"),
-        (Purpose::ExportPng, "Indexed PNG...", "The current frame with the palette embedded (GIMP/Photoshop round trips)"),
-        (Purpose::ExportSprite, "Sprite file (DC6/DCC)...", "Encoded with the format of the file name"),
+        (
+            Purpose::ExportFrames,
+            "Frames + sprite.json...",
+            "One PNG per frame, exact offsets in sprite.json",
+        ),
+        (
+            Purpose::ExportSheet,
+            "Sprite sheet...",
+            "One PNG: rows are directions, columns frames",
+        ),
+        (
+            Purpose::ExportGif,
+            "Animated GIF...",
+            "The current direction at the viewer's speed",
+        ),
+        (
+            Purpose::ExportPng,
+            "Indexed PNG...",
+            "The current frame with the palette embedded (GIMP/Photoshop round trips)",
+        ),
+        (
+            Purpose::ExportSprite,
+            "Sprite file (DC6/DCC)...",
+            "Encoded with the format of the file name",
+        ),
     ];
     for (purpose, label, hint) in rows {
         if ui
@@ -209,16 +243,28 @@ fn batch(ui: &mut Ui, state: &mut AppState) {
     let running = state.sprites.converter.batch_task.is_some();
     ui.add_enabled_ui(!running, |ui| {
         let b = &state.sprites.converter.batch;
-        let input = b.input.as_ref().map_or("(none)".to_owned(), |p| p.display().to_string());
-        let output = b.output.as_ref().map_or("(none)".to_owned(), |p| p.display().to_string());
+        let input = b
+            .input
+            .as_ref()
+            .map_or("(none)".to_owned(), |p| p.display().to_string());
+        let output = b
+            .output
+            .as_ref()
+            .map_or("(none)".to_owned(), |p| p.display().to_string());
         ui.horizontal(|ui| {
-            if ui.add_enabled(!busy, egui::Button::new("Input folder...")).clicked() {
+            if ui
+                .add_enabled(!busy, egui::Button::new("Input folder..."))
+                .clicked()
+            {
                 state.sprite_dialog(Purpose::BatchInput);
             }
             ui.weak(input);
         });
         ui.horizontal(|ui| {
-            if ui.add_enabled(!busy, egui::Button::new("Output folder...")).clicked() {
+            if ui
+                .add_enabled(!busy, egui::Button::new("Output folder..."))
+                .clicked()
+            {
                 state.sprite_dialog(Purpose::BatchOutput);
             }
             ui.weak(output);
@@ -239,13 +285,20 @@ fn batch(ui: &mut Ui, state: &mut AppState) {
         ui.checkbox(&mut b.recursive, "Include sub-folders");
         ui.checkbox(&mut b.overwrite, "Overwrite existing outputs");
         let ready = b.input.is_some() && b.output.is_some();
-        if ui.add_enabled(ready, egui::Button::new("Start batch")).clicked() {
+        if ui
+            .add_enabled(ready, egui::Button::new("Start batch"))
+            .clicked()
+        {
             state.start_batch();
         }
     });
     if let Some(task) = &state.sprites.converter.batch_task {
         let p = task.progress();
-        let frac = if p.total == 0 { 0.0 } else { p.done as f32 / p.total as f32 };
+        let frac = if p.total == 0 {
+            0.0
+        } else {
+            p.done as f32 / p.total as f32
+        };
         ui.add(
             egui::ProgressBar::new(frac)
                 .show_percentage()
@@ -253,7 +306,14 @@ fn batch(ui: &mut Ui, state: &mut AppState) {
         );
         let cancelling = task.cancelled();
         if ui
-            .add_enabled(!cancelling, egui::Button::new(if cancelling { "Cancelling..." } else { "Cancel" }))
+            .add_enabled(
+                !cancelling,
+                egui::Button::new(if cancelling {
+                    "Cancelling..."
+                } else {
+                    "Cancel"
+                }),
+            )
             .clicked()
         {
             task.cancel();

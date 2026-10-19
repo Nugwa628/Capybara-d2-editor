@@ -10,7 +10,10 @@ use crate::state::AppState;
 pub fn show(ui: &mut Ui, state: &mut AppState) {
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(!state.sprites.dialogs.is_open(), egui::Button::new("Open file..."))
+            .add_enabled(
+                !state.sprites.dialogs.is_open(),
+                egui::Button::new("Open file..."),
+            )
             .on_hover_text("A DC6, DCC or COF anywhere on disk (opened read-only)")
             .clicked()
         {

@@ -196,8 +196,11 @@ impl SpritesState {
 pub fn sprite_list<'a>(names: impl Iterator<Item = &'a GamePath>) -> Vec<GamePath> {
     let mut out: Vec<GamePath> = names
         .filter(|p| {
-            p.extension()
-                .is_some_and(|e| ["dc6", "dcc", "cof"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+            p.extension().is_some_and(|e| {
+                ["dc6", "dcc", "cof"]
+                    .iter()
+                    .any(|x| e.eq_ignore_ascii_case(x))
+            })
         })
         .cloned()
         .collect();
@@ -266,7 +269,9 @@ impl AppState {
         let (palette, ok) = self.sprites.palette.raw(overlay.as_deref(), epoch);
         if !ok && overlay.is_some() {
             let label = self.sprites.palette.choice.label();
-            self.warn(format!("Palette {label} cannot be read; using the grey ramp"));
+            self.warn(format!(
+                "Palette {label} cannot be read; using the grey ramp"
+            ));
             self.sprites.palette.choice = palette::PaletteChoice::Grey;
         }
         palette
@@ -312,14 +317,23 @@ impl AppState {
     }
 
     /// [`AppState::open_sprite`] with preferred armour per component code.
-    pub fn open_sprite_with(&mut self, path: &GamePath, prefer: &[(String, String)]) -> Result<(), String> {
+    pub fn open_sprite_with(
+        &mut self,
+        path: &GamePath,
+        prefer: &[(String, String)],
+    ) -> Result<(), String> {
         let result = (|| {
             let overlay = self.sprite_overlay().ok_or("no profile is open")?;
             let bytes = overlay
                 .read_bytes(path)
                 .map_err(|e| format!("cannot read {path}: {e}"))?
                 .ok_or_else(|| format!("{path} is not in the profile"))?;
-            self.open_sprite_bytes(path.as_str(), &bytes, SpriteSource::Game(path.clone()), prefer)
+            self.open_sprite_bytes(
+                path.as_str(),
+                &bytes,
+                SpriteSource::Game(path.clone()),
+                prefer,
+            )
         })();
         self.report_open(result)
     }
@@ -390,7 +404,8 @@ impl AppState {
                     .map(|s| s.sprites.clone())
                     .unwrap_or_default();
                 let game = source.game_path().cloned();
-                let view = cof::CofView::load(cof, cof_name, game, overlay.as_deref(), &names, prefer);
+                let view =
+                    cof::CofView::load(cof, cof_name, game, overlay.as_deref(), &names, prefer);
                 let (fps, note) = self.cof_fps(&view.name.anim_key());
                 self.sprites
                     .viewer
@@ -605,7 +620,12 @@ impl AppState {
         };
         let text = match data.source.as_ref().and_then(SpriteSource::game_path) {
             Some(p) => p.as_str().to_owned(),
-            None => format!("data\\global\\{}.{}", data.source.map_or_else(|| "sprite".to_owned(), |s| s.stem()), data.format.extension()),
+            None => format!(
+                "data\\global\\{}.{}",
+                data.source
+                    .map_or_else(|| "sprite".to_owned(), |s| s.stem()),
+                data.format.extension()
+            ),
         };
         self.sprites.save_prompt = Some(SavePrompt {
             target,
@@ -626,7 +646,8 @@ impl AppState {
                 .ok_or("no profile is open")?;
             let data = self.target_data(target).ok_or("nothing to save")?;
             let palette = self.sprite_palette();
-            let report = convert::save_to_game(&self.paths, &profile, &path, &data.sprite, &palette)?;
+            let report =
+                convert::save_to_game(&self.paths, &profile, &path, &data.sprite, &palette)?;
             Ok((path, format, report))
         })();
         match result {
@@ -660,13 +681,24 @@ impl AppState {
     }
 
     /// Runs one "Export to..." with the path picked in the dialog.
-    pub fn sprite_export(&mut self, purpose: Purpose, path: &Path, target: Target) -> Result<String, String> {
+    pub fn sprite_export(
+        &mut self,
+        purpose: Purpose,
+        path: &Path,
+        target: Target,
+    ) -> Result<String, String> {
         let palette = self.sprite_palette();
         let palette_name = self.sprites.palette.choice.label();
         let result = match purpose {
-            Purpose::ExportPaletteGpl => convert::export_palette(&palette, &palette_name, PaletteFormat::Gpl, path),
-            Purpose::ExportPaletteAct => convert::export_palette(&palette, &palette_name, PaletteFormat::Act, path),
-            Purpose::ExportPalettePal => convert::export_palette(&palette, &palette_name, PaletteFormat::Jasc, path),
+            Purpose::ExportPaletteGpl => {
+                convert::export_palette(&palette, &palette_name, PaletteFormat::Gpl, path)
+            }
+            Purpose::ExportPaletteAct => {
+                convert::export_palette(&palette, &palette_name, PaletteFormat::Act, path)
+            }
+            Purpose::ExportPalettePal => {
+                convert::export_palette(&palette, &palette_name, PaletteFormat::Jasc, path)
+            }
             _ => match self.target_data(target) {
                 None => Err("nothing to export: open or import a DC6/DCC first".to_owned()),
                 Some(d) => {
@@ -692,7 +724,8 @@ impl AppState {
                             None => Err("no such frame".to_owned()),
                         },
                         Purpose::ExportSprite => {
-                            let format = convert::format_of(&path.to_string_lossy()).unwrap_or(d.format);
+                            let format =
+                                convert::format_of(&path.to_string_lossy()).unwrap_or(d.format);
                             convert::export_sprite_file(&d.sprite, format, &palette, path)
                         }
                         _ => Err("not an export".to_owned()),
@@ -718,11 +751,19 @@ impl AppState {
             Purpose::ExportSheet => Some(format!("{stem}-sheet.png")),
             Purpose::ExportGif => Some(format!("{stem}.gif")),
             Purpose::ExportPng => Some(format!("{stem}-frame.png")),
-            Purpose::ExportPaletteGpl => Some(format!("{}.gpl", self.sprites.palette.choice.slug())),
-            Purpose::ExportPaletteAct => Some(format!("{}.act", self.sprites.palette.choice.slug())),
-            Purpose::ExportPalettePal => Some(format!("{}.pal", self.sprites.palette.choice.slug())),
+            Purpose::ExportPaletteGpl => {
+                Some(format!("{}.gpl", self.sprites.palette.choice.slug()))
+            }
+            Purpose::ExportPaletteAct => {
+                Some(format!("{}.act", self.sprites.palette.choice.slug()))
+            }
+            Purpose::ExportPalettePal => {
+                Some(format!("{}.pal", self.sprites.palette.choice.slug()))
+            }
             Purpose::ExportSprite => {
-                let ext = self.target_data(target).map_or("dcc", |d| d.format.extension());
+                let ext = self
+                    .target_data(target)
+                    .map_or("dcc", |d| d.format.extension());
                 Some(format!("{stem}.{ext}"))
             }
             _ => None,
@@ -740,9 +781,17 @@ impl AppState {
                 let s = &self.sprites.converter.batch;
                 let text = format!(
                     "Batch started: {} -> {} ({})",
-                    s.input.as_deref().map_or_else(String::new, |p| p.display().to_string()),
-                    s.output.as_deref().map_or_else(String::new, |p| p.display().to_string()),
-                    if s.to_sprite { "images to sprites" } else { "sprites to PNG" }
+                    s.input
+                        .as_deref()
+                        .map_or_else(String::new, |p| p.display().to_string()),
+                    s.output
+                        .as_deref()
+                        .map_or_else(String::new, |p| p.display().to_string()),
+                    if s.to_sprite {
+                        "images to sprites"
+                    } else {
+                        "sprites to PNG"
+                    }
                 );
                 self.sprites.converter.batch_task = Some(task);
                 self.info(text);
@@ -774,10 +823,15 @@ impl AppState {
                     }
                     self.info(format!("Batch finished in {secs:.1}s"));
                     if !report.failed.is_empty() {
-                        self.error(format!("Batch: {} file(s) failed (see the Log)", report.failed.len()));
+                        self.error(format!(
+                            "Batch: {} file(s) failed (see the Log)",
+                            report.failed.len()
+                        ));
                     }
                 }
-                Err(e) if e.contains("cancelled") => self.warn("Batch cancelled; files already written stay"),
+                Err(e) if e.contains("cancelled") => {
+                    self.warn("Batch cancelled; files already written stay")
+                }
                 Err(e) => self.error(format!("Batch failed: {e}")),
             }
         }
@@ -799,10 +853,15 @@ impl AppState {
             Purpose::ImportFolder => {
                 if let Some(dir) = paths.first() {
                     let palette = self.sprite_palette();
-                    let opts = self.sprites.converter.import.matching.quantize();
+                    let mut opts = self.sprites.converter.import.matching.quantize();
+                    if dir.join("sprite.json").is_file() {
+                        // Real alpha: no colour key (see `convert::build_import`).
+                        opts.transparent_rgb = None;
+                    }
                     match capy_sprite::import_frames(dir, &palette, &opts) {
                         Ok((sprite, meta)) => {
-                            let format = meta.map_or(self.sprites.converter.import.format, |m| m.format);
+                            let format =
+                                meta.map_or(self.sprites.converter.import.format, |m| m.format);
                             let what = dir.display().to_string();
                             self.sprites.viewer.set_loaded(
                                 Loaded::Sprite(SingleSprite { sprite, format }),
@@ -842,7 +901,11 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
                 digits.push(c);
             } else {
                 if !digits.is_empty() {
-                    out.push((0, digits.parse().unwrap_or(u64::MAX), std::mem::take(&mut digits)));
+                    out.push((
+                        0,
+                        digits.parse().unwrap_or(u64::MAX),
+                        std::mem::take(&mut digits),
+                    ));
                 }
                 text.push(c.to_ascii_lowercase());
             }
@@ -898,7 +961,10 @@ mod tests {
         assert_eq!(palette_list(names.iter()).len(), 1);
         assert_eq!(filter_sprites(&sprites, "ZM", [true; 3]).len(), 2);
         assert_eq!(filter_sprites(&sprites, "", [true, false, false]).len(), 1);
-        assert_eq!(filter_sprites(&sprites, "zm", [false, false, true]).len(), 1);
+        assert_eq!(
+            filter_sprites(&sprites, "zm", [false, false, true]).len(),
+            1
+        );
     }
 
     #[test]
@@ -915,19 +981,29 @@ mod tests {
             "zmtrlitnuhth"
         );
         assert_eq!(SpriteSource::Imported("x".into()).stem(), "sprite");
-        assert!(SpriteSource::File(PathBuf::from("C:\\a.dc6")).game_path().is_none());
+        assert!(
+            SpriteSource::File(PathBuf::from("C:\\a.dc6"))
+                .game_path()
+                .is_none()
+        );
     }
 
     fn state() -> (tempfile::TempDir, AppState) {
         let tmp = tempfile::tempdir().expect("tempdir");
         let paths = crate::paths::Paths::at(tmp.path().join("capybara"));
-        (tmp, AppState::new(paths, crate::config::Config::default(), Vec::new()))
+        (
+            tmp,
+            AppState::new(paths, crate::config::Config::default(), Vec::new()),
+        )
     }
 
     #[test]
     fn bad_files_are_errors_not_panics() {
         let (tmp, mut s) = state();
-        assert!(s.open_sprite(&GamePath::new("data\\x.dcc")).is_err(), "no profile");
+        assert!(
+            s.open_sprite(&GamePath::new("data\\x.dcc")).is_err(),
+            "no profile"
+        );
         let junk = tmp.path().join("junk.dcc");
         std::fs::write(&junk, b"not a dcc").expect("write");
         assert!(s.open_sprite_file(&junk).is_err());
@@ -956,7 +1032,8 @@ mod tests {
         s.edit_viewer_sprite(None).expect("edit");
         assert!(s.sprites.editor.is_some());
         let e = s.sprites.editor.as_mut().expect("editor");
-        e.press((0.0, 0.0), false, editor::Mods::default()).expect("paint");
+        e.press((0.0, 0.0), false, editor::Mods::default())
+            .expect("paint");
         e.release((0.0, 0.0)).expect("paint");
         assert!(s.sprites.editor_dirty());
         // Opening another sprite in the editor asks first.
@@ -969,7 +1046,8 @@ mod tests {
         assert!(!s.sprites.editor_dirty(), "replaced");
         // Exports of the editor sprite go where asked.
         let out = tmp.path().join("frames");
-        s.sprite_export(Purpose::ExportFrames, &out, Target::Editor).expect("export");
+        s.sprite_export(Purpose::ExportFrames, &out, Target::Editor)
+            .expect("export");
         assert!(out.join("sprite.json").is_file());
     }
 }

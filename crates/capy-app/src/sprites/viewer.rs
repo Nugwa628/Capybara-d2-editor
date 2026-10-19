@@ -72,6 +72,8 @@ pub struct ViewerState {
     pub textures: HashMap<(usize, usize), Option<Tex>>,
     /// Shown in the panel when the last open failed.
     pub error: Option<String>,
+    /// Fit the zoom to the sprite on the next draw.
+    pub fit: bool,
 }
 
 impl Default for ViewerState {
@@ -95,6 +97,7 @@ impl Default for ViewerState {
             tex_key: 0,
             textures: HashMap::new(),
             error: None,
+            fit: false,
         }
     }
 }
@@ -124,6 +127,7 @@ impl ViewerState {
         self.fps_note = note;
         self.error = None;
         self.pan = egui::Vec2::ZERO;
+        self.fit = true;
         self.clamp();
         self.bump();
     }
@@ -176,7 +180,12 @@ impl ViewerState {
     }
 
     /// The RGBA of one frame (`None` when nothing is loaded).
-    pub fn rgba(&self, dir: usize, frame: usize, palette: &Palette) -> Option<Result<RgbaFrame, String>> {
+    pub fn rgba(
+        &self,
+        dir: usize,
+        frame: usize,
+        palette: &Palette,
+    ) -> Option<Result<RgbaFrame, String>> {
         match self.loaded.as_ref()? {
             Loaded::Sprite(s) => {
                 let img = s.sprite.directions.get(dir)?.get(frame)?;
@@ -248,7 +257,12 @@ mod tests {
     #[test]
     fn playback_steps_at_the_frame_rate_and_wraps() {
         let mut v = ViewerState::default();
-        v.set_loaded(sprite(2, 4), SpriteSource::Imported("x".into()), 10.0, String::new());
+        v.set_loaded(
+            sprite(2, 4),
+            SpriteSource::Imported("x".into()),
+            10.0,
+            String::new(),
+        );
         assert!(!v.advance(0.0), "stopped");
         v.playing = true;
         assert!(!v.advance(0.0));
@@ -267,15 +281,31 @@ mod tests {
         let mut v = ViewerState::default();
         v.set_dir(5);
         assert_eq!(v.dir, 0, "nothing loaded");
-        v.set_loaded(sprite(8, 3), SpriteSource::Imported("x".into()), 25.0, String::new());
+        v.set_loaded(
+            sprite(8, 3),
+            SpriteSource::Imported("x".into()),
+            25.0,
+            String::new(),
+        );
         v.set_dir(9);
         v.set_frame(7);
         assert_eq!((v.dir, v.frame), (7, 2));
         v.step(-3);
         assert_eq!(v.frame, 2);
-        v.set_loaded(sprite(1, 1), SpriteSource::Imported("y".into()), 25.0, String::new());
+        v.set_loaded(
+            sprite(1, 1),
+            SpriteSource::Imported("y".into()),
+            25.0,
+            String::new(),
+        );
         assert_eq!((v.dir, v.frame), (0, 0), "clamped on load");
-        assert!(v.rgba(0, 0, &super::super::palette::grey_palette()).is_some());
-        assert!(v.rgba(3, 0, &super::super::palette::grey_palette()).is_none());
+        assert!(
+            v.rgba(0, 0, &super::super::palette::grey_palette())
+                .is_some()
+        );
+        assert!(
+            v.rgba(3, 0, &super::super::palette::grey_palette())
+                .is_none()
+        );
     }
 }

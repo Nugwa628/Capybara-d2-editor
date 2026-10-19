@@ -168,15 +168,38 @@ impl Mods {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Gesture {
     /// Pencil, eraser or shade stroke; the session's undo group is open.
-    Stroke { last: Pt, secondary: bool },
-    Shape { start: Pt, end: Pt, secondary: bool },
-    Gradient { start: (f32, f32), end: (f32, f32) },
-    Select { start: Pt, end: Pt, op: MaskOp },
-    Lasso { points: Vec<(f32, f32)>, op: MaskOp },
+    Stroke {
+        last: Pt,
+        secondary: bool,
+    },
+    Shape {
+        start: Pt,
+        end: Pt,
+        secondary: bool,
+    },
+    Gradient {
+        start: (f32, f32),
+        end: (f32, f32),
+    },
+    Select {
+        start: Pt,
+        end: Pt,
+        op: MaskOp,
+    },
+    Lasso {
+        points: Vec<(f32, f32)>,
+        op: MaskOp,
+    },
     /// Dragging the selected pixels (applied on release).
-    Move { start: Pt, end: Pt },
+    Move {
+        start: Pt,
+        end: Pt,
+    },
     /// Dragging the frame against the anchor (applied on release).
-    Offset { start: Pt, end: Pt },
+    Offset {
+        start: Pt,
+        end: Pt,
+    },
 }
 
 pub struct EditorState {
@@ -247,6 +270,16 @@ impl EditorState {
         }
         let primary = first_opaque(&palette, [255, 255, 255]);
         let secondary = first_opaque(&palette, [16, 16, 16]);
+        let largest = sprite
+            .directions
+            .iter()
+            .flatten()
+            .map(|f| f.width.max(f.height))
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        // About 400 points for the largest frame.
+        let zoom = (400 / largest).clamp(1, 12) as f32;
         let session = PaintSession::new(sprite.directions, palette).map_err(|e| e.to_string())?;
         Ok(EditorState {
             session,
@@ -285,7 +318,7 @@ impl EditorState {
             grid: true,
             checker: true,
             show_anchor: true,
-            zoom: 6.0,
+            zoom,
             pan: egui::Vec2::ZERO,
             gesture: None,
             mirror_target: 0,
@@ -324,7 +357,11 @@ impl EditorState {
     }
 
     fn paint(&self, secondary: bool) -> Paint {
-        Paint::Index(if secondary { self.secondary } else { self.primary })
+        Paint::Index(if secondary {
+            self.secondary
+        } else {
+            self.primary
+        })
     }
 
     // ───────── frames ─────────
@@ -427,7 +464,9 @@ impl EditorState {
         if self.mirror_target == self.cur.dir {
             return Err("pick another direction to mirror into".to_owned());
         }
-        let r = self.session.mirror_direction(self.cur.dir, self.mirror_target);
+        let r = self
+            .session
+            .mirror_direction(self.cur.dir, self.mirror_target);
         self.run(r)
     }
 
@@ -546,7 +585,9 @@ impl EditorState {
                     secondary,
                 });
                 let steps = self.shade_steps(secondary);
-                let r = self.session.shade(f, &[pt], self.brush, steps, mask.as_ref());
+                let r = self
+                    .session
+                    .shade(f, &[pt], self.brush, steps, mask.as_ref());
                 self.run(r)
             }
             PaintTool::Line | PaintTool::Rect | PaintTool::Ellipse => {
@@ -563,7 +604,9 @@ impl EditorState {
             }
             PaintTool::Fill => {
                 let paint = self.paint(secondary);
-                let r = self.session.fill(f, pt, paint, self.fill_mode, mask.as_ref());
+                let r = self
+                    .session
+                    .fill(f, pt, paint, self.fill_mode, mask.as_ref());
                 self.run(r)
             }
             PaintTool::Replace => {
@@ -666,7 +709,10 @@ impl EditorState {
                 Ok(())
             }
             Gesture::Lasso { points, .. } => {
-                if points.last().is_none_or(|l| (l.0 - p.0).abs() + (l.1 - p.1).abs() >= 0.5) {
+                if points
+                    .last()
+                    .is_none_or(|l| (l.0 - p.0).abs() + (l.1 - p.1).abs() >= 0.5)
+                {
                     points.push(p);
                 }
                 Ok(())
@@ -762,7 +808,9 @@ impl EditorState {
         let colors = self.gradient_colors();
         let mask = self.gradient_mask();
         if mask.as_ref().is_some_and(Mask::is_empty) {
-            return Err("nothing to paint: the frame has no opaque pixels (turn off Lock alpha)".to_owned());
+            return Err(
+                "nothing to paint: the frame has no opaque pixels (turn off Lock alpha)".to_owned(),
+            );
         }
         let r = self.session.gradient(
             self.cur,
@@ -819,9 +867,9 @@ impl EditorState {
         let mut result = Ok(());
         for f in frames {
             let m = if f == self.cur { mask.as_ref() } else { None };
-            if let Err(e) = self
-                .session
-                .outline(f, color, o.side, o.thickness.clamp(1, 8), o.diagonals, m)
+            if let Err(e) =
+                self.session
+                    .outline(f, color, o.side, o.thickness.clamp(1, 8), o.diagonals, m)
             {
                 result = Err(e.to_string());
                 break;
@@ -966,9 +1014,17 @@ impl EditorState {
     }
 
     /// Pastes an RGBA image (OS clipboard), mapped to the palette.
-    pub fn paste_rgba(&mut self, width: u32, height: u32, rgba: &[u8], dither: Dither) -> Result<(), String> {
+    pub fn paste_rgba(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        dither: Dither,
+    ) -> Result<(), String> {
         let at = self.paste_position(0, 0, width, height);
-        let r = self.session.paste_rgba(self.cur, width, height, rgba, at, dither);
+        let r = self
+            .session
+            .paste_rgba(self.cur, width, height, rgba, at, dither);
         let m = self.run(r)?;
         self.selection = (!m.is_empty()).then_some(m);
         self.tool = PaintTool::Move;
@@ -1126,11 +1182,12 @@ mod tests {
     }
 
     fn opaque_index_zero(e: &EditorState) -> bool {
-        e.session
-            .frames()
-            .iter()
-            .flatten()
-            .any(|f| f.pixels.iter().zip(&f.alpha).any(|(&p, &a)| a != 0 && p == 0))
+        e.session.frames().iter().flatten().any(|f| {
+            f.pixels
+                .iter()
+                .zip(&f.alpha)
+                .any(|(&p, &a)| a != 0 && p == 0)
+        })
     }
 
     #[test]
@@ -1171,12 +1228,26 @@ mod tests {
         e.press((0.0, 0.0), false, Mods::default()).expect("press");
         e.release((1.0, 1.0)).expect("release");
         assert_eq!(e.mask().map(Mask::count), Some(4));
-        e.press((6.0, 6.0), false, Mods { shift: true, ctrl: false })
-            .expect("press");
+        e.press(
+            (6.0, 6.0),
+            false,
+            Mods {
+                shift: true,
+                ctrl: false,
+            },
+        )
+        .expect("press");
         e.release((7.0, 7.0)).expect("release");
         assert_eq!(e.mask().map(Mask::count), Some(8), "added");
-        e.press((0.0, 0.0), false, Mods { shift: false, ctrl: true })
-            .expect("press");
+        e.press(
+            (0.0, 0.0),
+            false,
+            Mods {
+                shift: false,
+                ctrl: true,
+            },
+        )
+        .expect("press");
         e.release((0.0, 1.0)).expect("release");
         assert_eq!(e.mask().map(Mask::count), Some(6), "subtracted");
         // A fill restricted to the selection.
@@ -1225,10 +1296,17 @@ mod tests {
         e.press((2.0, 2.0), false, Mods::default()).expect("press");
         e.release((5.0, 5.0)).expect("release");
         e.tool = PaintTool::Move;
-        assert!(e.press((0.0, 0.0), false, Mods::default()).is_err(), "outside");
+        assert!(
+            e.press((0.0, 0.0), false, Mods::default()).is_err(),
+            "outside"
+        );
         e.press((3.0, 3.0), false, Mods::default()).expect("press");
         e.drag((4.0, 3.0)).expect("drag");
-        assert_eq!(e.frame().expect("frame").alpha[2 * 8 + 2], 255, "not yet moved");
+        assert_eq!(
+            e.frame().expect("frame").alpha[2 * 8 + 2],
+            255,
+            "not yet moved"
+        );
         e.release((4.0, 3.0)).expect("release");
         let f = e.frame().expect("frame");
         assert_eq!(f.alpha[2 * 8 + 2], 0);

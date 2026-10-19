@@ -130,7 +130,9 @@ pub fn frame_layout(count: usize, directions: u32, frames: u32) -> Result<(usize
     }
     let per = if frames == 0 {
         if !count.is_multiple_of(dirs) {
-            return Err(format!("{count} images cannot be split into {dirs} directions"));
+            return Err(format!(
+                "{count} images cannot be split into {dirs} directions"
+            ));
         }
         count / dirs
     } else {
@@ -155,6 +157,16 @@ pub fn build_import(settings: &ImportSettings, palette: &Palette) -> Result<Spri
             let (dirs, per) =
                 frame_layout(settings.files.len(), settings.directions, settings.frames)?;
             let meta = sibling_meta(&settings.files);
+            // An export with sprite.json carries real alpha: a colour key would
+            // turn opaque black pixels transparent and break the round trip.
+            let opts = if meta.is_some() {
+                QuantizeOptions {
+                    transparent_rgb: None,
+                    ..opts.clone()
+                }
+            } else {
+                opts.clone()
+            };
             let mut directions: Vec<Vec<IndexedImage>> = vec![Vec::with_capacity(per); dirs];
             for (i, file) in settings.files.iter().enumerate() {
                 let rgba = import_image(&read(file)?, kind_of(file)?)
@@ -243,7 +255,9 @@ pub fn check_game_path(text: &str) -> Result<(GamePath, SpriteFormat), String> {
     let path = GamePath::new(t);
     let s = path.as_str();
     if s.contains(':') || s.starts_with('\\') || s.split('\\').any(|p| p == "..") {
-        return Err(format!("{t:?} must be a game path relative to the MPQ root"));
+        return Err(format!(
+            "{t:?} must be a game path relative to the MPQ root"
+        ));
     }
     if !s.starts_with("data\\") {
         return Err(format!("{t:?} must start with data\\"));
@@ -275,7 +289,8 @@ fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(dir) = path.parent()
         && !dir.as_os_str().is_empty()
     {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     }
     std::fs::write(path, bytes).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
@@ -328,12 +343,21 @@ pub fn export_sheet(sprite: &Sprite, palette: &Palette, file: &Path) -> ExportRe
     ))
 }
 
-pub fn export_gif(frames: &[IndexedImage], palette: &Palette, fps: f32, file: &Path) -> ExportResult {
+pub fn export_gif(
+    frames: &[IndexedImage],
+    palette: &Palette,
+    fps: f32,
+    file: &Path,
+) -> ExportResult {
     let file = with_extension(file, "gif");
     let delay = (100.0 / fps.max(1.0)).round().clamp(2.0, 6000.0) as u16;
     let gif = capy_paint::animated_gif(frames, palette, delay).map_err(|e| e.to_string())?;
     write(&file, &gif)?;
-    Ok(format!("Exported {} frames to {}", frames.len(), file.display()))
+    Ok(format!(
+        "Exported {} frames to {}",
+        frames.len(),
+        file.display()
+    ))
 }
 
 pub fn export_indexed_png(img: &IndexedImage, palette: &Palette, file: &Path) -> ExportResult {
@@ -350,7 +374,12 @@ pub enum PaletteFormat {
     Jasc,
 }
 
-pub fn export_palette(palette: &Palette, name: &str, format: PaletteFormat, file: &Path) -> ExportResult {
+pub fn export_palette(
+    palette: &Palette,
+    name: &str,
+    format: PaletteFormat,
+    file: &Path,
+) -> ExportResult {
     let (ext, bytes) = match format {
         PaletteFormat::Gpl => ("gpl", capy_paint::palette_gpl(palette, name).into_bytes()),
         PaletteFormat::Act => ("act", capy_paint::palette_act(palette)),
@@ -361,13 +390,22 @@ pub fn export_palette(palette: &Palette, name: &str, format: PaletteFormat, file
     Ok(format!("Exported the palette to {}", file.display()))
 }
 
-pub fn export_sprite_file(sprite: &Sprite, format: SpriteFormat, palette: &Palette, file: &Path) -> ExportResult {
+pub fn export_sprite_file(
+    sprite: &Sprite,
+    format: SpriteFormat,
+    palette: &Palette,
+    file: &Path,
+) -> ExportResult {
     let file = with_extension(file, format.extension());
     let bytes = sprite
         .encode_with_palette(format, palette)
         .map_err(|e| e.to_string())?;
     write(&file, &bytes)?;
-    Ok(format!("Exported {} ({} bytes)", file.display(), bytes.len()))
+    Ok(format!(
+        "Exported {} ({} bytes)",
+        file.display(),
+        bytes.len()
+    ))
 }
 
 // ───────── batch ─────────
@@ -456,8 +494,16 @@ impl BatchTask {
                         };
                     }
                 };
-                let result = batch_convert(&input, &output, &direction, &palette, &options, &mut report, &c)
-                    .map_err(|e| e.to_string());
+                let result = batch_convert(
+                    &input,
+                    &output,
+                    &direction,
+                    &palette,
+                    &options,
+                    &mut report,
+                    &c,
+                )
+                .map_err(|e| e.to_string());
                 let _ = tx.send(result);
             })
             .map_err(|e| format!("cannot start the batch: {e}"))?;
@@ -548,8 +594,12 @@ mod tests {
     #[test]
     fn game_paths_are_checked() {
         assert_eq!(
-            check_game_path(" data\\global\\items\\InvFoo.DC6 ").map(|(p, f)| (p.as_str().to_owned(), f)),
-            Ok(("data\\global\\items\\invfoo.dc6".to_owned(), SpriteFormat::Dc6))
+            check_game_path(" data\\global\\items\\InvFoo.DC6 ")
+                .map(|(p, f)| (p.as_str().to_owned(), f)),
+            Ok((
+                "data\\global\\items\\invfoo.dc6".to_owned(),
+                SpriteFormat::Dc6
+            ))
         );
         assert!(check_game_path("").is_err());
         assert!(check_game_path("C:\\x\\a.dcc").is_err());
@@ -592,10 +642,15 @@ mod tests {
         let mut shifted = sprite.clone();
         shifted.directions[1][1].offset_x = 17;
         export_frames(&shifted, SpriteFormat::Dcc, &pal, "grey", None, &dir).expect("export");
-        let exported: Vec<PathBuf> = ["d00_f000.png", "d00_f001.png", "d01_f000.png", "d01_f001.png"]
-            .iter()
-            .map(|n| dir.join(n))
-            .collect();
+        let exported: Vec<PathBuf> = [
+            "d00_f000.png",
+            "d00_f001.png",
+            "d01_f000.png",
+            "d01_f001.png",
+        ]
+        .iter()
+        .map(|n| dir.join(n))
+        .collect();
         s.files = exported;
         let back = build_import(&s, &pal).expect("re-import");
         assert_eq!(back, shifted);
@@ -631,7 +686,13 @@ mod tests {
         export_sheet(&sprite, &pal, &tmp.path().join("sheet")).expect("sheet");
         assert!(tmp.path().join("sheet.png").is_file());
         assert!(tmp.path().join("sheet.json").is_file());
-        export_gif(&sprite.directions[0], &pal, 25.0, &tmp.path().join("anim.gif")).expect("gif");
+        export_gif(
+            &sprite.directions[0],
+            &pal,
+            25.0,
+            &tmp.path().join("anim.gif"),
+        )
+        .expect("gif");
         export_indexed_png(&img, &pal, &tmp.path().join("one")).expect("png");
         for (f, n) in [
             (PaletteFormat::Gpl, "p.gpl"),
@@ -643,7 +704,12 @@ mod tests {
         }
         export_sprite_file(&sprite, SpriteFormat::Dc6, &pal, &tmp.path().join("s")).expect("dc6");
         let bytes = std::fs::read(tmp.path().join("s.dc6")).expect("read");
-        assert_eq!(Sprite::decode(&bytes, SpriteFormat::Dc6).expect("decode").frames_per_direction(), 2);
+        assert_eq!(
+            Sprite::decode(&bytes, SpriteFormat::Dc6)
+                .expect("decode")
+                .frames_per_direction(),
+            2
+        );
     }
 
     #[test]
@@ -659,8 +725,11 @@ mod tests {
         };
         let game = GamePath::new("data\\global\\items\\invtest.dcc");
         let report = save_to_game(&paths, "p", &game, &sprite, &grey_palette()).expect("save");
-        let back = Sprite::decode(&std::fs::read(&report.path).expect("read"), SpriteFormat::Dcc)
-            .expect("decode");
+        let back = Sprite::decode(
+            &std::fs::read(&report.path).expect("read"),
+            SpriteFormat::Dcc,
+        )
+        .expect("decode");
         assert_eq!(back, sprite);
         assert_eq!(report.changed_total, 1);
         assert!(report.snapshot.is_some());

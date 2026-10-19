@@ -18,16 +18,16 @@ use capy_sprite::SpriteFormat;
 
 use crate::config::AppMode;
 use crate::doc::RenderState;
+use crate::edit::ops::EditOp;
+use crate::edit::paste::PasteSession;
 use crate::edit::script::GradientSpec;
+use crate::edit::script::{Cmd, Line, parse_script};
+use crate::edit::state::MoveDialog;
+use crate::iso::ZOOM_STEPS;
 use crate::sprites::convert::Layout;
 use crate::sprites::dialog::Purpose;
 use crate::sprites::editor::{EditorState, GradientMode, Mods, PaintTool};
 use crate::sprites::{Focus, Target};
-use crate::edit::ops::EditOp;
-use crate::edit::paste::PasteSession;
-use crate::edit::script::{Cmd, Line, parse_script};
-use crate::edit::state::MoveDialog;
-use crate::iso::ZOOM_STEPS;
 use crate::state::AppState;
 
 /// Seconds a screenshot waits after the map is drawn, for pipelines and the
@@ -214,6 +214,15 @@ fn step(state: &mut AppState, cmd: &Cmd) -> Step {
     }
     if let Some(step) = sprite_step(state, cmd) {
         return step;
+    }
+    // Screenshots also work without a map (Sprites mode).
+    if let Cmd::Screenshot(file) = cmd {
+        return Step::Wait(Wait::Shot(Shot {
+            file: file.clone(),
+            started: Instant::now(),
+            requested: false,
+            frames: 0,
+        }));
     }
     let Some(index) = state.active else {
         return Step::Fail("no map is open (use `open <game path>` first)".to_owned());
@@ -427,7 +436,11 @@ fn script_target(state: &AppState) -> Target {
 fn sprite_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
     let result: Result<(), String> = match cmd {
         Cmd::Mode(sprites) => {
-            state.config.mode = if *sprites { AppMode::Sprites } else { AppMode::Map };
+            state.config.mode = if *sprites {
+                AppMode::Sprites
+            } else {
+                AppMode::Map
+            };
             Ok(())
         }
         Cmd::SpritePreview => {
@@ -476,7 +489,11 @@ fn sprite_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
             s.layout = Layout::Frames;
             s.directions = (*dirs).max(1);
             s.frames = *frames;
-            s.format = if *dcc { SpriteFormat::Dcc } else { SpriteFormat::Dc6 };
+            s.format = if *dcc {
+                SpriteFormat::Dcc
+            } else {
+                SpriteFormat::Dc6
+            };
             s.files = match files.as_slice() {
                 // A folder: its images in name order (sprite.json gives offsets).
                 [dir] if dir.is_dir() => list_images(dir),
@@ -630,7 +647,7 @@ fn poll_shot(commands: &mut Commands, state: &mut AppState, mut shot: Shot) -> S
     }
     // The Sprites mode draws through egui only: it is ready once settled.
     let drawn = state.config.mode == AppMode::Sprites
-        || state.active_doc().is_some_and(|d| {
+        || state.active_doc().is_none_or(|d| {
             d.fitted
                 && matches!(
                     d.render.state,
