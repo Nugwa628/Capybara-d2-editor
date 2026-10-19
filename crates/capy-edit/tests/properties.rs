@@ -154,13 +154,13 @@ fn gen_ds1(rng: &mut Rng) -> Ds1 {
             .objects
             .iter()
             .copied()
-            .filter(|_| rng.chance(50))
+            .filter(|_| rng.chance(70))
             .collect();
         for o in anchors {
             ds.npc_paths.push(NpcPath {
                 x: o.x,
                 y: o.y,
-                points: (0..rng.below(3))
+                points: (0..if rng.chance(10) { 0 } else { 1 + rng.below(3) })
                     .map(|_| PathPoint {
                         x: rng.range(0, 20),
                         y: rng.range(0, 20),
@@ -271,7 +271,37 @@ fn rand_selection(rng: &mut Rng, ds: &Ds1) -> Selection {
     sel
 }
 
-const EDIT_KINDS: u64 = 19;
+/// Edit kinds 0..EDIT_KINDS are edits; the next five codes are history commands.
+const EDIT_KINDS: u64 = 25;
+
+/// An object index: mostly valid, sometimes just past the end. With `prefer_path`
+/// an object that has an NPC path is favoured.
+fn pick_object(rng: &mut Rng, ds: &Ds1, prefer_path: bool) -> usize {
+    if ds.objects.is_empty() || rng.chance(6) {
+        return ds.objects.len() + rng.below(2) as usize;
+    }
+    if prefer_path && rng.chance(85) {
+        let with_path: Vec<usize> = (0..ds.objects.len())
+            .filter(|&i| {
+                ds.npc_paths
+                    .iter()
+                    .any(|p| p.x == ds.objects[i].x && p.y == ds.objects[i].y)
+            })
+            .collect();
+        if !with_path.is_empty() {
+            return with_path[rng.below(with_path.len() as u64) as usize];
+        }
+    }
+    rng.below(ds.objects.len() as u64) as usize
+}
+
+fn rand_point(rng: &mut Rng) -> PathPoint {
+    PathPoint {
+        x: rng.range(0, 30),
+        y: rng.range(0, 30),
+        action: if rng.chance(60) { 1 } else { rng.range(0, 6) },
+    }
+}
 
 /// Runs one randomly parameterised edit (or history command, which the
 /// caller handles). The returned error, if any, is the edit's own.
@@ -441,6 +471,69 @@ fn run_edit(doc: &mut Document, kind: u64, seed: u64) -> Result<(), EditError> {
             let other = gen_ds1(rng);
             doc.apply_patch(capy_edit::Patch::replace("Restore", ds, other))
         }
+        19 => {
+            let i = pick_object(rng, &ds, true);
+            let old = ds
+                .objects
+                .get(i)
+                .copied()
+                .unwrap_or(rand_object(rng, 9, 8, true));
+            let new = match rng.below(4) {
+                // move it (the path follows)
+                0 | 1 => Object {
+                    x: old.x + rng.range(-3, 4),
+                    y: old.y + rng.range(-3, 4),
+                    ..old
+                },
+                // onto another object's sub-tile
+                2 if !ds.objects.is_empty() => {
+                    let o = ds.objects[rng.below(ds.objects.len() as u64) as usize];
+                    Object {
+                        x: o.x,
+                        y: o.y,
+                        ..old
+                    }
+                }
+                _ => {
+                    let flags_ok = rng.chance(50);
+                    rand_object(rng, 9, 8, flags_ok)
+                }
+            };
+            doc.set_object(i, new)
+        }
+        20 | 24 => {
+            let i = pick_object(rng, &ds, true);
+            let at = match rng.below(4) {
+                0 => None,
+                1 => Some(0),
+                2 => Some(rng.below(4) as usize),
+                _ => Some(rng.below(9) as usize),
+            };
+            let point = rand_point(rng);
+            let result = doc.add_path_point(i, point, at);
+            if result.is_ok() {
+                // the point landed where it was asked to, on the path of that object
+                let path = doc.path_of(i).unwrap();
+                let p = at.unwrap_or(path.points.len() - 1);
+                assert_eq!(path.points[p], point);
+            }
+            result
+        }
+        21 => {
+            let i = pick_object(rng, &ds, true);
+            let k = rng.below(4) as usize;
+            doc.move_path_point(i, k, rng.range(0, 40), rng.range(0, 40))
+        }
+        22 => {
+            let i = pick_object(rng, &ds, true);
+            let k = rng.below(4) as usize;
+            doc.set_path_action(i, k, if rng.chance(40) { 1 } else { rng.range(0, 7) })
+        }
+        23 => {
+            let i = pick_object(rng, &ds, true);
+            let idx: Vec<usize> = (0..rng.below(4)).map(|_| rng.below(4) as usize).collect();
+            doc.delete_path_points(i, &idx)
+        }
         _ => doc.upgrade_version(ds.version + 1 + rng.range(0, 3)),
     }
 }
@@ -477,14 +570,14 @@ fn run_case(init_seed: u64, ops: &[(u8, u64)]) -> Result<(), TestCaseError> {
             doc.redo_label().map(str::to_string),
         );
         match kind {
-            19 => {
+            25 => {
                 doc.begin_group("Group");
                 if depth == 0 {
                     group_ops = 0;
                 }
                 depth += 1;
             }
-            20 => {
+            26 => {
                 doc.end_group();
                 if depth > 0 {
                     depth -= 1;
@@ -493,7 +586,7 @@ fn run_case(init_seed: u64, ops: &[(u8, u64)]) -> Result<(), TestCaseError> {
                     }
                 }
             }
-            21 | 22 => {
+            27 | 28 => {
                 // undo and redo close an open group first
                 if depth > 0 {
                     depth = 0;
@@ -501,7 +594,7 @@ fn run_case(init_seed: u64, ops: &[(u8, u64)]) -> Result<(), TestCaseError> {
                         states.push(doc.ds1().clone());
                     }
                 }
-                if kind == 21 {
+                if kind == 27 {
                     let expect = states.len() > 1;
                     prop_assert_eq!(doc.undo(), expect);
                     if expect {
@@ -516,7 +609,7 @@ fn run_case(init_seed: u64, ops: &[(u8, u64)]) -> Result<(), TestCaseError> {
                 }
                 prop_assert_eq!(doc.ds1(), states.last().unwrap());
             }
-            23 => {
+            29 => {
                 doc.mark_saved();
                 saved = doc.ds1().clone();
                 prop_assert!(!doc.is_dirty());
@@ -620,7 +713,7 @@ proptest! {
     #[test]
     fn random_edit_sequences_obey_the_undo_laws(
         seed in any::<u64>(),
-        ops in proptest::collection::vec((0u8..24, any::<u64>()), 1..40),
+        ops in proptest::collection::vec((0u8..30, any::<u64>()), 1..40),
     ) {
         run_case(seed, &ops)?;
     }
@@ -633,7 +726,7 @@ proptest! {
     #[test]
     fn long_sequences(
         seed in any::<u64>(),
-        ops in proptest::collection::vec((0u8..24, any::<u64>()), 60..120),
+        ops in proptest::collection::vec((0u8..30, any::<u64>()), 60..120),
     ) {
         run_case(seed, &ops)?;
     }

@@ -134,6 +134,22 @@ pub(crate) enum Step {
         before: Vec<NpcPath>,
         after: Vec<NpcPath>,
     },
+    /// Inserts `path` at list position `at` (revert removes it).
+    PathInsert {
+        at: usize,
+        path: NpcPath,
+    },
+    /// Removes the path at list position `at` (revert puts it back).
+    PathRemove {
+        at: usize,
+        path: NpcPath,
+    },
+    /// Replaces the path at list position `at`.
+    PathSet {
+        at: usize,
+        before: NpcPath,
+        after: NpcPath,
+    },
     /// Swaps the whole model (restore-from-snapshot).
     Replace {
         before: Box<Ds1>,
@@ -312,6 +328,34 @@ impl Step {
                 ds1.npc_paths = if fwd { after.clone() } else { before.clone() };
                 Ok(())
             }
+            Step::PathInsert { at, path } => {
+                if fwd {
+                    insert_path(ds1, *at, path)
+                } else {
+                    remove_path(ds1, *at, path)
+                }
+            }
+            Step::PathRemove { at, path } => {
+                if fwd {
+                    remove_path(ds1, *at, path)
+                } else {
+                    insert_path(ds1, *at, path)
+                }
+            }
+            Step::PathSet { at, before, after } => {
+                let (expect, set) = if fwd {
+                    (before, after)
+                } else {
+                    (after, before)
+                };
+                match ds1.npc_paths.get_mut(*at) {
+                    Some(slot) if slot == expect => {
+                        *slot = set.clone();
+                        Ok(())
+                    }
+                    _ => Err(mismatch("path")),
+                }
+            }
             Step::Replace { before, after } => {
                 *ds1 = if fwd {
                     (**after).clone()
@@ -397,6 +441,22 @@ fn resize_all(ds1: &mut Ds1, w: u32, h: u32) {
     }
     ds1.width = w;
     ds1.height = h;
+}
+
+fn insert_path(ds1: &mut Ds1, at: usize, path: &NpcPath) -> Result<()> {
+    if at > ds1.npc_paths.len() {
+        return Err(mismatch("path insert index"));
+    }
+    ds1.npc_paths.insert(at, path.clone());
+    Ok(())
+}
+
+fn remove_path(ds1: &mut Ds1, at: usize, path: &NpcPath) -> Result<()> {
+    if ds1.npc_paths.get(at) != Some(path) {
+        return Err(mismatch("path remove index"));
+    }
+    ds1.npc_paths.remove(at);
+    Ok(())
 }
 
 fn insert_objects(ds1: &mut Ds1, items: &[(usize, Object)]) -> Result<()> {

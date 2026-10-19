@@ -132,6 +132,55 @@ impl Document {
         self.commit(patch)
     }
 
+    /// Replaces the object at `index` (type, id, flags and position). If the
+    /// position changes, the NPC path anchored only on this object follows it
+    /// (a path on a sub-tile shared with another object stays put, as with
+    /// [`Document::move_objects`]). Non-zero flags need v6 (`NeedsVersion`);
+    /// a bad index is `Format(Invalid)`. Setting an identical object is a no-op.
+    /// Nothing checks the destination: moving onto a sub-tile that already
+    /// carries another object's path leaves two paths with one anchor.
+    pub fn set_object(&mut self, index: usize, object: Object) -> Result<()> {
+        let Some(&before) = self.ds1.objects.get(index) else {
+            return Err(invalid(format!(
+                "object index {index} is out of range ({} objects)",
+                self.ds1.objects.len()
+            )));
+        };
+        if before == object {
+            return Ok(());
+        }
+        if let Some(required) = version_needed(&self.ds1, &[object]) {
+            return Err(EditError::NeedsVersion {
+                current: self.ds1.version,
+                required,
+            });
+        }
+        let mut patch = Patch::new("Edit object");
+        patch.push(Step::ObjectsSet {
+            edits: vec![(index, before, object)],
+        });
+        if (before.x, before.y) != (object.x, object.y) {
+            let set: BTreeSet<usize> = std::iter::once(index).collect();
+            let anchored = self.ds1.npc_paths.iter().position(|p| {
+                path_anchored_in(&self.ds1, p, &set) && p.x == before.x && p.y == before.y
+            });
+            if let Some(at) = anchored {
+                let old = self.ds1.npc_paths[at].clone();
+                let new = NpcPath {
+                    x: object.x,
+                    y: object.y,
+                    points: old.points.clone(),
+                };
+                patch.push(Step::PathSet {
+                    at,
+                    before: old,
+                    after: new,
+                });
+            }
+        }
+        self.commit(patch)
+    }
+
     /// Deletes the objects at `indices`. NPC paths anchored only on them are
     /// removed too (both come back on undo).
     pub fn delete_objects(&mut self, indices: &[usize]) -> Result<()> {

@@ -39,6 +39,19 @@
 //! - **Objects.** Adding objects needs v2 (v6 for non-zero flags). A bad index
 //!   is `Format(Invalid)`. Moving or deleting objects moves or removes the NPC
 //!   paths anchored only on them (undo restores both).
+//! - **NPC paths.** A path belongs to the object on its anchor sub-tile
+//!   (`path_of` returns the first path anchored there). Path edits on a file
+//!   below v14 are `NeedsVersion { required: 14 }`; an action other than 1 below
+//!   v15 is `required: 15`. `add_path_point` creates the path when missing
+//!   (appended to the path list; `at` must then be `None` or `Some(0)`) and
+//!   fails with `Format(Invalid)` when another object stands on the same
+//!   sub-tile, since the game drops such a path. `move_path_point`,
+//!   `set_path_action` and `delete_path_points` work on an existing path
+//!   (`Format(Invalid)` for a missing path or point; an empty index list is a
+//!   no-op) and `delete_path_points` removes the path with its last point.
+//!   `set_object` moves the anchor of the path that sits only on that object;
+//!   a path on a shared sub-tile stays, as with `move_objects`. A failed
+//!   path edit changes nothing, an identical value is a no-op.
 //! - **Clipboard.** `copy` takes the selected existing cells plus the objects
 //!   whose sub-tile lies inside the selection's bounding rectangle; `cut` also
 //!   deletes those objects. Conflicts are reported in every paste mode;

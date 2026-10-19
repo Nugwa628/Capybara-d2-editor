@@ -1220,6 +1220,328 @@ fn object_edits_and_npc_paths() {
     assert_roundtrips(v3.ds1());
 }
 
+// ----- objects: set_object and NPC paths ----------------------------------------
+
+fn obj(id: i32, x: i32, y: i32) -> Object {
+    Object {
+        kind: 1,
+        id,
+        x,
+        y,
+        flags: 0,
+    }
+}
+
+fn pt(x: i32, y: i32, action: i32) -> PathPoint {
+    PathPoint { x, y, action }
+}
+
+/// A map of the given version with objects at (1,1), (2,2) and (3,3); only the
+/// middle one (index 1) has a path of two points.
+fn path_map(version: i32) -> Ds1 {
+    let mut ds = Ds1::new(4, 4, 0);
+    ds.version = version;
+    ds.objects = vec![obj(1, 1, 1), obj(2, 2, 2), obj(3, 3, 3)];
+    if version >= 14 {
+        ds.npc_paths = vec![NpcPath {
+            x: 2,
+            y: 2,
+            points: vec![pt(5, 5, 1), pt(6, 6, 1)],
+        }];
+    }
+    ds
+}
+
+#[test]
+fn set_object_replaces_fields_and_moves_the_path() {
+    let original = path_map(18);
+    assert_roundtrips(&original);
+    let mut doc = Document::new(original.clone());
+
+    // type/id/flags change: the path stays
+    doc.set_object(
+        1,
+        Object {
+            kind: 2,
+            id: 77,
+            x: 2,
+            y: 2,
+            flags: 4,
+        },
+    )
+    .unwrap();
+    assert_eq!(doc.ds1().objects[1].id, 77);
+    assert_eq!(doc.ds1().npc_paths, original.npc_paths);
+    assert_roundtrips(doc.ds1());
+    assert_eq!(doc.undo_label(), Some("Edit object"));
+    assert!(doc.undo());
+    assert_eq!(doc.ds1(), &original);
+
+    // a position change moves the anchor with it
+    doc.set_object(1, obj(2, 4, 1)).unwrap();
+    assert_eq!((doc.ds1().npc_paths[0].x, doc.ds1().npc_paths[0].y), (4, 1));
+    assert_eq!(doc.path_of(1).map(|p| p.points.len()), Some(2));
+    assert_roundtrips(doc.ds1());
+    assert!(doc.undo());
+    assert_eq!(doc.ds1(), &original);
+    assert!(doc.redo());
+    assert_eq!(doc.path_of(1).map(|p| p.x), Some(4));
+    assert!(doc.undo());
+
+    // moving an object without a path leaves the path alone
+    doc.set_object(0, obj(1, 0, 4)).unwrap();
+    assert_eq!(doc.ds1().npc_paths, original.npc_paths);
+    assert!(doc.undo());
+
+    // a path on a shared sub-tile stays when one of the sharers moves away
+    let mut shared = path_map(18);
+    shared.objects.push(obj(9, 2, 2));
+    let mut d2 = Document::new(shared.clone());
+    d2.set_object(1, obj(2, 0, 0)).unwrap();
+    assert_eq!(d2.ds1().npc_paths, shared.npc_paths);
+    assert!(d2.undo());
+    assert_eq!(d2.ds1(), &shared);
+
+    // no-ops and errors
+    noop!(doc, doc.set_object(1, original.objects[1]));
+    assert!(matches!(
+        doc.set_object(3, obj(1, 0, 0)),
+        Err(EditError::Format(_))
+    ));
+    let mut v3 = Document::new(blank_v3(2, 2));
+    v3.add_object(obj(1, 0, 0)).unwrap();
+    assert!(matches!(
+        v3.set_object(
+            0,
+            Object {
+                flags: 1,
+                ..obj(1, 0, 0)
+            }
+        ),
+        Err(EditError::NeedsVersion {
+            current: 3,
+            required: 6
+        })
+    ));
+    v3.set_object(0, obj(5, 1, 1)).unwrap();
+    assert_roundtrips(v3.ds1());
+}
+
+#[test]
+fn path_edits_need_version_14_and_actions_need_15() {
+    // below v14: every path edit asks for an upgrade, nothing changes
+    for version in [3, 10, 13] {
+        let mut doc = Document::new(path_map(version));
+        let needs14 = |r: capy_edit::Result<()>| {
+            assert!(
+                matches!(r, Err(EditError::NeedsVersion { required: 14, .. })),
+                "v{version}: {r:?}"
+            );
+        };
+        needs14(doc.add_path_point(0, pt(1, 1, 1), None));
+        needs14(doc.move_path_point(0, 0, 1, 1));
+        needs14(doc.set_path_action(0, 0, 1));
+        needs14(doc.delete_path_points(0, &[0]));
+        assert!(!doc.can_undo());
+        assert!(doc.path_of(0).is_none());
+    }
+
+    // v14: paths yes, actions other than 1 no
+    let mut doc = Document::new(path_map(14));
+    let before = doc.ds1().clone();
+    assert!(matches!(
+        doc.add_path_point(0, pt(1, 1, 2), None),
+        Err(EditError::NeedsVersion {
+            current: 14,
+            required: 15
+        })
+    ));
+    assert!(matches!(
+        doc.set_path_action(1, 0, 3),
+        Err(EditError::NeedsVersion {
+            current: 14,
+            required: 15
+        })
+    ));
+    assert_eq!(doc.ds1(), &before);
+    assert!(!doc.can_undo());
+    doc.add_path_point(0, pt(1, 1, 1), None).unwrap();
+    doc.set_path_action(1, 0, 1).unwrap();
+    assert_roundtrips(doc.ds1());
+
+    // the app's answer: upgrade, then the same edit works
+    doc.upgrade_version(15).unwrap();
+    doc.set_path_action(1, 0, 3).unwrap();
+    assert_eq!(doc.path_of(1).map(|p| p.points[0].action), Some(3));
+    assert_roundtrips(doc.ds1());
+}
+
+#[test]
+fn add_move_action_delete_path_points() {
+    let original = path_map(18);
+    let mut doc = Document::new(original.clone());
+
+    // creating a path on an object that has none; it is appended to the list
+    doc.add_path_point(0, pt(8, 8, 1), None).unwrap();
+    assert_eq!(doc.ds1().npc_paths.len(), 2);
+    let p = doc.path_of(0).unwrap();
+    assert_eq!((p.x, p.y), (1, 1));
+    assert_eq!(p.points, vec![pt(8, 8, 1)]);
+    assert_roundtrips(doc.ds1());
+    assert!(doc.undo());
+    assert_eq!(doc.ds1(), &original);
+    // a new path has nothing to insert after
+    assert!(matches!(
+        doc.add_path_point(0, pt(8, 8, 1), Some(1)),
+        Err(EditError::Format(_))
+    ));
+    doc.add_path_point(0, pt(8, 8, 1), Some(0)).unwrap();
+    assert!(doc.undo());
+
+    // inserting into an existing path: at the end, the front and the middle
+    doc.add_path_point(1, pt(7, 7, 2), None).unwrap();
+    doc.add_path_point(1, pt(4, 4, 1), Some(0)).unwrap();
+    doc.add_path_point(1, pt(9, 9, 1), Some(2)).unwrap();
+    let xs: Vec<_> = doc.path_of(1).unwrap().points.iter().map(|p| p.x).collect();
+    assert_eq!(xs, vec![4, 5, 9, 6, 7]);
+    assert!(matches!(
+        doc.add_path_point(1, pt(0, 0, 1), Some(6)),
+        Err(EditError::Format(_))
+    ));
+    assert_roundtrips(doc.ds1());
+    while doc.undo() {}
+    assert_eq!(doc.ds1(), &original);
+    while doc.redo() {}
+    assert_eq!(doc.path_of(1).unwrap().points.len(), 5);
+    while doc.undo() {}
+
+    // move and action
+    doc.move_path_point(1, 1, 20, 21).unwrap();
+    assert_eq!(doc.path_of(1).unwrap().points[1], pt(20, 21, 1));
+    doc.set_path_action(1, 0, 4).unwrap();
+    assert_eq!(doc.path_of(1).unwrap().points[0].action, 4);
+    assert_roundtrips(doc.ds1());
+    noop!(doc, doc.move_path_point(1, 1, 20, 21));
+    noop!(doc, doc.set_path_action(1, 0, 4));
+    assert!(matches!(
+        doc.move_path_point(1, 2, 0, 0),
+        Err(EditError::Format(_))
+    ));
+    assert!(matches!(
+        doc.set_path_action(1, 9, 1),
+        Err(EditError::Format(_))
+    ));
+    // object 2 has no path, index 7 is no object
+    assert!(matches!(
+        doc.move_path_point(2, 0, 0, 0),
+        Err(EditError::Format(_))
+    ));
+    assert!(matches!(
+        doc.set_path_action(7, 0, 1),
+        Err(EditError::Format(_))
+    ));
+    assert!(matches!(
+        doc.add_path_point(7, pt(0, 0, 1), None),
+        Err(EditError::Format(_))
+    ));
+    assert!(doc.path_of(7).is_none());
+    while doc.undo() {}
+    assert_eq!(doc.ds1(), &original);
+}
+
+#[test]
+fn deleting_every_point_removes_the_path() {
+    let mut ds = path_map(18);
+    // a second path first in the list, so removal and restore keep the order
+    ds.npc_paths.insert(
+        0,
+        NpcPath {
+            x: 3,
+            y: 3,
+            points: vec![pt(1, 1, 1)],
+        },
+    );
+    let original = ds.clone();
+    let mut doc = Document::new(ds);
+
+    doc.delete_path_points(1, &[1, 1]).unwrap();
+    assert_eq!(doc.path_of(1).unwrap().points, vec![pt(5, 5, 1)]);
+    doc.delete_path_points(1, &[0]).unwrap();
+    assert!(doc.path_of(1).is_none());
+    assert_eq!(doc.ds1().npc_paths.len(), 1);
+    assert_eq!((doc.ds1().npc_paths[0].x, doc.ds1().npc_paths[0].y), (3, 3));
+    assert_roundtrips(doc.ds1());
+    while doc.undo() {}
+    assert_eq!(doc.ds1(), &original);
+
+    // all points in one call
+    doc.delete_path_points(1, &[0, 1]).unwrap();
+    assert!(doc.path_of(1).is_none());
+    assert!(doc.undo());
+    assert_eq!(doc.ds1(), &original);
+
+    noop!(doc, doc.delete_path_points(1, &[]));
+    assert!(matches!(
+        doc.delete_path_points(1, &[0, 2]),
+        Err(EditError::Format(_))
+    ));
+    assert!(matches!(
+        doc.delete_path_points(0, &[0]),
+        Err(EditError::Format(_))
+    ));
+    noop!(doc, doc.delete_path_points(0, &[]));
+    assert_eq!(doc.ds1(), &original);
+}
+
+#[test]
+fn a_path_cannot_be_added_to_a_shared_sub_tile() {
+    let mut ds = path_map(18);
+    ds.objects.push(obj(9, 1, 1)); // shares (1,1) with object 0
+    ds.objects.push(obj(8, 2, 2)); // shares (2,2) with object 1, which has a path
+    let original = ds.clone();
+    let mut doc = Document::new(ds);
+    for i in [0, 3, 1] {
+        match doc.add_path_point(i, pt(1, 1, 1), None) {
+            Err(EditError::Format(d2_formats::FormatError::Invalid { detail, .. })) => {
+                assert!(detail.contains("shares"), "{detail}");
+            }
+            other => panic!("object {i}: {other:?}"),
+        }
+    }
+    assert_eq!(doc.ds1(), &original);
+    assert!(!doc.can_undo());
+    // the path that is already there can still be cleaned up
+    doc.delete_path_points(1, &[0, 1]).unwrap();
+    assert!(doc.ds1().npc_paths.is_empty());
+}
+
+#[test]
+fn path_edits_join_groups_and_dirty_tracking() {
+    let mut doc = Document::new(path_map(18));
+    assert!(!doc.is_dirty());
+    doc.begin_group("Draw path");
+    doc.add_path_point(0, pt(1, 2, 1), None).unwrap();
+    doc.add_path_point(0, pt(3, 4, 1), None).unwrap();
+    doc.add_path_point(0, pt(5, 6, 2), None).unwrap();
+    doc.set_object(0, obj(1, 0, 0)).unwrap();
+    doc.end_group();
+    assert_eq!(doc.undo_label(), Some("Draw path"));
+    assert_eq!(doc.path_of(0).unwrap().points.len(), 3);
+    assert_eq!(doc.path_of(0).map(|p| (p.x, p.y)), Some((0, 0)));
+    assert!(doc.is_dirty());
+    assert_roundtrips(doc.ds1());
+    assert!(doc.undo());
+    assert!(!doc.is_dirty());
+    assert!(!doc.can_undo());
+    assert!(doc.redo());
+    doc.mark_saved();
+    assert!(!doc.is_dirty());
+    doc.move_path_point(0, 0, 9, 9).unwrap();
+    assert!(doc.is_dirty());
+    assert!(doc.undo());
+    assert!(!doc.is_dirty());
+}
+
 // ----- diff -------------------------------------------------------------------
 
 #[test]
