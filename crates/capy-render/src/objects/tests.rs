@@ -304,3 +304,129 @@ fn hidden_objects_draw_and_report_nothing() {
     assert!(list.entries.is_empty());
     assert!(list.missing_objects.is_empty());
 }
+
+#[test]
+fn shift_palette_maps_visible_pixels_only() {
+    let mut row = [0u8; 256];
+    for (i, v) in row.iter_mut().enumerate() {
+        *v = 255 - i as u8;
+    }
+    row[0] = 0;
+    let mut img = IndexedImage::new(4, 1, 0, 0);
+    img.pixels.copy_from_slice(&[0, 10, 20, 30]);
+    img.alpha.copy_from_slice(&[255, 255, 0, 255]);
+    let mut frames = vec![img];
+    shift_palette(&mut frames, &row);
+    // index 0 and the alpha-0 pixel stay; the rest go through the row
+    assert_eq!(frames[0].pixels, [0, 245, 20, 225]);
+    assert_eq!(frames[0].alpha, [255, 255, 0, 255]);
+}
+
+/// Act 1 type 1 id 36 is Coldcrow in DS1Edit's obj.txt: monsters token CR,
+/// mode NU, class BOW, TR and S1 skin LIT, `RandTransforms.dat` Index 4.
+const CR_COF: &str = "data/global/monsters/cr/cof/crnubow.cof";
+const CR_TR: &str = "data/global/monsters/cr/tr/crtrlitnubow.dc6";
+const CR_S1: &str = "data/global/monsters/cr/s1/crs1litnubow.dc6";
+const RAND_TRANSFORMS: &str = "data/global/monsters/randtransforms.dat";
+
+/// One direction, one frame: TR opaque (trans_a 0), S1 alpha-blended
+/// (trans_a 1, effect 5 = drawn normally), S1 on top.
+fn coldcrow_cof() -> Vec<u8> {
+    let mut b = vec![2u8, 1, 1, 20];
+    b.extend_from_slice(&[0; 24]);
+    b.extend_from_slice(&[1, 0, 0, 0, 0, b'B', b'O', b'W', 0]);
+    b.extend_from_slice(&[8, 0, 0, 1, 5, b'B', b'O', b'W', 0]);
+    b.push(0); // keyframe
+    b.extend_from_slice(&[1, 8]); // priority: TR, then S1
+    b
+}
+
+fn one_frame_dc6(pixel: u8, x: i32) -> Vec<u8> {
+    let mut img = IndexedImage::new(2, 2, x, -2);
+    img.pixels.fill(pixel);
+    img.alpha.fill(255);
+    Dc6::from_frames(&[vec![img]]).unwrap().to_bytes().unwrap()
+}
+
+/// Rows of `i ^ k` for k = 0, 1, 2, ... (index 0 kept at 0).
+fn colormap_file(rows: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    for k in 0..rows {
+        out.extend((0..256usize).map(|i| if i == 0 { 0 } else { (i ^ (k * 16)) as u8 }));
+    }
+    out
+}
+
+fn coldcrow_game(dir: &std::path::Path, colormap: Option<Vec<u8>>) -> Overlay {
+    write(dir, CR_COF, &coldcrow_cof());
+    write(dir, CR_TR, &one_frame_dc6(10, -2));
+    write(dir, CR_S1, &one_frame_dc6(20, 0));
+    if let Some(bytes) = colormap {
+        write(dir, RAND_TRANSFORMS, &bytes);
+    }
+    Overlay::new(vec![Box::new(FolderSource::new(dir, "synthetic"))])
+}
+
+fn coldcrow_ds1() -> Ds1 {
+    let mut ds1 = ds1_with(&[]);
+    ds1.objects.push(Object {
+        kind: 1,
+        id: 36,
+        x: 7,
+        y: 3,
+        flags: 0,
+    });
+    ds1
+}
+
+/// The (TR, S1) pixel indices Coldcrow draws with.
+fn coldcrow_pixels(colormap: Option<Vec<u8>>) -> (u8, u8) {
+    let dir = tempfile::tempdir().unwrap();
+    let overlay = coldcrow_game(dir.path(), colormap);
+    let (catalog, _) = ObjectCatalog::build(&overlay, GameVersion::V113c).unwrap();
+    let ds1 = coldcrow_ds1();
+    let info = catalog.resolve(0, ds1.version, &ds1.objects[0]);
+    assert_eq!(info.token.as_deref(), Some("CR"));
+    assert_eq!(info.colormap.as_ref().map(|c| c.row), Some(3));
+    let sprites = ObjectSprites::new(&overlay, &catalog);
+    let (placed, missing) = sprites.place(&ds1, &ObjectOptions::default());
+    assert!(missing.is_empty(), "{missing:?}");
+    let layers = &placed[0].frame.layers;
+    assert_eq!(
+        layers.iter().map(|l| l.component).collect::<Vec<_>>(),
+        [1, 8]
+    );
+    (layers[0].image.pixels[0], layers[1].image.pixels[0])
+}
+
+#[test]
+fn unique_monsters_draw_through_their_palette_shift() {
+    // Index 4 is row 3: i ^ 48. Only the opaque layer (trans_a == 0) shifts.
+    assert_eq!(coldcrow_pixels(Some(colormap_file(4))), (10 ^ 48, 20));
+    // ... and the composite looks the shifted colour up in the palette
+    let dir = tempfile::tempdir().unwrap();
+    let overlay = coldcrow_game(dir.path(), Some(colormap_file(4)));
+    let (catalog, _) = ObjectCatalog::build(&overlay, GameVersion::V113c).unwrap();
+    let sprites = ObjectSprites::new(&overlay, &catalog);
+    let (placed, _) = sprites.place(&coldcrow_ds1(), &ObjectOptions::default());
+    let pal = palette();
+    let (img, origin) = placed[0].frame.composite(&pal).unwrap();
+    assert_eq!(origin, (-2, -2));
+    let rgb = |i: u8| {
+        let c = pal.colors[usize::from(i)];
+        Some([c[0], c[1], c[2], 255])
+    };
+    assert_eq!(img.get(0, 0), rgb(10 ^ 48));
+    assert_eq!(img.get(2, 0), rgb(20));
+}
+
+#[test]
+fn a_missing_or_short_colormap_draws_unshifted() {
+    assert_eq!(coldcrow_pixels(None), (10, 20));
+    // three rows: Index 4 (row 3) is past the end of the file
+    assert_eq!(coldcrow_pixels(Some(colormap_file(3))), (10, 20));
+    // one byte short of the fourth row
+    let mut short = colormap_file(4);
+    short.pop();
+    assert_eq!(coldcrow_pixels(Some(short)), (10, 20));
+}

@@ -24,7 +24,7 @@ pub mod tables;
 pub use error::{AssetError, Result};
 pub use mpq::{MpqArchive, MpqCoverage, MpqHeader};
 pub use names::{HarvestStats, KnownNames};
-pub use objects::{ObjectCatalog, ObjectClass, ObjectInfo, SpriteBase};
+pub use objects::{ObjectCatalog, ObjectClass, ObjectInfo, PaletteShift, SpriteBase};
 pub use overlay::{LayerId, Overlay};
 pub use path::GamePath;
 pub use presets::{LegacyEntry, MapCatalog, MapInfo, MapInfoSource, parse_legacy_ini};

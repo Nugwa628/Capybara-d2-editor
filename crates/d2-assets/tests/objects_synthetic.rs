@@ -799,3 +799,89 @@ fn placeable_lists_the_acts() {
     // Out-of-range acts clamp.
     assert_eq!(c.placeable(200).len(), c.placeable(4).len());
 }
+
+// ---------------------------------------------------------------- palette shifts
+
+/// MonStats with `count` filler rows whose row `34` has the code `code`
+/// (obj.txt act 1 type 1 id 34 is Bishibosh: token FS, RandTransforms row 16).
+fn monstats_with(count: usize, code: &str) -> Vec<u8> {
+    let mut rows = vec![s(&["Id", "hcIdx", "NameStr", "MonStatsEx", "Code"])];
+    for n in 0..count {
+        let c = if n == 34 {
+            code.to_owned()
+        } else {
+            format!("M{n}")
+        };
+        rows.push(vec![
+            format!("mon{n}"),
+            n.to_string(),
+            format!("Mon{n}"),
+            String::new(),
+            c,
+        ]);
+    }
+    tsv(&rows)
+}
+
+#[test]
+fn palette_shifts_come_from_obj_txt_when_the_token_matches() {
+    let bishibosh = d2_assets::PaletteShift {
+        path: r"Data\Global\Monsters\RandTransforms.dat".to_owned(),
+        row: 15,
+    };
+    // Without monster tables the embedded obj.txt draws the row itself.
+    let (_d, bare, _w) = build(&[], GameVersion::V114d);
+    let info = resolve(&bare, 0, 18, 1, 34);
+    assert_eq!(info.token.as_deref(), Some("FS"));
+    assert_eq!(info.colormap.as_ref(), Some(&bishibosh));
+    // ... a monster's own Palshift.dat (Blood Raven, Index 3)
+    let raven = resolve(&bare, 0, 18, 1, 12).colormap.unwrap();
+    assert_eq!(
+        (raven.path.as_str(), raven.row),
+        (r"Data\Global\Monsters\CR\COF\Palshift.dat", 2)
+    );
+    // ... and nothing for rows without a Colormap, other acts, or below v5
+    assert_eq!(resolve(&bare, 0, 18, 1, 0).colormap, None);
+    assert_eq!(resolve(&bare, 1, 18, 1, 34).colormap, None);
+    assert_eq!(resolve(&bare, 0, 18, 2, 34).colormap, None);
+
+    // Through MonStats: kept when the resolved token is obj.txt's ...
+    let mut files = mon_files(40);
+    files.retain(|(name, _)| !name.ends_with("monstats.txt"));
+    files.push((excel("monstats.txt"), monstats_with(40, "FS")));
+    let (_d, same, _w) = build_owned(&files, GameVersion::V114d);
+    let info = resolve(&same, 0, 18, 1, 34);
+    assert_eq!(
+        (info.source, info.token.as_deref()),
+        ("monpreset", Some("FS"))
+    );
+    assert_eq!(info.colormap.as_ref(), Some(&bishibosh));
+    assert_eq!(
+        resolve(&same, 0, 4, 1, 34).colormap,
+        None,
+        "pre-v5 ids are raw rows"
+    );
+    // ... dropped when the mod draws something else there
+    let (_d, other, _w) = build_owned(&mon_files(40), GameVersion::V114d);
+    let info = resolve(&other, 0, 18, 1, 34);
+    assert_eq!(info.token.as_deref(), Some("M34"));
+    assert_eq!(info.colormap, None);
+}
+
+#[test]
+fn palette_shift_rows_are_256_bytes() {
+    let shift = d2_assets::PaletteShift {
+        path: "x".to_owned(),
+        row: 1,
+    };
+    let bytes: Vec<u8> = (0..512u32).map(|i| (i / 2) as u8).collect();
+    let row = shift.row_in(&bytes).unwrap();
+    assert_eq!((row[0], row[255]), (128, 255));
+    // the reference refuses a row that runs past the end of the file
+    assert!(shift.row_in(&bytes[..511]).is_none());
+    let far = d2_assets::PaletteShift {
+        path: "x".to_owned(),
+        row: u32::MAX,
+    };
+    assert!(far.row_in(&bytes).is_none());
+}

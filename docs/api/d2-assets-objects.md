@@ -5,12 +5,25 @@ via the act×150 remap) to what is needed to draw and name them. Used by P5
 object rendering and the app's object picker.
 
 ```rust
-// lib.rs: pub mod objects; pub use objects::{ObjectCatalog, ObjectInfo, ObjectClass, SpriteBase};
+// lib.rs: pub mod objects; pub use objects::{ObjectCatalog, ObjectInfo, ObjectClass, PaletteShift, SpriteBase};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ObjectClass { Npc /* DS1 type 1 */, Object /* type 2 */, Other(i32) }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SpriteBase { Objects /* data\global\objects */, Monsters /* data\global\monsters */ }
+
+/// A unique/special monster's palette shift: DS1Edit obj.txt `Colormap` + `Index`
+/// (cof.c:216-242). The file is a run of 256-byte rows (RandTransforms.dat: 30,
+/// a monster's COF\Palshift.dat: 8); the row maps palette index -> index.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PaletteShift {
+    pub path: String, // as obj.txt names it, e.g. "Data\Global\Monsters\RandTransforms.dat"
+    pub row: u32,     // obj.txt Index - 1 (Index 0/empty = no shift, never stored)
+}
+impl PaletteShift {
+    /// The row in the file's bytes; None when the file is too short (the reference then draws unshifted).
+    pub fn row_in<'a>(&self, bytes: &'a [u8]) -> Option<&'a [u8; 256]>;
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObjectInfo {
@@ -35,6 +48,9 @@ pub struct ObjectInfo {
     pub draw_effect: Option<u8>,      // object-level transparency/blend if the table has one
     pub frame_count: Option<u32>,     // FrameCnt of the mode
     pub frame_delta: Option<u32>,     // FrameDelta of the mode (animation speed, 256 = 1 frame per tick)
+    /// obj.txt palette shift of row (act, type, id), only when that row draws the same token
+    /// (type 1 needs DS1 v5+). Renderers map layers with trans_a == 0 through it (cof.c:343-361).
+    pub colormap: Option<PaletteShift>,
     pub source: &'static str,         // "objpreset" | "obj.txt" | "monpreset" | "unresolved"
 }
 

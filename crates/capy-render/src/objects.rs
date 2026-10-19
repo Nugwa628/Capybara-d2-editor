@@ -21,6 +21,13 @@
 //! 5. The frame is chosen by [`frame_index`]; layers are listed in COF priority
 //!    order (`preview.c:2095`), each with its blend (`preview.c:2131`) and, for
 //!    layers with `shadow != 0`, its shadow darkness (`preview.c:2235-2259`).
+//! 6. A unique or special monster with an obj.txt palette shift
+//!    ([`ObjectInfo::colormap`]) has the palette indices of its layers with
+//!    `trans_a == 0` mapped through the shift's 256-byte row as the sprites
+//!    load (`cof.c:216-242,343-361`), so [`FrameLayer::image`] already holds
+//!    the shifted indices and every later palette lookup sees them. A
+//!    colormap file that is missing or too short for the row draws the
+//!    monster unshifted, as the reference does.
 //!
 //! The bitmap of a layer in the reference is the whole direction box (the
 //! union of the frame boxes), anchored at the box's top-left corner
@@ -38,7 +45,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use d2_assets::objects::{ObjectCatalog, ObjectInfo, SpriteBase};
+use d2_assets::objects::{ObjectCatalog, ObjectInfo, PaletteShift, SpriteBase};
 use d2_assets::{GamePath, Overlay};
 use d2_formats::IndexedImage;
 use d2_formats::animdata::AnimData;
@@ -315,16 +322,44 @@ type FrameKey = (u8, (i32, i32), u8);
 
 type AssetResult = std::result::Result<Arc<Asset>, MissingReason>;
 
+/// What one cached [`Asset`] is loaded from.
+struct AssetSpec<'s> {
+    base: SpriteBase,
+    token: &'s str,
+    mode: &'s str,
+    class: &'s str,
+    skins: &'s [(String, String)],
+    user_dir: u8,
+    /// The palette shift row for layers with `trans_a == 0`.
+    shift: Option<&'s [u8; 256]>,
+}
+
 /// Loads object sprites through an overlay and caches them.
 ///
 /// Composites are cached per (sprite key, direction, frame): the sprite key is
-/// base, token, mode, class and skins, so objects sharing a sprite share one
-/// decode.
+/// base, token, mode, class, skins and palette shift, so objects sharing a
+/// sprite share one decode.
 pub struct ObjectSprites<'a> {
     overlay: &'a Overlay,
     catalog: &'a ObjectCatalog,
     animdata: OnceLock<Option<AnimData>>,
     assets: Mutex<HashMap<String, AssetResult>>,
+    /// Colormap files by lower-case path (`None` when absent).
+    colormaps: Mutex<HashMap<String, Option<Arc<[u8]>>>>,
+}
+
+/// Maps the visible pixels of `frames` through a palette shift row
+/// (`index -> row[index]`, `cof.c:149-170`, `dc6.c:93-130`). Transparent
+/// pixels (alpha 0 or index 0) stay as they are; a row entry of 0 makes a
+/// visible pixel transparent, which no shipped colormap row does.
+pub(crate) fn shift_palette(frames: &mut [IndexedImage], row: &[u8; 256]) {
+    for frame in frames {
+        for (p, &a) in frame.pixels.iter_mut().zip(&frame.alpha) {
+            if a != 0 && *p != 0 {
+                *p = row[usize::from(*p)];
+            }
+        }
+    }
 }
 
 fn file_direction(cof_dirs: u8, user: u8) -> u8 {
@@ -375,7 +410,24 @@ impl<'a> ObjectSprites<'a> {
             catalog,
             animdata: OnceLock::new(),
             assets: Mutex::new(HashMap::new()),
+            colormaps: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The row of a palette shift, `None` when its file is missing or too
+    /// short for the row (`cof.c:232-247`).
+    fn palette_shift(&self, shift: &PaletteShift) -> Option<[u8; 256]> {
+        let file = {
+            let mut cache = self
+                .colormaps
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            cache
+                .entry(shift.path.to_ascii_lowercase())
+                .or_insert_with(|| self.read(&shift.path).map(Arc::from))
+                .clone()
+        }?;
+        shift.row_in(&file).copied()
     }
 
     pub fn catalog(&self) -> &ObjectCatalog {
@@ -501,12 +553,27 @@ impl<'a> ObjectSprites<'a> {
             .iter()
             .map(|(c, s)| (c.to_ascii_uppercase(), path_token(s)))
             .collect();
-        let key = format!("{base:?}|{token}|{mode}|{class}|{skins:?}|{direction}");
+        let shift = info
+            .colormap
+            .as_ref()
+            .and_then(|c| Some((c, self.palette_shift(c)?)));
+        let shift_key = shift.map(|(c, _)| format!("{}#{}", c.path.to_ascii_lowercase(), c.row));
+        let key = format!("{base:?}|{token}|{mode}|{class}|{skins:?}|{direction}|{shift_key:?}");
         let asset = {
             let mut cache = self.assets.lock().unwrap_or_else(PoisonError::into_inner);
             cache
                 .entry(key)
-                .or_insert_with(|| self.load_asset(base, &token, &mode, &class, &skins, direction))
+                .or_insert_with(|| {
+                    self.load_asset(&AssetSpec {
+                        base,
+                        token: &token,
+                        mode: &mode,
+                        class: &class,
+                        skins: &skins,
+                        user_dir: direction,
+                        shift: shift.as_ref().map(|(_, row)| row),
+                    })
+                })
                 .clone()
         }?;
         // Frame choice: objects use their Objects.txt FrameDelta (0 already
@@ -532,15 +599,16 @@ impl<'a> ObjectSprites<'a> {
         Ok(cached)
     }
 
-    fn load_asset(
-        &self,
-        base: SpriteBase,
-        token: &str,
-        mode: &str,
-        class: &str,
-        skins: &[(String, String)],
-        user_dir: u8,
-    ) -> AssetResult {
+    fn load_asset(&self, spec: &AssetSpec<'_>) -> AssetResult {
+        let &AssetSpec {
+            base,
+            token,
+            mode,
+            class,
+            skins,
+            user_dir,
+            shift,
+        } = spec;
         let folder = base_folder(base);
         let cof_path = cof_path(folder, token, mode, class);
         let bytes = self
@@ -577,7 +645,11 @@ impl<'a> ObjectSprites<'a> {
                 code,
                 skin,
             );
-            let frames = self.load_component(&paths, &cof, dir);
+            let mut frames = self.load_component(&paths, &cof, dir);
+            // cof.c:343-345: the colormap skips alpha-blended layers.
+            if let (Some(row), Some(frames), 0) = (shift, frames.as_mut(), record.transparent) {
+                shift_palette(frames, row);
+            }
             *slot = frames.map(|frames| LayerSprite {
                 component: record.component,
                 shadow: record.shadow != 0,
