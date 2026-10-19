@@ -97,7 +97,7 @@ fn catalog(install: &Install) -> MapCatalog {
 
 fn describe(info: &MapInfo) -> String {
     format!(
-        "{:?} type={:?} def={:?} slot={:?} act={} pal={} dt1={} missing={}",
+        "{:?} type={:?} def={:?} slot={:?} act={} pal={} dt1={} missing={} cov={:?}",
         info.source,
         info.lvl_type,
         info.lvlprest_def,
@@ -105,7 +105,8 @@ fn describe(info: &MapInfo) -> String {
         info.act,
         info.palette_act,
         info.dt1_files.len(),
-        info.missing_dt1.len()
+        info.missing_dt1.len(),
+        info.coverage
     )
 }
 
@@ -138,6 +139,36 @@ fn source_counts_and_missing_dt1s() {
         for (ds1, missing) in with_missing.iter().take(10) {
             println!("  missing: {ds1} -> {missing:?}");
         }
+        // Coverage distribution per source; for LvlPrest, split by whether the
+        // LvlType came straight from Levels (LevelId > 0, the plain rule).
+        let mut histos: BTreeMap<String, [usize; 5]> = BTreeMap::new();
+        for ds1 in &install.ds1 {
+            let Some(best) = catalog.best(ds1) else {
+                continue;
+            };
+            let group = match (best.source, best.level_id) {
+                (MapInfoSource::LvlPrest, Some(level)) if level > 0 => {
+                    "LvlPrest (plain rule)".to_owned()
+                }
+                (MapInfoSource::LvlPrest, _) => "LvlPrest (LevelId 0 fallback)".to_owned(),
+                (source, _) => format!("{source:?}"),
+            };
+            let bucket = match best.coverage {
+                None => 4,
+                Some(c) if c >= 0.99 => 0,
+                Some(c) if c >= 0.90 => 1,
+                Some(c) if c >= 0.50 => 2,
+                Some(_) => 3,
+            };
+            histos.entry(group).or_default()[bucket] += 1;
+        }
+        println!(
+            "{}: coverage [>=0.99, 0.90-0.99, 0.50-0.90, <0.50, no cells] per source:",
+            install.label
+        );
+        for (group, h) in &histos {
+            println!("  {group}: {h:?}");
+        }
         assert!(empty_lookup.is_empty(), "{empty_lookup:?}");
     }
 }
@@ -164,11 +195,6 @@ fn vanilla_prest_named_ds1s_get_lvlprest_source() {
     );
     assert!(bad.is_empty(), "{bad:#?}");
 }
-
-/// Vanilla crypt presets (LevelId 0) that Median XL left in LvlPrest but whose
-/// tilesets it dropped: LvlTypes 4 now lists `mxl\quest\yshari` DT1s and no
-/// LvlType names a file under `act1\crypt\`, so there is nothing to resolve.
-const MXL_ORPHAN_PRESET_DIRS: &[&str] = &["data\\global\\tiles\\act1\\crypt\\"];
 
 #[test]
 fn mxl_prest_named_ds1s_resolve_fully() {
@@ -200,22 +226,10 @@ fn mxl_prest_named_ds1s_resolve_fully() {
         named.len(),
         problems.len()
     );
-    let unexpected: Vec<_> = problems
-        .iter()
-        .filter(|(ds1, _)| {
-            !MXL_ORPHAN_PRESET_DIRS
-                .iter()
-                .any(|d| ds1.as_str().starts_with(d))
-        })
-        .collect();
-    for (ds1, why) in unexpected.iter().take(40) {
+    for (ds1, why) in problems.iter().take(40) {
         println!("  {ds1}: {why}");
     }
-    assert!(
-        unexpected.is_empty(),
-        "{} unexpected problems",
-        unexpected.len()
-    );
+    assert!(problems.is_empty(), "{} problems", problems.len());
 }
 
 #[test]
@@ -269,6 +283,7 @@ fn legacy_ini_import_and_agreement() {
 
     // Informative: does the non-override best() pick the ini's (LvlType, Def)?
     let mut agree = 0usize;
+    let mut type_agree = 0usize;
     let mut disagree = Vec::new();
     for e in entries.iter().filter(|e| install.ds1.contains(&e.ds1)) {
         let best = catalog
@@ -276,6 +291,7 @@ fn legacy_ini_import_and_agreement() {
             .into_iter()
             .find(|i| i.source != MapInfoSource::Override)
             .unwrap();
+        type_agree += usize::from(best.lvl_type == Some(e.lvl_type));
         if best.lvl_type == Some(e.lvl_type) && best.lvlprest_def == Some(e.lvlprest_def) {
             agree += 1;
         } else {
@@ -290,8 +306,9 @@ fn legacy_ini_import_and_agreement() {
     }
     let total = agree + disagree.len();
     println!(
-        "legacy: agreement {agree}/{total} = {:.1}%",
-        100.0 * agree as f64 / total.max(1) as f64
+        "legacy: agreement {agree}/{total} = {:.1}% on (LvlType, Def); {type_agree}/{total} = {:.1}% on LvlType alone",
+        100.0 * agree as f64 / total.max(1) as f64,
+        100.0 * type_agree as f64 / total.max(1) as f64
     );
     for d in disagree.iter().take(60) {
         println!("  differs: {d}");

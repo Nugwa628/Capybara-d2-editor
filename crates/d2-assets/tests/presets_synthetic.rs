@@ -9,7 +9,7 @@ use d2_assets::{
     FolderSource, GamePath, GameVersion, LegacyEntry, MapCatalog, MapInfoSource, Overlay,
     parse_legacy_ini,
 };
-use d2_formats::ds1::Ds1;
+use d2_formats::ds1::{Cell, Ds1};
 
 const TILES: &str = "data\\global\\tiles\\";
 
@@ -236,6 +236,30 @@ fn write_tables(root: &Path) {
                 "0",
             ],
             &[
+                "Orphan",
+                "19",
+                "0",
+                "255",
+                "orphan\\p.ds1",
+                "0",
+                "0",
+                "0",
+                "0",
+                "0",
+            ],
+            &[
+                "Cave cov",
+                "20",
+                "1",
+                "5",
+                "act1\\cave\\cov.ds1",
+                "0",
+                "0",
+                "0",
+                "0",
+                "0",
+            ],
+            &[
                 "No file 1",
                 "16",
                 "1",
@@ -251,16 +275,38 @@ fn write_tables(root: &Path) {
     );
 }
 
+/// A DT1 holding header-only tiles with the given (orientation, main, sub)
+/// keys (no sub-blocks): enough for key sets.
+fn dt1_bytes(keys: &[KeySpec]) -> Vec<u8> {
+    let mut out = vec![0u8; 276];
+    out[0..4].copy_from_slice(&7i32.to_le_bytes());
+    out[4..8].copy_from_slice(&6i32.to_le_bytes());
+    out[268..272].copy_from_slice(&(keys.len() as i32).to_le_bytes());
+    out[272..276].copy_from_slice(&276i32.to_le_bytes());
+    for &(orientation, main, sub) in keys {
+        let mut tile = [0u8; 96];
+        tile[20..24].copy_from_slice(&orientation.to_le_bytes());
+        tile[24..28].copy_from_slice(&main.to_le_bytes());
+        tile[28..32].copy_from_slice(&sub.to_le_bytes());
+        out.extend_from_slice(&tile);
+    }
+    out
+}
+
+/// Each DT1's tile keys; unique per file so coverage tells them apart.
+type KeySpec = (i32, i32, i32);
+const DT1_FILES: &[(&str, &[KeySpec])] = &[
+    ("act1\\cave\\floor.dt1", &[(0, 1, 0), (0, 1, 1)]),
+    ("act1\\cave\\wall.dt1", &[(1, 2, 0), (19, 8, 0)]),
+    ("act1\\cave\\extra.dt1", &[(2, 3, 0)]),
+    ("act2\\desert\\floor.dt1", &[(0, 5, 0)]),
+    ("act2\\desert\\floor2.dt1", &[(0, 6, 0)]),
+    ("act4\\lava\\floor.dt1", &[(0, 7, 0)]),
+];
+
 fn write_dt1_stubs(root: &Path) {
-    for name in [
-        "act1\\cave\\floor.dt1",
-        "act1\\cave\\wall.dt1",
-        "act1\\cave\\extra.dt1",
-        "act2\\desert\\floor.dt1",
-        "act2\\desert\\floor2.dt1",
-        "act4\\lava\\floor.dt1",
-    ] {
-        write(root, &format!("{TILES}{name}"), b"dt1");
+    for (name, keys) in DT1_FILES {
+        write(root, &format!("{TILES}{name}"), &dt1_bytes(keys));
     }
 }
 
@@ -276,13 +322,81 @@ fn synthetic() -> Synthetic {
     for (name, act) in DS1_FILES {
         write(dir.path(), &format!("{TILES}{name}"), &ds1_bytes(*act));
     }
+    for (name, act, cells, refs) in CELL_DS1S {
+        write(
+            dir.path(),
+            &format!("{TILES}{name}"),
+            &ds1_with_cells(*act, cells, refs),
+        );
+    }
     let overlay = Overlay::new(vec![Box::new(FolderSource::new(dir.path(), "synthetic"))]);
     Synthetic { _dir: dir, overlay }
 }
 
+/// 'F' floor, 'S' shadow, 'W' wall (the second number is its orientation).
+type CellSpec = (char, u8, u8, u8);
+
+/// Cells are placed row by row on a 4x4 map.
+fn ds1_with_cells(act: i32, cells: &[CellSpec], refs: &[&str]) -> Vec<u8> {
+    let mut ds1 = Ds1::new(4, 4, act);
+    for (i, &(kind, a, main, sub)) in cells.iter().enumerate() {
+        let (x, y) = (i as u32 % 4, i as u32 / 4);
+        let cell = Cell(1).with_indices(main, sub);
+        match kind {
+            'F' => assert!(ds1.floors[0].set(x, y, cell)),
+            'S' => assert!(ds1.shadow.set(x, y, cell)),
+            'W' => {
+                assert!(ds1.walls[0].tiles.set(x, y, cell));
+                assert!(ds1.walls[0].orientations.set(x, y, u32::from(a)));
+            }
+            _ => panic!("bad cell kind"),
+        }
+    }
+    ds1.files = refs.iter().map(|r| r.as_bytes().to_vec()).collect();
+    ds1.to_bytes().unwrap()
+}
+
+/// DS1s with cells or a tileset list, for the coverage tests.
+const CELL_DS1S: &[(&str, i32, &[CellSpec], &[&str])] = &[
+    // Desert dir: types 2, 4, 5 tie on directory; floor2.dt1 (type 4) has the tile.
+    ("act2\\desert\\cov.ds1", 1, &[('F', 0, 6, 0)], &[]),
+    // Same tie, no cells: the DS1's own tileset list names floor2.dt1.
+    (
+        "act2\\desert\\ref.ds1",
+        1,
+        &[],
+        &["act2\\desert\\floor2.dt1", "DS1EDIT_WRKSPC_x"],
+    ),
+    // No directory candidate: only lava floor.dt1 has (0,7,0).
+    ("elsewhere\\tc.ds1", 3, &[('F', 0, 7, 0)], &[]),
+    // 1 of 2 cells resolves: below the 0.90 bar.
+    (
+        "elsewhere\\low.ds1",
+        2,
+        &[('F', 0, 7, 0), ('F', 0, 99, 0)],
+        &[],
+    ),
+    // Wall 18/3/sub 4 resolves through 19/3/sub 0? No: cave wall.dt1 holds 19/8/0,
+    // so wall (18, 8, 4) falls back 18->19, sub 0.
+    ("elsewhere\\wall.ds1", 0, &[('W', 18, 8, 4)], &[]),
+    // A LvlPrest row (def 19) with LevelId 0 and no directory candidate.
+    ("orphan\\p.ds1", 1, &[('F', 0, 5, 0), ('F', 0, 5, 0)], &[]),
+    // A normal LvlPrest map with cells: floor.dt1 + extra.dt1 hold 1 of 2.
+    (
+        "act1\\cave\\cov.ds1",
+        0,
+        &[('F', 0, 1, 0), ('F', 0, 9, 9)],
+        &[],
+    ),
+];
+
 fn catalog() -> (Synthetic, MapCatalog, Vec<String>) {
     let s = synthetic();
-    let names: Vec<GamePath> = DS1_FILES.iter().map(|(n, _)| gp(n)).collect();
+    let names: Vec<GamePath> = DS1_FILES
+        .iter()
+        .map(|(n, _)| gp(n))
+        .chain(CELL_DS1S.iter().map(|(n, ..)| gp(n)))
+        .collect();
     let (catalog, warnings) = MapCatalog::build(&s.overlay, GameVersion::V114d, &names).unwrap();
     (s, catalog, warnings)
 }
@@ -572,7 +686,87 @@ fn import_legacy_counts_known_ds1s_only() {
 fn source_order_is_preference_order() {
     assert!(MapInfoSource::Override < MapInfoSource::LvlPrest);
     assert!(MapInfoSource::LvlPrest < MapInfoSource::PathGuess);
-    assert!(MapInfoSource::PathGuess < MapInfoSource::Ds1Header);
+    assert!(MapInfoSource::PathGuess < MapInfoSource::TileCoverage);
+    assert!(MapInfoSource::TileCoverage < MapInfoSource::Ds1Header);
+}
+
+// ------------------------------------------------------------ tile coverage
+
+#[test]
+fn coverage_ranks_directory_candidates_first() {
+    let (_s, catalog, _) = catalog();
+    // Types 2, 4 and 5 tie on the directory (lowest id would be 2), but only
+    // type 4's floor2.dt1 has the DS1's one tile.
+    let info = catalog.best(&gp("act2\\desert\\cov.ds1")).unwrap();
+    assert_eq!(info.source, MapInfoSource::PathGuess);
+    assert_eq!(info.lvl_type, Some(4));
+    assert_eq!(info.coverage, Some(1.0));
+}
+
+#[test]
+fn tileset_list_breaks_coverage_ties() {
+    let (_s, catalog, _) = catalog();
+    // No cells, so coverage cannot tell types 2/4/5 apart; the DS1's own
+    // file list names floor2.dt1 (type 4).
+    let info = catalog.best(&gp("act2\\desert\\ref.ds1")).unwrap();
+    assert_eq!(info.source, MapInfoSource::PathGuess);
+    assert_eq!(info.lvl_type, Some(4));
+    assert_eq!(info.coverage, None);
+}
+
+#[test]
+fn tile_coverage_source_without_directory_candidates() {
+    let (_s, catalog, _) = catalog();
+    let info = catalog.best(&gp("elsewhere\\tc.ds1")).unwrap();
+    assert_eq!(info.source, MapInfoSource::TileCoverage);
+    assert_eq!(info.lvl_type, Some(35));
+    assert_eq!(info.coverage, Some(1.0));
+    assert_eq!((info.act, info.palette_act), (4, 3));
+    assert_eq!(info.dt1_files, vec![gp("act4\\lava\\floor.dt1")]);
+    assert!(info.lvlprest_def.is_none());
+}
+
+#[test]
+fn low_coverage_falls_to_the_header() {
+    let (_s, catalog, _) = catalog();
+    let info = catalog.best(&gp("elsewhere\\low.ds1")).unwrap();
+    assert_eq!(info.source, MapInfoSource::Ds1Header);
+    assert_eq!(info.act, 2);
+    assert_eq!(info.coverage, None);
+}
+
+#[test]
+fn wall_fallbacks_count_as_covered() {
+    let (_s, catalog, _) = catalog();
+    // Wall (18, 8, 4): DT1 has (19, 8, 0) only: orientation swap, then sub 0.
+    let info = catalog.best(&gp("elsewhere\\wall.ds1")).unwrap();
+    assert_eq!(info.source, MapInfoSource::TileCoverage);
+    assert_eq!(info.lvl_type, Some(1));
+    assert_eq!(info.coverage, Some(1.0));
+}
+
+#[test]
+fn lvlprest_row_without_a_level_uses_the_coverage_winner() {
+    let (_s, catalog, _) = catalog();
+    let info = catalog.best(&gp("orphan\\p.ds1")).unwrap();
+    assert_eq!(info.source, MapInfoSource::LvlPrest);
+    assert_eq!(info.lvlprest_def, Some(19));
+    assert_eq!(info.lvl_type, Some(2));
+    assert_eq!(info.dt1_files, vec![gp("act2\\desert\\floor.dt1")]);
+    assert_eq!(info.coverage, Some(1.0));
+}
+
+#[test]
+fn coverage_is_reported_for_plain_lvlprest_maps() {
+    let (_s, catalog, _) = catalog();
+    let info = catalog.best(&gp("act1\\cave\\cov.ds1")).unwrap();
+    assert_eq!(info.source, MapInfoSource::LvlPrest);
+    assert_eq!(info.coverage, Some(0.5));
+    // Overrides carry none.
+    let explicit = catalog
+        .resolve_explicit(&gp("act1\\cave\\cov.ds1"), 1, Some(20))
+        .unwrap();
+    assert_eq!(explicit.coverage, None);
 }
 
 // ------------------------------------------------------------ malformed tables
