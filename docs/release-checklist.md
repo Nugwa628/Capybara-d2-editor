@@ -1,6 +1,6 @@
 # Release checklist
 
-Steps to build and check a release of `CapybaraMapEditor.exe` before it is
+Steps to build and check a release of `CapybarasD2Editor.exe` before it is
 zipped and shared. Each step says what to run and what to expect. The
 results of the last dry run are at the end, together with open issues.
 
@@ -15,7 +15,7 @@ cargo build --release -p capy-app
 
 - Profile (root `Cargo.toml`): `lto = "thin"`, `strip = true`,
   `codegen-units = 1`. Never enable the `dev` feature (it links Bevy as a DLL).
-- Output: `target\release\CapybaraMapEditor.exe`.
+- Output: `target\release\CapybarasD2Editor.exe`.
 - Expect: no warnings from workspace crates; an exe of about **58 MB**
   (60,306,944 bytes on 2026-10-19); 15 minutes from cold with 2 jobs.
 
@@ -27,8 +27,8 @@ recommended but not yet adopted.
 With the Visual Studio build tools:
 
 ```
-dumpbin /headers   target\release\CapybaraMapEditor.exe | Select-String subsystem
-dumpbin /dependents target\release\CapybaraMapEditor.exe
+dumpbin /headers   target\release\CapybarasD2Editor.exe | Select-String subsystem
+dumpbin /dependents target\release\CapybarasD2Editor.exe
 ```
 
 Expect:
@@ -43,8 +43,15 @@ Expect:
 - **No** `bevy_dylib*.dll`, `std-*.dll` or other Rust DLLs.
 - `VCRUNTIME140.dll` is **not** part of Windows. Today's build imports it
   (see open issue 2). With a static-CRT build it must be gone.
-- No `.rsrc` section today: the exe has no icon, version info or manifest
-  (open issue 5).
+- A `.rsrc` section with the capybara icon and the version information
+  (`crates/capy-app/build.rs`, needs `rc.exe` from the Windows SDK; without
+  it the build prints `warning: no icon or version info in the exe`). Check:
+  ```
+  (Get-Item target\release\CapybarasD2Editor.exe).VersionInfo | Format-List ProductName, FileDescription, FileVersion, ProductVersion, OriginalFilename
+  ```
+  Expect `Capybara's D2 Editor` (twice), the workspace version (`0.1.0`)
+  twice and `CapybarasD2Editor.exe`; Explorer shows the capybara icon. There
+  is no manifest (none is needed: winit sets DPI awareness at run time).
 
 ## 3. No data folder: every editor asset is embedded
 
@@ -62,6 +69,10 @@ Expect (2026-10-19):
 | `assets/editor/obj.txt` | `include_bytes!` in `d2-assets/src/objects.rs` |
 | `capy-app/src/render/tile_material.wesl` | `embedded_asset!` + `embedded://` path in `capy-app/src/render/material.rs` |
 | UI font | egui `default_fonts` feature (compiled in) |
+| `assets/branding/capybara.ico` | `include_bytes!` in `capy-app/src/branding.rs` (window/taskbar icon, loading-screen capybara) and the exe resource (`build.rs`) |
+
+The loading screen's door animation, palette and font are read from the
+start profile's game files at run time (read-only), not shipped.
 
 Nothing may be loaded through the `AssetServer` from an `assets\` folder, and
 no `std::fs::read` may point at a path inside the repository. All other file
@@ -76,7 +87,7 @@ Copy only the exe into an empty folder, with `CAPY_HOME` unset:
 
 ```
 New-Item -ItemType Directory $S\clean
-Copy-Item target\release\CapybaraMapEditor.exe $S\clean\
+Copy-Item target\release\CapybarasD2Editor.exe $S\clean\
 Remove-Item Env:CAPY_HOME -ErrorAction SilentlyContinue
 cd $S\clean
 ```
@@ -90,12 +101,13 @@ console wait.
 
 | Command | Expect |
 |---|---|
-| `CapybaraMapEditor.exe --help` | help text on stdout, exit 0 |
-| `CapybaraMapEditor.exe profiles list` | `no profiles in <dir>\capybara\profiles`, exit 0 |
-| `CapybaraMapEditor.exe render data\global\tiles\act1\town\towne1.ds1 --profile vanilla --zoom 1:4 --out t.png` | `error: cannot read profile ...vanilla.toml ...`, exit 1 |
+| `CapybarasD2Editor.exe --help` | help text on stdout, exit 0 |
+| `CapybarasD2Editor.exe profiles list` | `note: wrote default profile ...vanilla.toml` (and `mxl.toml` when Median XL is found) on stderr, then the profiles, exit 0 |
+| `CapybarasD2Editor.exe render data\global\tiles\act1\town\towne1.ds1 --profile vanilla --zoom 1:4 --out t.png` | a PNG of the town, exit 0 |
 
-The CLI never creates `capybara\` and never writes the default profiles;
-only the GUI's first start does (open issue 3).
+The CLI writes the default profiles itself (into `capybara\profiles\`
+only; `profiles list` checked on the debug build 2026-10-19), so it works
+before the GUI has ever run.
 
 ### 4b. GUI first start
 
@@ -103,7 +115,7 @@ only the GUI's first start does (open issue 3).
 $env:CAPY_SCREENSHOT = "$S\gui1.png"
 $env:CAPY_PROFILE    = "vanilla"
 $env:CAPY_OPEN_MAP   = "data\global\tiles\act1\town\towne1.ds1"
-.\CapybaraMapEditor.exe   # exits by itself after the screenshot
+.\CapybarasD2Editor.exe   # exits by itself after the screenshot
 ```
 
 Expect:
@@ -113,7 +125,15 @@ Expect:
   (+ `mxl.toml` if Median XL is installed), `saves\`, `history\`,
   `cache\known-names-vanilla.txt/.json`, `cache\index.db*`;
 - the screenshot shows towne1 textured, with the Maps list filled and no
-  error lines in the Log panel.
+  error lines in the Log panel. (Verification hooks such as
+  `CAPY_SCREENSHOT` start without the loading screen.)
+
+Then start the exe by double-click, without the variables: the window is
+titled "Capybara's D2 Editor" with the capybara in the title bar and
+taskbar, and the loading screen (door animation, capybara in the door, gold
+title on the plate) plays until the Maps list is ready, then fades out. A
+click or Esc skips it; **File > Settings... > Show loading screen** turns it
+off (`show_loading_screen` in `config.toml`).
 
 Full index build (optional, about 16 s for vanilla):
 `$env:CAPY_EXIT_WHEN_INDEXED = "1"` with `CAPY_PROFILE=vanilla`; expect
@@ -134,17 +154,33 @@ also blocks starting the exe.
 
 ```
 New-Item -ItemType Directory $S\ro
-Copy-Item target\release\CapybaraMapEditor.exe $S\ro\
+Copy-Item target\release\CapybarasD2Editor.exe $S\ro\
 icacls $S\ro /deny "$env:USERDOMAIN\$env:USERNAME:(WD,AD)"
-Start-Process $S\ro\CapybaraMapEditor.exe     # look at the window, then Quit
+Start-Process $S\ro\CapybarasD2Editor.exe     # read the message box, then OK
 icacls $S\ro /remove:d "$env:USERDOMAIN\$env:USERNAME"   # always restore
 ```
 
-Expect a small window titled "Capybara Map Editor" with the heading
-"Capybara Map Editor cannot use its data folder", the path and OS error
-(`Access is denied. (os error 5)`), the CAPY_HOME hint and a Quit button.
-Nothing is created anywhere. The screenshot hook does not apply to this
-window, so close it by hand.
+Expect a native error box titled "Capybara's D2 Editor" with the heading
+"Capybara's D2 Editor cannot use its data folder", the path and OS error
+(`Access is denied. (os error 5)`) and the CAPY_HOME hint. Nothing is
+created anywhere (so there is no crash.log either). It needs no GPU.
+
+## 5b. Crash report
+
+```
+$env:CAPY_HOME = "$S\nogpu\capybara"; $env:WGPU_BACKEND = "metal"
+.\CapybarasD2Editor.exe
+Remove-Item Env:WGPU_BACKEND, Env:CAPY_HOME
+```
+
+Expect an error box titled "Capybara's D2 Editor": "stopped because of an
+unexpected error: Unable to find a GPU! ...", the Vulkan/DirectX 12 hint and
+the path of `capybara\crash.log`. After OK the exe exits with 101 and
+`crash.log` holds the time, version, message, location and backtrace
+(frames without symbols in a stripped release build).
+`CAPY_NO_CRASH_DIALOG=1` skips the box (the automated test `startup_crash`
+uses it with `CAPY_DEBUG_PANIC=1`, which panics right after the hook is
+installed). Checked on the debug build 2026-10-19.
 
 ## 6. Game folders untouched
 
@@ -218,7 +254,7 @@ Tested on 2026-10-19 without the Bevy build: `-DryRun`; `-SkipBuild` with a
 small static-CRT GUI exe built with the same flags (all checks pass, zip of 7
 entries); a console exe with a dynamic CRT (fails on subsystem and
 `VCRUNTIME140.dll` / `api-ms-win-crt-*`); an exe with an absolute source path
-(fails on the user folder); the debug `CapybaraMapEditor.exe` (fails all
+(fails on the user folder); the debug `CapybaraMapEditor.exe` of that time (fails all
 three, 8,060 `C:\Users\<name>\.cargo` paths); the old bin name in the release
 folder (picked up and renamed); a stale `THIRD-PARTY-LICENSES.md` (fails at
 step 1).
@@ -239,19 +275,17 @@ step 1).
 | CLI after GUI | `profiles list` 0, `render` 0 (4.7 s, 45 MB, 1 object warning: `tanuhth.cof` not found) |
 | Index build | 45,857 assets in 16.0 s, 7 warnings, `index.db` 200 MB |
 | Not writable | clear error window, nothing created, no crash |
-| No GPU (`WGPU_BACKEND=metal`) | **silent exit 101**, panic text only on stderr |
+| No GPU (`WGPU_BACKEND=metal`) | **silent exit 101**, panic text only on stderr (fixed since: error box + crash.log, see 5b) |
 | Static-CRT build (open issues 2 and 4) | OK, 11 min 52 s, no warnings, 60,383,232 bytes; imports system DLLs only (no `VCRUNTIME140`, no `api-ms-win-crt-*`); 0 registry paths left; GUI screenshot identical in content, CLI `render` PNG byte-identical to the default build |
 
 ## Open issues
 
 Ranked; each says whether it is a build/packaging change or a source change.
 
-1. **Startup failures are silent in release (source).** With no usable GPU
-   adapter Bevy panics ("Unable to find a GPU!"); the GUI-subsystem exe has
-   no console, so a double-click shows nothing and exits with 101. There is
-   no panic hook and no log file. Proposal: a panic hook in `main.rs` that
-   writes `capybara\crash.log` and shows a native message box, and/or a
-   `capybara\log.txt` for Bevy's log in release.
+1. **Startup failures are silent in release (source).** Done (app release
+   round): a panic hook writes `capybara\crash.log` and shows a native
+   message box (section 5b). Still open: a `capybara\log.txt` for Bevy's
+   log in release.
 2. **VCRUNTIME140.dll dependency (packaging).** A clean Windows install
    without the Visual C++ 2015-2022 redistributable cannot start the exe.
    Recommended: build with a static CRT. This was tested in the dry run
@@ -279,19 +313,14 @@ Ranked; each says whether it is a build/packaging change or a source change.
    in the release `RUSTFLAGS` (tested, see the command in issue 2: no
    registry paths remain; the `/rustc/<hash>/library/...` std paths that
    remain hold no user data).
-5. **No icon, version info or manifest (packaging).** The exe has no
-   `.rsrc` section, so Explorer shows a generic icon, Properties > Details
-   is empty, and the window icon is Bevy's default. Needs an `.ico` (a
-   design decision), then a `build.rs` with a resource crate such as
-   `winresource` or `embed-resource`. Nothing breaks without a manifest
-   today (winit sets DPI awareness at run time; rfd uses COM dialogs only).
-6. **System requirements are not documented (docs).** README and user
-   guide don't say Windows 10/11 x64, a GPU with Vulkan or DirectX 12
-   drivers, or (until issue 2 is fixed) the VC++ redistributable.
-7. **README is behind (docs).** It says the tile browser/Ctrl+K are "in
-   development" and the history timeline/restore are "planned" (P3 and P4
-   are done), and it lists `C:\games\median-xl` as a default install
-   location, which PLAN.md says the docs should not present as standard.
+5. **No icon, version info or manifest (packaging).** Done: icon and
+   version information via `build.rs` (`winresource`); no manifest (none
+   needed).
+6. **System requirements are not documented (docs).** Done in README and
+   the user guide (Windows 10/11 x64, Vulkan or DirectX 12 driver; the
+   static-CRT release needs no VC++ redistributable).
+7. **README is behind (docs).** Done: features are current and
+   `C:\games\median-xl` is no longer presented as a standard location.
 8. **Interrupted index builds start over (source, minor).** Quitting while
    the index builds leaves a large `index.db-wal` (12-57 MB here); the next
    start rebuilds from scratch. A full vanilla build takes only 16 s, so

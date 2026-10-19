@@ -360,7 +360,7 @@ fn dcc_warning(ctx: &Context, state: &mut AppState) {
             DccWrite::Export(p) => p.display().to_string(),
         };
         ui.label(format!(
-            "{} 4x4 cell(s) hold more than 4 values. A DCC cell can store 4 at most,              so writing {what} merges the nearest colours in those cells.",
+            "{} 4x4 cell(s) hold more than 4 values. A DCC cell can store 4 at most, so writing {what} merges the nearest colours in those cells.",
             w.cells
         ));
         if w.target == Target::Editor {
