@@ -23,14 +23,10 @@ fn settings_window(ctx: &Context, state: &mut AppState) {
         .id(Id::new("settings_window"))
         .open(&mut open)
         .collapsible(false)
-        .resizable(true)
+        .resizable(false)
         .default_width(460.0)
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(ctx.viewport_rect().height() * 0.8)
-                .show(ui, |ui| body(ui, state));
-        });
+        .show(ctx, |ui| body(ui, state));
     if !open {
         state.settings.open = false;
     }
@@ -56,7 +52,11 @@ fn body(ui: &mut egui::Ui, state: &mut AppState) {
             state.config.gamma = gamma;
             state.config_dirty = true;
         }
-        if ui.small_button("1.30").on_hover_text("Default").clicked() {
+        if ui
+            .small_button("Reset")
+            .on_hover_text("Back to 1.30")
+            .clicked()
+        {
             state.config.gamma = crate::config::DEFAULT_GAMMA;
             state.config_dirty = true;
         }
@@ -121,8 +121,8 @@ fn body(ui: &mut egui::Ui, state: &mut AppState) {
         ui.weak(if minutes == 0 { "(off)" } else { "" });
     });
     ui.weak(
-        r"Maps with unsaved changes are recorded in capybara\history\<profile>\. Autosave never \
-          writes saves or CHANGED.txt.",
+        "Maps with unsaved changes are recorded in capybara\\history\\<profile>\\. \
+         Autosave never writes saves or CHANGED.txt.",
     );
 
     section(ui, "History retention");
@@ -227,6 +227,8 @@ fn add_install(ctx: &Context, state: &mut AppState) {
         return;
     };
     let suggestions = state.install_suggestions();
+    let used_by =
+        crate::installs::profiles_using(&state.profiles, std::path::Path::new(add.dir.trim()));
     let picking = state.settings.picking();
     let mut cancel = false;
     let mut confirm = false;
@@ -267,6 +269,12 @@ fn add_install(ctx: &Context, state: &mut AppState) {
             ui.weak("No install was found in the registry or at the default locations.");
         }
         ui.separator();
+        if !add.dir.trim().is_empty() && !used_by.is_empty() {
+            ui.weak(format!(
+                "Already used by profile(s): {}. Adding it again makes another profile.",
+                used_by.join(", ")
+            ));
+        }
         match add.detected_kind() {
             Some(InstallKind::Vanilla) => {
                 ui.colored_label(

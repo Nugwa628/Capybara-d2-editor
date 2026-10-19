@@ -76,6 +76,7 @@
 //! history-select before wall            # or: history-select 0
 //! assert-diff floor0 12                 # changed cells on a layer vs the selection
 //! show-snapshot on                      # draw the selected snapshot (read-only)
+//! history-jump floor0                   # centre the map on that layer's next change
 //! restore before wall                   # BeforeRestore, then one undoable replace
 //! milestone first version               # gix commit of capybara\saves\
 //! assert-milestones 1
@@ -222,6 +223,8 @@ pub enum Cmd {
         count: usize,
     },
     ShowSnapshot(bool),
+    /// Centre the map on the next change of a layer (the panel's Jump).
+    HistoryJump(LayerRef),
     Restore(String),
     Milestone(String),
     AssertMilestones(usize),
@@ -796,6 +799,10 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
                 count: parse_usize(args[1], "count")?,
             }
         }
+        "history-jump" => {
+            need(1, "<layer>")?;
+            Cmd::HistoryJump(parse_layer(args[0])?)
+        }
         "show-snapshot" => {
             need(1, "on|off")?;
             Cmd::ShowSnapshot(parse_on(args[0])?)
@@ -1226,6 +1233,7 @@ history-select before wall
 history-select 0
 assert-diff floor0 12
 show-snapshot on
+history-jump wall1
 restore before wall
 milestone first version
 assert-milestones 1
@@ -1260,26 +1268,27 @@ close-dialogs
             }
         );
         assert_eq!(cmds[7], &Cmd::ShowSnapshot(true));
-        assert_eq!(cmds[8], &Cmd::Restore("before wall".to_owned()));
-        assert_eq!(cmds[9], &Cmd::Milestone("first version".to_owned()));
-        assert_eq!(cmds[10], &Cmd::AssertMilestones(1));
-        assert_eq!(cmds[11], &Cmd::Prune(1));
-        assert_eq!(cmds[12], &Cmd::AssertChanged(0));
+        assert_eq!(cmds[8], &Cmd::HistoryJump(LayerRef::Wall(1)));
+        assert_eq!(cmds[9], &Cmd::Restore("before wall".to_owned()));
+        assert_eq!(cmds[10], &Cmd::Milestone("first version".to_owned()));
+        assert_eq!(cmds[11], &Cmd::AssertMilestones(1));
+        assert_eq!(cmds[12], &Cmd::Prune(1));
+        assert_eq!(cmds[13], &Cmd::AssertChanged(0));
         assert_eq!(
-            cmds[13],
+            cmds[14],
             &Cmd::Setting {
                 key: "gamma".to_owned(),
                 value: "1.6".to_owned()
             }
         );
-        assert_eq!(cmds[14], &Cmd::HistoryTab);
-        assert_eq!(cmds[15], &Cmd::Settings(true));
+        assert_eq!(cmds[15], &Cmd::HistoryTab);
+        assert_eq!(cmds[16], &Cmd::Settings(true));
         assert_eq!(
-            cmds[16],
+            cmds[17],
             &Cmd::AddInstall(Some("C:\\Games\\Diablo II".to_owned()))
         );
-        assert_eq!(cmds[17], &Cmd::AddInstall(None));
-        assert_eq!(cmds[18], &Cmd::CloseDialogs);
+        assert_eq!(cmds[18], &Cmd::AddInstall(None));
+        assert_eq!(cmds[19], &Cmd::CloseDialogs);
         for bad in [
             "checkpoint",
             "assert-history",

@@ -105,7 +105,8 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     }
     let mut pick: Option<SnapshotId> = None;
     let mut action: Option<HistoryPrompt> = None;
-    egui::ScrollArea::vertical()
+    // Both directions: a wide grid must not widen the whole panel.
+    egui::ScrollArea::both()
         .id_salt("history_timeline")
         .max_height(240.0)
         .auto_shrink([false, true])
@@ -116,9 +117,9 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 .spacing([10.0, 3.0])
                 .show(ui, |ui| {
                     ui.weak("Kind");
+                    ui.weak("Name / label");
                     ui.weak("Time");
                     ui.weak("Size");
-                    ui.weak("Name / label");
                     ui.end_row();
                     for s in &timeline {
                         let is_sel = selected == Some(s.id);
@@ -135,14 +136,14 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                                 ui.close();
                             }
                         });
-                        ui.label(local_time(s.created_unix_ms, "%b %d %H:%M:%S"))
-                            .on_hover_text(local_time(s.created_unix_ms, "%Y-%m-%d %H:%M:%S %Z"));
-                        ui.label(human_size(s.size));
                         let mut label = display_name(s).unwrap_or("").to_owned();
                         if let (SnapshotKind::Checkpoint { .. }, Some(l)) = (&s.kind, &s.label) {
                             label = format!("{label} ({l})");
                         }
                         ui.label(label);
+                        ui.label(local_time(s.created_unix_ms, "%b %d %H:%M:%S"))
+                            .on_hover_text(local_time(s.created_unix_ms, "%Y-%m-%d %H:%M:%S %Z"));
+                        ui.label(human_size(s.size));
                         ui.end_row();
                     }
                 });
@@ -216,27 +217,23 @@ fn compare(ui: &mut Ui, state: &mut AppState, s: &Snapshot, viewing: bool) {
         ui.colored_label(Color32::from_rgb(235, 110, 90), e.to_owned());
         return;
     }
-    ui.horizontal_wrapped(|ui| {
-        ui.checkbox(
-            &mut state.history.overlay_visible,
-            "Show changes on the map",
-        );
-        let mut show = viewing;
-        if ui
-            .checkbox(&mut show, "Show snapshot")
-            .on_hover_text(
-                "Draw the snapshot in place of the map, read-only, to flip between then and now",
-            )
-            .changed()
-            && let Err(e) = state.set_show_snapshot(show)
-        {
-            state.error(e);
-        }
-    });
+    ui.checkbox(
+        &mut state.history.overlay_visible,
+        "Show changes on the map",
+    );
+    let mut show = viewing;
+    if ui
+        .checkbox(&mut show, "Show snapshot (read-only)")
+        .on_hover_text("Draw the snapshot in place of the map, to flip between then and now")
+        .changed()
+        && let Err(e) = state.set_show_snapshot(show)
+    {
+        state.error(e);
+    }
     if viewing {
         ui.colored_label(
             Color32::from_rgb(120, 190, 255),
-            "Showing the snapshot (read-only). Untick to edit the map again.",
+            "Showing the snapshot. Untick to edit the map again.",
         );
     }
     ui.horizontal(|ui| {
@@ -559,8 +556,8 @@ pub fn dialogs(ctx: &Context, state: &mut AppState) {
                 ctx,
                 "milestone_prompt",
                 "New milestone",
-                r"Commits every file in capybara\saves\ (all profiles) to its git repository. \
-                  Save your maps first: unsaved changes are not included.",
+                "Commits every file in capybara\\saves\\ (all profiles) to its git \
+                 repository. Save your maps first: unsaved changes are not included.",
                 message,
                 "Commit milestone",
             ) {

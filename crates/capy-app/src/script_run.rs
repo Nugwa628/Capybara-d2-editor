@@ -451,6 +451,7 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
         | Cmd::HistorySelect(_)
         | Cmd::AssertDiff { .. }
         | Cmd::ShowSnapshot(_)
+        | Cmd::HistoryJump(_)
         | Cmd::Restore(_)
         | Cmd::Milestone(_)
         | Cmd::AssertMilestones(_)
@@ -864,6 +865,7 @@ fn history_step(
             | Cmd::HistorySelect(_)
             | Cmd::AssertDiff { .. }
             | Cmd::ShowSnapshot(_)
+            | Cmd::HistoryJump(_)
             | Cmd::Restore(_)
     );
     let index = state.active;
@@ -949,6 +951,27 @@ fn history_step(
             }
         }
         Cmd::ShowSnapshot(on) => state.set_show_snapshot(*on),
+        Cmd::HistoryJump(layer) => {
+            state.history_frame();
+            let doc_id = state.docs[index].id;
+            let n = state.history.jump_cursor;
+            match state
+                .history
+                .overlay_for(doc_id)
+                .map(|o| o.nth_of(*layer, n))
+            {
+                None => Err("history-jump: no snapshot is selected".to_owned()),
+                Some(None) => Err(format!(
+                    "history-jump: no change on {}",
+                    crate::doc::layer_label(*layer)
+                )),
+                Some(Some((x, y))) => {
+                    state.history.jump_cursor = n + 1;
+                    state.jump_to_cell(x, y);
+                    Ok(())
+                }
+            }
+        }
         Cmd::Restore(key) => find_snapshot(state, index, key).and_then(|id| {
             let profile = state.docs[index].profile_id.clone();
             let expected = history::read_snapshot(&state.paths.history, &profile, id)?;

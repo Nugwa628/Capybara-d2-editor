@@ -820,6 +820,7 @@ impl AppState {
                     e.format = format;
                 }
                 self.refresh_changed();
+                self.history.invalidate();
                 self.start_saves_refresh();
                 Ok(report.path)
             }

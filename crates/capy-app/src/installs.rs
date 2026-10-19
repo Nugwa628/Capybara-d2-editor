@@ -236,6 +236,25 @@ pub fn unique_id(taken: &[String], base: &str) -> String {
         .unwrap_or_else(|| base.to_owned())
 }
 
+/// Ids of the profiles that already read archives or folders in `dir`.
+pub fn profiles_using(profiles: &[Profile], dir: &Path) -> Vec<String> {
+    use d2_assets::LayerSpec;
+    let inside = |p: &Path| same_path(p, dir) || p.parent().is_some_and(|q| same_path(q, dir));
+    profiles
+        .iter()
+        .filter(|p| {
+            p.layers.iter().any(|l| match l {
+                LayerSpec::Mpq { path, .. }
+                | LayerSpec::Folder { path }
+                | LayerSpec::Casc { path } => inside(path),
+                LayerSpec::MpqGlob { dir: d, .. } => same_path(d, dir),
+                _ => false,
+            })
+        })
+        .map(|p| p.id.clone())
+        .collect()
+}
+
 /// A profile id must be `[a-z0-9_-]+` (it names folders).
 pub fn valid_id(id: &str) -> bool {
     !id.is_empty()
@@ -463,6 +482,19 @@ mod tests {
         assert!(valid_id("my_mod-2"));
         assert!(!valid_id("My Mod"));
         assert!(!valid_id(""));
+    }
+
+    #[test]
+    fn profiles_using_a_folder_are_found() {
+        let d2 = Path::new(r"C:\Program Files (x86)\Diablo II");
+        let mxl = Path::new(r"C:\games\median-xl");
+        let all = vec![Profile::vanilla(d2), Profile::median_xl(mxl)];
+        assert_eq!(
+            profiles_using(&all, Path::new(r"c:\program files (x86)\diablo ii\")),
+            vec!["vanilla"]
+        );
+        assert_eq!(profiles_using(&all, mxl), vec!["mxl"]);
+        assert!(profiles_using(&all, Path::new(r"D:\other")).is_empty());
     }
 
     #[test]

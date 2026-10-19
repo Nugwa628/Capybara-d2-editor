@@ -166,8 +166,10 @@ const MAX_LOG: usize = 2000;
 impl AppState {
     pub fn new(paths: Paths, config: Config, profiles: Vec<Profile>) -> AppState {
         let (tx, rx) = channel();
-        let mut edit = EditState::default();
-        edit.scope = config.select_scope;
+        let edit = EditState {
+            scope: config.select_scope,
+            ..EditState::default()
+        };
         AppState {
             paths,
             config,
