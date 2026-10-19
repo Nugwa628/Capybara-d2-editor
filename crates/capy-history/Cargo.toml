@@ -6,8 +6,28 @@ license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+default = ["milestones"]
+milestones = ["dep:gix"]
+
 [dependencies]
+d2-assets.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+flate2.workspace = true
+blake3.workspace = true
+gix = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# Helper for the crash test (tests/crash.rs): loops SavesDir::save until killed.
+[[bin]]
+name = "save_loop"
+path = "tests/support/save_loop.rs"
+test = false
+doc = false
 
 [lints]
 workspace = true
