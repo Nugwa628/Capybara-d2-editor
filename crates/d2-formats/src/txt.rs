@@ -6,8 +6,19 @@
 //! rows keep their extra cells. Trailing all-empty rows are dropped, interior
 //! empty rows are kept so row indices match the file. A leading UTF-8 byte
 //! order mark (which the game would not accept but editors add) is ignored.
+//!
+//! Padding is capped: a file whose short rows would need more than four
+//! empty cells per byte of input (plus about a million) is rejected as
+//! `Invalid`. Shipped tables pad well under one cell per byte; the cap stops
+//! a header of a million tabs followed by a million blank lines from
+//! allocating a trillion cells.
 
-use crate::Result;
+use crate::{FormatError, Result};
+
+const FORMAT: &str = "txt";
+/// Padding cells allowed per input byte, on top of [`PAD_BUDGET_FLOOR`].
+const PAD_BUDGET_PER_BYTE: usize = 4;
+const PAD_BUDGET_FLOOR: usize = 1 << 20;
 
 /// Tab-separated excel table.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -17,8 +28,9 @@ pub struct TxtTable {
 }
 
 impl TxtTable {
-    /// Parses a `.txt` table. Never fails on content; an empty input yields a
-    /// table with no headers and no rows.
+    /// Parses a `.txt` table. An empty input yields a table with no headers
+    /// and no rows. The only error is `Invalid` for a file whose short rows
+    /// would need an absurd number of padding cells (see the module docs).
     pub fn parse(bytes: &[u8]) -> Result<TxtTable> {
         let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
         let mut lines = split_lines(bytes).into_iter();
@@ -26,6 +38,25 @@ impl TxtTable {
         let mut rows: Vec<Vec<String>> = lines.collect();
         while rows.last().is_some_and(|r| r.iter().all(String::is_empty)) {
             rows.pop();
+        }
+        let padding = rows.iter().fold(0usize, |acc, row| {
+            acc.saturating_add(headers.len().saturating_sub(row.len()))
+        });
+        let budget = bytes
+            .len()
+            .saturating_mul(PAD_BUDGET_PER_BYTE)
+            .saturating_add(PAD_BUDGET_FLOOR);
+        if padding > budget {
+            return Err(FormatError::Invalid {
+                format: FORMAT,
+                what: "row widths",
+                offset: 0,
+                detail: format!(
+                    "padding {} rows to {} columns needs {padding} empty cells (limit {budget})",
+                    rows.len(),
+                    headers.len()
+                ),
+            });
         }
         for row in &mut rows {
             if row.len() < headers.len() {

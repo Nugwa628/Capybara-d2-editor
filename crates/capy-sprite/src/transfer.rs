@@ -427,32 +427,54 @@ pub fn export_sheet(sprite: &Sprite, palette: &Palette) -> Result<(Vec<u8>, Expo
     let (min_x, min_y, max_x, max_y) = sprite
         .bounds()
         .ok_or_else(|| SpriteError::invalid("the sprite has no pixels to put on a sheet"))?;
-    let (cell_w, cell_h) = ((max_x - min_x) as u32, (max_y - min_y) as u32);
-    let (dirs, per) = (
-        sprite.directions.len() as u32,
-        sprite.frames_per_direction() as u32,
+    // In i64: offsets from a file can span more than i32 holds.
+    let span = |lo: i32, hi: i32| (i64::from(hi) - i64::from(lo)).unsigned_abs();
+    let (cell_w64, cell_h64) = (span(min_x, max_x), span(min_y, max_y));
+    if cell_w64 == 0 || cell_h64 == 0 {
+        // Only frames squeezed against i32::MAX (saturated bounds) do this.
+        return Err(SpriteError::invalid(
+            "the frames lie outside the coordinate range",
+        ));
+    }
+    let (dirs64, per64) = (
+        sprite.directions.len() as u64,
+        sprite.frames_per_direction() as u64,
     );
     let (sheet_w, sheet_h) = (
-        u64::from(cell_w) * u64::from(per),
-        u64::from(cell_h) * u64::from(dirs),
+        cell_w64.saturating_mul(per64),
+        cell_h64.saturating_mul(dirs64),
     );
-    if sheet_w * sheet_h > MAX_SHEET_PIXELS
+    if sheet_w.saturating_mul(sheet_h) > MAX_SHEET_PIXELS
         || sheet_w > u64::from(u32::MAX)
         || sheet_h > u64::from(u32::MAX)
     {
         return Err(SpriteError::invalid("the sheet would be too large"));
     }
+    // Every factor is at least 1 (the bounds come from a frame with
+    // pixels), so each fits a u32 after the check above.
+    let to_u32 = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+    let (cell_w, cell_h, dirs, per) = (
+        to_u32(cell_w64),
+        to_u32(cell_h64),
+        to_u32(dirs64),
+        to_u32(per64),
+    );
     let mut sheet = RgbaFrame::new(sheet_w as u32, sheet_h as u32, min_x, min_y);
     let mut frames = Vec::new();
     for (r, images) in sprite.directions.iter().enumerate() {
         for (c, img) in images.iter().enumerate() {
-            let rgba = to_rgba(img, palette);
-            let ox = c as u32 * cell_w + (img.offset_x - min_x) as u32;
-            let oy = r as u32 * cell_h + (img.offset_y - min_y) as u32;
-            for y in 0..img.height {
-                for x in 0..img.width {
-                    if let Some(px) = rgba.get(x, y) {
-                        sheet.put(ox + x, oy + y, px);
+            // An empty frame draws nothing; its offset may lie anywhere, even
+            // outside the union box, so it must not reach the sums below.
+            if img.width > 0 && img.height > 0 {
+                let rgba = to_rgba(img, palette);
+                // Inside the union box: 0 <= offset - min < cell size.
+                let ox = c as u32 * cell_w + span(min_x, img.offset_x) as u32;
+                let oy = r as u32 * cell_h + span(min_y, img.offset_y) as u32;
+                for y in 0..img.height {
+                    for x in 0..img.width {
+                        if let Some(px) = rgba.get(x, y) {
+                            sheet.put(ox + x, oy + y, px);
+                        }
                     }
                 }
             }
@@ -496,6 +518,9 @@ pub fn import_sheet(
         ));
     }
     let sheet = import_image(png, ImageKind::Png)?;
+    if sheet.width == 0 || sheet.height == 0 {
+        return Err(SpriteError::invalid("the sheet image is empty"));
+    }
     if sheet.width % frames != 0 || sheet.height % directions != 0 {
         return Err(SpriteError::invalid(format!(
             "a {}x{} sheet cannot be cut into {directions} rows x {frames} columns",

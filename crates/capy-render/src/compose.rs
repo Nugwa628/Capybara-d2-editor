@@ -102,22 +102,31 @@ impl RgbaImage {
 
     /// `None` outside the image.
     pub fn get(&self, x: u32, y: u32) -> Option<[u8; 4]> {
-        if x >= self.width || y >= self.height {
-            return None;
-        }
-        let i = (y as usize * self.width as usize + x as usize) * 4;
-        let p = self.pixels.get(i..i + 4)?;
+        let i = self.byte_index(x, y)?;
+        let p = self.pixels.get(i..i.checked_add(4)?)?;
         Some([p[0], p[1], p[2], p[3]])
     }
 
     pub(crate) fn set(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        if x >= self.width || y >= self.height {
+        let Some(i) = self.byte_index(x, y) else {
             return;
-        }
-        let i = (y as usize * self.width as usize + x as usize) * 4;
-        if let Some(p) = self.pixels.get_mut(i..i + 4) {
+        };
+        if let Some(p) = i.checked_add(4).and_then(|end| self.pixels.get_mut(i..end)) {
             p.copy_from_slice(&color);
         }
+    }
+
+    /// Byte offset of `(x, y)`; `None` outside the image or when the size
+    /// fields overflow the index (an image whose fields disagree with its
+    /// buffer).
+    fn byte_index(&self, x: u32, y: u32) -> Option<usize> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        (y as usize)
+            .checked_mul(self.width as usize)?
+            .checked_add(x as usize)?
+            .checked_mul(4)
     }
 
     pub fn to_png(&self) -> Result<Vec<u8>> {
@@ -143,12 +152,11 @@ impl RgbaImage {
         let mut reader = decoder
             .read_info()
             .map_err(|e| RenderError::Png(e.to_string()))?;
-        let mut buf = vec![
-            0;
-            reader
-                .output_buffer_size()
-                .ok_or_else(|| RenderError::Png("image too large".to_owned()))?
-        ];
+        let size = reader
+            .output_buffer_size()
+            .filter(|&n| n as u64 <= MAX_CANVAS_BYTES)
+            .ok_or_else(|| RenderError::Png("image too large".to_owned()))?;
+        let mut buf = vec![0; size];
         let info = reader
             .next_frame(&mut buf)
             .map_err(|e| RenderError::Png(e.to_string()))?;
@@ -202,11 +210,35 @@ pub struct RenderOutput {
 pub(crate) fn cell_corner(x: u32, y: u32, div: i32) -> (i32, i32) {
     let tile_w = TILE_W / div;
     let tile_h = TILE_H / div;
-    let x = i32::try_from(x).unwrap_or(i32::MAX / 4);
-    let y = i32::try_from(y).unwrap_or(i32::MAX / 4);
+    let x = i64::from(i32::try_from(x).unwrap_or(i32::MAX / 4));
+    let y = i64::from(i32::try_from(y).unwrap_or(i32::MAX / 4));
+    let (tile_w, tile_h) = (i64::from(tile_w), i64::from(tile_h));
+    // In i64 (the same truncating division), saturated back to i32: cell
+    // indices from a huge map must not overflow.
     let mx = (y * -tile_w) / 2 + (x * tile_w) / 2;
     let my = (y * tile_h) / 2 + (x * tile_h) / 2;
-    (mx, my)
+    (saturate_i32(mx), saturate_i32(my))
+}
+
+/// `v` clamped to the i32 range.
+pub(crate) fn saturate_i32(v: i64) -> i32 {
+    i32::try_from(v).unwrap_or(if v < 0 { i32::MIN } else { i32::MAX })
+}
+
+/// The cells worth visiting: the map size, but no further than the largest
+/// layer grid (a `Ds1` whose size fields exceed its grids has nothing to draw
+/// there, and must not cost a loop over the claimed size).
+pub(crate) fn cell_extent(ds1: &Ds1) -> (u32, u32) {
+    let mut grids = vec![(ds1.shadow.width(), ds1.shadow.height())];
+    grids.extend(ds1.floors.iter().map(|g| (g.width(), g.height())));
+    grids.extend(
+        ds1.walls
+            .iter()
+            .map(|w| (w.tiles.width(), w.tiles.height())),
+    );
+    let w = grids.iter().map(|g| g.0).max().unwrap_or(0);
+    let h = grids.iter().map(|g| g.1).max().unwrap_or(0);
+    (ds1.width.min(w), ds1.height.min(h))
 }
 
 /// The canvas rectangle `(min_x, min_y, max_x, max_y)` (max exclusive) in
@@ -222,18 +254,19 @@ pub fn reference_bounds(ds1: &Ds1, tiles: &TileSet, div: u32) -> Option<(i32, i3
         }
         let w = i32::try_from(geom.width).unwrap_or(0) / div;
         let h = i32::try_from(geom.height).unwrap_or(0) / div;
-        let mut y1 = my - geom.zero_line / div;
+        let mut y1 = my.saturating_sub(geom.zero_line / div);
         if wall_like {
-            y1 += tile_h;
+            y1 = y1.saturating_add(tile_h);
         }
-        let (x1, x2, y2) = (mx, mx + w, y1 + h);
+        let (x1, x2, y2) = (mx, mx.saturating_add(w), y1.saturating_add(h));
         bounds = Some(match bounds {
             None => (x1, y1, x2, y2),
             Some((a, b, c, d)) => (a.min(x1), b.min(y1), c.max(x2), d.max(y2)),
         });
     };
-    for y in 0..ds1.height {
-        for x in 0..ds1.width {
+    let (map_w, map_h) = cell_extent(ds1);
+    for y in 0..map_h {
+        for x in 0..map_w {
             let (mx, my) = cell_corner(x, y, div);
             // Shadows: a hidden cell counts as unknown and is skipped.
             if let Some(cell) = ds1.shadow.get(x, y)
@@ -352,9 +385,13 @@ pub fn render_with_objects(
             warnings: Vec::new(),
         });
     };
-    let width = u32::try_from(max_x - min_x).unwrap_or(0);
-    let height = u32::try_from(max_y - min_y).unwrap_or(0);
-    if u64::from(width) * u64::from(height) * 4 > MAX_CANVAS_BYTES {
+    let width = u32::try_from(i64::from(max_x) - i64::from(min_x)).unwrap_or(0);
+    let height = u32::try_from(i64::from(max_y) - i64::from(min_y)).unwrap_or(0);
+    if u64::from(width)
+        .saturating_mul(u64::from(height))
+        .saturating_mul(4)
+        > MAX_CANVAS_BYTES
+    {
         return Err(RenderError::Other(format!(
             "canvas {width}x{height} is too large; raise the zoom divisor"
         )));
@@ -413,8 +450,10 @@ fn draw_item(
     let image = tiles.image(&item.tile)?;
     let (mx, my) = cell_corner(item.x, item.y, div);
     // Destination position of the bitmap's (0, 0).
-    let ox = mx - origin.0;
-    let oy = my + geom.bitmap_top(div) - origin.1;
+    let ox = mx.saturating_sub(origin.0);
+    let oy = my
+        .saturating_add(geom.bitmap_top(div))
+        .saturating_sub(origin.1);
     blit(
         canvas,
         &image,
@@ -458,13 +497,22 @@ fn draw_object(
         } else {
             layer.blend
         };
-        let ox = dx0 - origin.0 + item.frame.offset.0 / div + layer.box_origin.0 / div;
-        let oy = dy0 - origin.1 + item.frame.offset.1 / div + layer.box_origin.1 / div;
+        // Saturating: object positions and Objects.txt offsets come from
+        // files.
+        let ox = dx0
+            .saturating_sub(origin.0)
+            .saturating_add(item.frame.offset.0 / div)
+            .saturating_add(layer.box_origin.0 / div);
+        let oy = dy0
+            .saturating_sub(origin.1)
+            .saturating_add(item.frame.offset.1 / div)
+            .saturating_add(layer.box_origin.1 / div);
         // The reference bitmap starts at the direction box corner, so source
-        // columns are counted from there.
+        // columns are counted from there. (An empty frame, whose offset may
+        // lie anywhere, draws nothing.)
         let off = (
-            layer.image.offset_x - layer.box_origin.0,
-            layer.image.offset_y - layer.box_origin.1,
+            layer.image.offset_x.saturating_sub(layer.box_origin.0),
+            layer.image.offset_y.saturating_sub(layer.box_origin.1),
         );
         blit_sprite(canvas, &layer.image, off, pal, ox, oy, div, blend);
     }
@@ -518,21 +566,28 @@ fn blit_pixels(
     let div = div.max(1);
     let half = div / 2;
     let (w, h) = (image.width as usize, image.height as usize);
+    // Rows past the alpha buffer are transparent: stop there, so an image
+    // whose size fields exceed its buffers costs no more than its data.
+    let h = h.min(image.alpha.len().checked_div(w).unwrap_or(0));
     for j in 0..h {
-        let v = offset.1 + i32::try_from(j).unwrap_or(0);
+        let v = offset
+            .1
+            .saturating_add(i32::try_from(j).unwrap_or(i32::MAX));
         if v.rem_euclid(div) != half {
             continue;
         }
-        let dy = oy + v.div_euclid(div);
+        let dy = oy.saturating_add(v.div_euclid(div));
         if dy < 0 {
             continue;
         }
         for i in 0..w {
-            let u = offset.0 + i32::try_from(i).unwrap_or(0);
+            let u = offset
+                .0
+                .saturating_add(i32::try_from(i).unwrap_or(i32::MAX));
             if u.rem_euclid(div) != half {
                 continue;
             }
-            let dx = ox + u.div_euclid(div);
+            let dx = ox.saturating_add(u.div_euclid(div));
             if dx < 0 {
                 continue;
             }
@@ -592,5 +647,7 @@ pub fn downscale(img: &RgbaImage, div: u32) -> RgbaImage {
     out
 }
 
+#[cfg(test)]
+mod fuzz_tests;
 #[cfg(test)]
 mod tests;

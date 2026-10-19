@@ -633,12 +633,16 @@ impl Ds1 {
         if outside > 0 {
             out.push(format!("{outside} object(s) lie outside the sub-tile grid"));
         }
+        // objects per sub-tile, so the owner check is linear rather than
+        // paths x objects (both counts come from the file)
+        let mut at: std::collections::HashMap<(i32, i32), usize> = Default::default();
+        if !self.npc_paths.is_empty() {
+            for o in &self.objects {
+                *at.entry((o.x, o.y)).or_default() += 1;
+            }
+        }
         for p in &self.npc_paths {
-            let owners = self
-                .objects
-                .iter()
-                .filter(|o| o.x == p.x && o.y == p.y)
-                .count();
+            let owners = at.get(&(p.x, p.y)).copied().unwrap_or(0);
             if owners != 1 {
                 out.push(format!(
                     "npc path at ({}, {}) matches {owners} objects (the game needs exactly one)",
@@ -910,9 +914,14 @@ impl Ds1 {
         self.check_fits(v, false)
             .map_err(|detail| self.not_representable(&detail))?;
 
-        let cells = self.width as usize * self.height as usize;
-        let layers = self.walls.len() * 2 + self.floors.len() + 2;
-        let mut out = Vec::with_capacity(64 + cells * 4 * layers + self.objects.len() * 20);
+        // check_fits tied every layer to width x height, so this is the size
+        // of data already in memory; checked anyway, it is only a hint
+        let capacity = (self.width as usize)
+            .checked_mul(self.height as usize)
+            .and_then(|cells| cells.checked_mul(4 * (self.walls.len() * 2 + self.floors.len() + 2)))
+            .and_then(|c| c.checked_add(64 + self.objects.len().saturating_mul(20)))
+            .unwrap_or(0);
+        let mut out = Vec::with_capacity(capacity);
 
         put(&mut out, v);
         put(&mut out, stored_dim(self.width));
@@ -1055,5 +1064,8 @@ fn put_dwords(out: &mut Vec<u8>, cells: &[u32]) {
     }
 }
 
+#[cfg(test)]
+#[allow(clippy::panic, clippy::unwrap_used)]
+pub(crate) mod fuzz_support;
 #[cfg(test)]
 mod tests;

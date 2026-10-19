@@ -20,6 +20,11 @@
 //! Keys and texts are decoded as Latin-1 (one char per byte), which is
 //! lossless for the byte values the western client uses (`0xFF` is the colour
 //! escape lead byte); other code pages come out as mojibake but round-trip.
+//!
+//! A table whose active nodes reference more string bytes in total than
+//! eight times the file size (plus 64 KiB) is rejected as `Invalid`: shipped
+//! tables reference each string once, so only a crafted file sharing one long
+//! string among many nodes gets there.
 
 use std::collections::HashMap;
 
@@ -28,6 +33,12 @@ use crate::{FormatError, Result};
 const FORMAT: &str = "tbl";
 const HEADER_LEN: usize = 0x15;
 const NODE_LEN: usize = 17;
+/// Decoded key + text bytes allowed per byte of file, on top of
+/// [`STRING_BUDGET_FLOOR`]. Shipped tables decode to under one byte per byte
+/// (each string is referenced by one node); the cap stops a file whose nodes
+/// all point at one long string from multiplying it into gigabytes.
+const STRING_BUDGET_PER_BYTE: usize = 8;
+const STRING_BUDGET_FLOOR: usize = 1 << 16;
 
 /// The active key/text pairs of one `.tbl`, in node order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,7 +131,12 @@ impl StringTable {
         let mut entries = Vec::new();
         let mut ids = Vec::new();
         let mut by_id: HashMap<u16, usize> = HashMap::new();
-        let mut best: HashMap<String, (u32, usize)> = HashMap::new();
+        let mut best: HashMap<String, (u64, usize)> = HashMap::new();
+        let budget = bytes
+            .len()
+            .saturating_mul(STRING_BUDGET_PER_BYTE)
+            .saturating_add(STRING_BUDGET_FLOOR);
+        let mut decoded = 0usize;
         for slot in 0..node_count {
             let base = nodes_start + slot as usize * NODE_LEN;
             if bytes.get(base).copied() != Some(1) {
@@ -130,10 +146,23 @@ impl StringTable {
             let text_off = u32_at(bytes, base + 11).unwrap_or(0) as usize;
             let key_bytes = cstr_at(bytes, key_off, "key offset")?;
             let text_bytes = cstr_at(bytes, text_off, "text offset")?;
+            decoded = decoded
+                .saturating_add(key_bytes.len())
+                .saturating_add(text_bytes.len());
+            if decoded > budget {
+                return Err(invalid(
+                    "string data",
+                    base,
+                    format!("nodes reference more than {budget} bytes of strings"),
+                ));
+            }
             let key = latin1(key_bytes);
-            // Distance from the home bucket along the probe sequence.
+            // Distance from the home bucket along the probe sequence. `slot`
+            // and `home` are both below `node_count` (> 0 inside this loop);
+            // u64 keeps `slot + node_count` from overflowing.
             let home = key_hash(key_bytes, node_count);
-            let dist = (slot + node_count - home) % node_count;
+            let n = u64::from(node_count);
+            let dist = (u64::from(slot) + n - u64::from(home)) % n;
             let idx = entries.len();
             let id = u16_at(bytes, base + 1).unwrap_or(0);
             ids.push(id);

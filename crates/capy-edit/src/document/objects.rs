@@ -1,6 +1,6 @@
 //! Object edits. Objects are addressed by their index in `Ds1::objects`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use d2_formats::ds1::{Ds1, NpcPath, Object};
 
@@ -147,14 +147,24 @@ fn anchor_conflicts(
         .iter()
         .filter_map(|&i| positions.get(i).copied())
         .collect();
+    // Objects and paths per destination, in index order. One pass each, so
+    // a paste of many objects (a clipboard is user data) stays linear.
+    let mut objects_at: BTreeMap<(i32, i32), Vec<usize>> = BTreeMap::new();
+    for (i, p) in positions.iter().enumerate() {
+        if destinations.contains(p) {
+            objects_at.entry(*p).or_default().push(i);
+        }
+    }
+    let mut paths_at: BTreeMap<(i32, i32), Vec<usize>> = BTreeMap::new();
+    for (k, path) in paths_after.iter().enumerate() {
+        if destinations.contains(&(path.x, path.y)) {
+            paths_at.entry((path.x, path.y)).or_default().push(k);
+        }
+    }
     let mut conflicts = Vec::new();
     for (x, y) in destinations {
-        let objects: Vec<usize> = (0..positions.len())
-            .filter(|&i| positions[i] == (x, y))
-            .collect();
-        let paths: Vec<usize> = (0..paths_after.len())
-            .filter(|&k| (paths_after[k].x, paths_after[k].y) == (x, y))
-            .collect();
+        let objects = objects_at.remove(&(x, y)).unwrap_or_default();
+        let paths = paths_at.remove(&(x, y)).unwrap_or_default();
         let resident = objects.iter().copied().find(|i| !placed.contains(i));
         let resident_path = paths.iter().any(|k| !moved_paths.contains(k));
         if resident.is_none() && !resident_path {

@@ -137,6 +137,10 @@ fn is_real_dir(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
 }
 
+/// Deepest folder nesting [`scan`] descends into; deeper trees are an
+/// error rather than a stack overflow.
+const MAX_DEPTH: usize = 256;
+
 fn scan(
     dir: &Path,
     rel: &Path,
@@ -145,6 +149,12 @@ fn scan(
     to_png: bool,
     items: &mut Vec<Item>,
 ) -> Result<()> {
+    if depth > MAX_DEPTH {
+        return Err(SpriteError::invalid(format!(
+            "{} is nested more than {MAX_DEPTH} folders deep",
+            dir.display()
+        )));
+    }
     let entries = sorted_entries(dir)?;
     let is_sprite_folder = !to_png && dir.join(META_FILE).is_file();
     if is_sprite_folder {

@@ -3,6 +3,8 @@ use crate::testutil;
 use proptest::prelude::*;
 use std::collections::BTreeMap;
 
+mod fuzz;
+
 // ---------------------------------------------------------------------------
 // An independent DT1 builder written from the layout in the module docs.
 

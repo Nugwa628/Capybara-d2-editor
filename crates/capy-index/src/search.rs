@@ -457,4 +457,31 @@ mod tests {
                 .is_some()
         );
     }
+
+    proptest::proptest! {
+        /// The fuzzy ranker takes the user's free text and names/aliases
+        /// from the databases: any Unicode on either side must not panic.
+        #[test]
+        fn ranker_never_panics(
+            text in "\\PC{0,40}",
+            alias in proptest::option::of("\\PC{0,40}"),
+            name in "\\PC{0,60}",
+            path in "\\PC{0,80}",
+        ) {
+            let ranker = Ranker::new(&text);
+            let score = ranker.score(alias.as_deref(), &name, &path);
+            proptest::prop_assert!(score.is_none_or(|s| !s.is_nan()));
+            let _ = ranker.score(None, &text, &text);
+        }
+
+        #[test]
+        fn ranker_never_panics_on_any_chars(
+            text in proptest::collection::vec(proptest::char::any(), 0..24),
+            name in proptest::collection::vec(proptest::char::any(), 0..48),
+        ) {
+            let text: String = text.into_iter().collect();
+            let name: String = name.into_iter().collect();
+            let _ = Ranker::new(&text).score(Some(&name), &name, &name);
+        }
+    }
 }

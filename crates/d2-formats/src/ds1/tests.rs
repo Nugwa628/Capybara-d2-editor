@@ -3,6 +3,8 @@
 use super::*;
 use proptest::prelude::*;
 
+mod fuzz;
+
 // ---------------------------------------------------------------------------
 // An independent encoder written straight from the guide's "layout in one
 // page" appendix. It shares no code with the reader/writer under test.
@@ -915,7 +917,10 @@ fn arb_model() -> impl Strategy<Value = Ds1> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(128))]
+    #![proptest_config(ProptestConfig {
+        cases: crate::ds1::fuzz_support::cases(128),
+        ..ProptestConfig::default()
+    })]
 
     #[test]
     fn random_v18_models_round_trip(model in arb_model()) {

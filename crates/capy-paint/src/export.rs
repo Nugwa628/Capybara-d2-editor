@@ -124,15 +124,20 @@ pub fn animated_gif(frames: &[IndexedImage], palette: &Palette, delay_cs: u16) -
         enc.set_repeat(gif::Repeat::Infinite).map_err(encode_err)?;
         for img in frames {
             let mut canvas = vec![0u8; w as usize * h as usize];
-            for y in 0..img.height as usize {
+            // An empty frame draws nothing (and is not in the union box).
+            let height = if img.width == 0 { 0 } else { img.height };
+            for y in 0..height as usize {
                 for x in 0..img.width as usize {
                     let i = y * img.width as usize + x;
                     if img.alpha.get(i).copied().unwrap_or(0) == 0 {
                         continue;
                     }
+                    // Inside the union box: both differences are 0 or more.
                     let cx = (i64::from(img.offset_x) - i64::from(bx)) as usize + x;
                     let cy = (i64::from(img.offset_y) - i64::from(by)) as usize + y;
-                    canvas[cy * w as usize + cx] = img.pixels.get(i).copied().unwrap_or(0);
+                    if let Some(c) = canvas.get_mut(cy * w as usize + cx) {
+                        *c = img.pixels.get(i).copied().unwrap_or(0);
+                    }
                 }
             }
             let frame = gif::Frame {
@@ -171,7 +176,9 @@ pub fn onion_composite(
     for (img, opacity) in layers {
         let Some(img) = img else { continue };
         let strength = (opacity.clamp(0.0, 1.0) * 255.0).round() as u32;
-        for y in 0..img.height as usize {
+        // An empty image draws nothing (and is not in the union box).
+        let height = if img.width == 0 { 0 } else { img.height };
+        for y in 0..height as usize {
             for x in 0..img.width as usize {
                 let i = y * img.width as usize + x;
                 if img.alpha.get(i).copied().unwrap_or(0) == 0 {
@@ -181,17 +188,20 @@ pub fn onion_composite(
                 let cx = (i64::from(img.offset_x) - i64::from(bx)) as usize + x;
                 let cy = (i64::from(img.offset_y) - i64::from(by)) as usize + y;
                 let o = (cy * w as usize + cx) * 4;
-                let dst_a = u32::from(canvas[o + 3]);
+                let Some(px) = canvas.get_mut(o..o + 4) else {
+                    continue;
+                };
+                let dst_a = u32::from(px[3]);
                 let out_a = strength + dst_a * (255 - strength) / 255;
                 if out_a == 0 {
                     continue;
                 }
                 for c in 0..3 {
                     let s = u32::from(src[c]) * strength;
-                    let d = u32::from(canvas[o + c]) * dst_a * (255 - strength) / 255;
-                    canvas[o + c] = ((s + d) / out_a).min(255) as u8;
+                    let d = u32::from(px[c]) * dst_a * (255 - strength) / 255;
+                    px[c] = ((s + d) / out_a).min(255) as u8;
                 }
-                canvas[o + 3] = out_a.min(255) as u8;
+                px[3] = out_a.min(255) as u8;
             }
         }
     }

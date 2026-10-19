@@ -49,6 +49,24 @@ pub fn mpqs_in(dir: &std::path::Path) -> Vec<PathBuf> {
     out
 }
 
+/// `testdata\private` of the main checkout (gitignored, so absent in
+/// worktrees); `CAPY_PRIVATE_DIR` overrides it.
+pub fn private_dir() -> PathBuf {
+    std::env::var_os("CAPY_PRIVATE_DIR").map_or_else(
+        || PathBuf::from(r"C:\Users\ZF\Desktop\sugma\capybara-mapeditor\testdata\private"),
+        PathBuf::from,
+    )
+}
+
+/// Iteration count for hand-rolled fuzz loops: `CAPY_FUZZ_ITERS`, else
+/// `PROPTEST_CASES`, else `default`.
+pub fn fuzz_iters(default: usize) -> usize {
+    ["CAPY_FUZZ_ITERS", "PROPTEST_CASES"]
+        .iter()
+        .find_map(|var| std::env::var(var).ok()?.trim().parse().ok())
+        .unwrap_or(default)
+}
+
 // ---------------------------------------------------------------- writer
 
 fn crypt_table() -> Vec<u32> {
@@ -76,6 +94,23 @@ pub fn encrypt(data: &mut [u8], key: u32) {
         seed2 = seed2.wrapping_add(table[0x400 + (key & 0xFF) as usize]);
         let plain = u32::from_le_bytes(*chunk);
         *chunk = (plain ^ key.wrapping_add(seed2)).to_le_bytes();
+        key = ((!key) << 0x15).wrapping_add(0x1111_1111) | (key >> 0x0B);
+        seed2 = plain
+            .wrapping_add(seed2)
+            .wrapping_add(seed2 << 5)
+            .wrapping_add(3);
+    }
+}
+
+/// Inverse of [`encrypt`].
+pub fn decrypt(data: &mut [u8], key: u32) {
+    let table = crypt_table();
+    let mut key = key;
+    let mut seed2: u32 = 0xEEEE_EEEE;
+    for chunk in data.as_chunks_mut::<4>().0 {
+        seed2 = seed2.wrapping_add(table[0x400 + (key & 0xFF) as usize]);
+        let plain = u32::from_le_bytes(*chunk) ^ key.wrapping_add(seed2);
+        *chunk = plain.to_le_bytes();
         key = ((!key) << 0x15).wrapping_add(0x1111_1111) | (key >> 0x0B);
         seed2 = plain
             .wrapping_add(seed2)

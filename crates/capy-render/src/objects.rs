@@ -189,13 +189,21 @@ impl ObjectFrame {
             });
         }
         let (x0, y0, x1, y1) = bounds?;
-        let (w, h) = (u32::try_from(x1 - x0).ok()?, u32::try_from(y1 - y0).ok()?);
+        let (w, h) = (
+            u32::try_from(i64::from(x1) - i64::from(x0)).ok()?,
+            u32::try_from(i64::from(y1) - i64::from(y0)).ok()?,
+        );
         if u64::from(w) * u64::from(h) > 1 << 26 {
             return None;
         }
         let mut canvas = crate::compose::RgbaImage::filled(w, h, [0, 0, 0, 0]);
         for l in &self.layers {
             let img = &l.image;
+            // An empty layer draws nothing, and its offset may lie anywhere.
+            if img.width == 0 || img.height == 0 {
+                continue;
+            }
+            // Inside the union box, so the differences fit.
             let (ox, oy) = (img.offset_x - x0, img.offset_y - y0);
             for j in 0..img.height {
                 for i in 0..img.width {
@@ -219,7 +227,13 @@ impl ObjectFrame {
                 }
             }
         }
-        Some((canvas, (x0 + self.offset.0, y0 + self.offset.1)))
+        Some((
+            canvas,
+            (
+                x0.saturating_add(self.offset.0),
+                y0.saturating_add(self.offset.1),
+            ),
+        ))
     }
 }
 
@@ -245,8 +259,11 @@ pub fn frame_index(tick: Option<u32>, delta: u32, count: u32) -> u8 {
 pub fn object_anchor(x: i32, y: i32, div: i32) -> (i32, i32) {
     let div = div.max(1);
     let (tw, th) = (TILE_W / div, TILE_H / div);
-    let dx = (y - 2).saturating_mul(-tw) / 10 + (x + 3).saturating_mul(tw) / 10;
-    let dy = 4 + (y - 2).saturating_mul(th) / 10 + (x + 3).saturating_mul(th) / 10;
+    let (ym, xp) = (y.saturating_sub(2), x.saturating_add(3));
+    let dx = (ym.saturating_mul(-tw) / 10).saturating_add(xp.saturating_mul(tw) / 10);
+    let dy = (ym.saturating_mul(th) / 10)
+        .saturating_add(xp.saturating_mul(th) / 10)
+        .saturating_add(4);
     (dx, dy)
 }
 

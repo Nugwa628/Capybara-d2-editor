@@ -219,7 +219,8 @@ impl DsEvidence {
                 main: cell.main_index(),
                 sub: cell.sub_index(),
             };
-            *counts.entry((kind, key)).or_default() += 1;
+            let count = counts.entry((kind, key)).or_default();
+            *count = count.saturating_add(1);
         };
         for floor in &ds1.floors {
             for &cell in floor.as_slice() {
@@ -248,7 +249,7 @@ impl DsEvidence {
             .into_iter()
             .map(|((k, key), n)| (k, key, n))
             .collect();
-        let total = cells.iter().map(|c| c.2).sum();
+        let total = cells.iter().fold(0u32, |sum, c| sum.saturating_add(c.2));
         let refs = ds1
             .tileset_refs()
             .filter_map(|raw| GamePath::from_tile_ref(&String::from_utf8_lossy(raw)))
@@ -262,8 +263,7 @@ impl DsEvidence {
         self.cells
             .iter()
             .filter(|&&(kind, key, _)| sets.iter().any(|set| resolves(set, kind, key)))
-            .map(|c| c.2)
-            .sum()
+            .fold(0u32, |sum, c| sum.saturating_add(c.2))
     }
 
     fn coverage(&self, hits: u32) -> Option<f32> {

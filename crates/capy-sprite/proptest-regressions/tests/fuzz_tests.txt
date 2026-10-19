@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 283af2a0937c5dff9b1a0e9fe32ade08b4368f99b8c809d84b541f247ae5aa59 # shrinks to frames = [[IndexedImage { width: 2, height: 1, offset_x: 2147483647, offset_y: 2147483647, pixels: [0, 0], alpha: [0, 0] }], [IndexedImage { width: 1, height: 1, offset_x: -2147483648, offset_y: 2147483647, pixels: [0], alpha: [0] }]], empty_at = None, rows = 0, cols = 0

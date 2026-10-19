@@ -132,7 +132,15 @@ pub fn compare_images_with(
     oracle: &RgbaImage,
     opts: &CompareOptions<'_>,
 ) -> CompareReport {
-    let max_shift = opts.max_shift.max(0);
+    // Shifts past both images' extents overlap nothing and score like any
+    // other non-overlapping shift, so the search never needs to go further
+    // (and a huge `max_shift` must not loop for ever).
+    let reach = (u64::from(ours.width) + u64::from(oracle.width))
+        .max(u64::from(ours.height) + u64::from(oracle.height));
+    let max_shift = opts
+        .max_shift
+        .max(0)
+        .min(i32::try_from(reach).unwrap_or(i32::MAX));
     // Pick the shift on a sample, then evaluate it on every pixel.
     let step = ((ours.width as usize * ours.height as usize) / 60_000).clamp(1, 16);
     let mut best = (0, 0);
@@ -146,7 +154,7 @@ pub fn compare_images_with(
             } else {
                 good as f64 / total as f64
             };
-            let cost = dx.abs() + dy.abs();
+            let cost = dx.abs().saturating_add(dy.abs());
             if score > best_score + 1e-12
                 || ((score - best_score).abs() <= 1e-12 && cost < best_cost)
             {

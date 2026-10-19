@@ -19,6 +19,8 @@ use crate::tiles::{
 };
 use crate::user::UserDb;
 
+mod robustness;
+
 fn write(root: &Path, rel: &str, bytes: &[u8]) {
     let path = GamePath::new(rel).to_native(root);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();

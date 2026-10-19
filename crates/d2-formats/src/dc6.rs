@@ -21,8 +21,8 @@
 //! Palette index 0 is the transparent key (alpha 0).
 //!
 //! Loaders are lenient (version is the only header value checked) but every
-//! range is bounds-checked, and the frame data copied out of a file is capped
-//! at the file length plus 1 MiB.
+//! range is bounds-checked, and the frame data copied out of a file plus 32
+//! bytes per frame header read is capped at the file length plus 1 MiB.
 
 use crate::bytes::{i32_at, slice_at, u32_at};
 use crate::{FormatError, IndexedImage, Result};
@@ -101,10 +101,11 @@ impl Dc6 {
                 format!("{directions} directions x {frames_per_direction} frames do not fit"),
             ));
         }
-        let total = total as usize;
+        // fits: `total * 4` is at most the file length
+        let total = usize::try_from(total).unwrap_or(0);
         let budget = bytes.len().saturating_add(DATA_SLACK);
         let mut copied = 0usize;
-        let mut frames = Vec::with_capacity(total);
+        let mut frames = Vec::with_capacity(total.min(budget / FRAME_HEADER_LEN));
         for i in 0..total {
             let table_at = HEADER_LEN + 4 * i;
             let off = field(table_at)? as usize;
@@ -123,12 +124,14 @@ impl Dc6 {
                     format!("{length} bytes run past the end of the file"),
                 )
             })?;
-            copied = copied.saturating_add(length);
+            // the header counts too, so frames sharing one header cannot
+            // multiply into far more frame records than the file holds
+            copied = copied.saturating_add(length + FRAME_HEADER_LEN);
             if copied > budget {
                 return Err(invalid(
                     "frame data",
                     off + 28,
-                    "frame data exceeds the file length by more than the allowed slack",
+                    "frame headers and data exceed the file length by more than the allowed slack",
                 ));
             }
             frames.push(Dc6Frame {

@@ -8,6 +8,10 @@ use d2_formats::palette::Palette;
 
 use crate::error::{Result, SpriteError};
 
+/// Largest frame side [`Sprite::encode`] accepts (even an empty frame: the
+/// encoders walk its rows).
+const MAX_FRAME_SIDE: u32 = 1 << 24;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SpriteFormat {
     Dc6,
@@ -107,6 +111,20 @@ impl Sprite {
     }
 
     fn check_shape(&self) -> Result<()> {
+        if let Some((d, f)) = self.directions.iter().enumerate().find_map(|(d, frames)| {
+            frames
+                .iter()
+                .position(|img| {
+                    !crate::ops::backed(img)
+                        || img.width > MAX_FRAME_SIDE
+                        || img.height > MAX_FRAME_SIDE
+                })
+                .map(|f| (d, f))
+        }) {
+            return Err(SpriteError::invalid(format!(
+                "frame {d}/{f} is larger than {MAX_FRAME_SIDE} pixels on a side or claims more pixels than its buffers hold"
+            )));
+        }
         let per = self.frames_per_direction();
         if let Some(d) = self.directions.iter().position(|d| d.len() != per) {
             return Err(SpriteError::invalid(format!(
@@ -174,22 +192,31 @@ impl RgbaFrame {
 
     /// `[r, g, b, a]` at `(x, y)`, `None` outside the frame.
     pub fn get(&self, x: u32, y: u32) -> Option<[u8; 4]> {
-        if x >= self.width || y >= self.height {
-            return None;
-        }
-        let i = (y as usize * self.width as usize + x as usize) * 4;
-        let p = self.pixels.get(i..i + 4)?;
+        let i = self.byte_index(x, y)?;
+        let p = self.pixels.get(i..i.checked_add(4)?)?;
         Some([p[0], p[1], p[2], p[3]])
     }
 
     /// Sets `[r, g, b, a]` at `(x, y)`; a point outside the frame is ignored.
     pub fn put(&mut self, x: u32, y: u32, rgba: [u8; 4]) {
-        if x >= self.width || y >= self.height {
+        let Some(i) = self.byte_index(x, y) else {
             return;
-        }
-        let i = (y as usize * self.width as usize + x as usize) * 4;
-        if let Some(p) = self.pixels.get_mut(i..i + 4) {
+        };
+        if let Some(p) = i.checked_add(4).and_then(|end| self.pixels.get_mut(i..end)) {
             p.copy_from_slice(&rgba);
         }
+    }
+
+    /// Byte offset of pixel `(x, y)`; `None` outside the frame or when the
+    /// declared size overflows (a frame whose fields disagree with its
+    /// buffer).
+    fn byte_index(&self, x: u32, y: u32) -> Option<usize> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        (y as usize)
+            .checked_mul(self.width as usize)?
+            .checked_add(x as usize)?
+            .checked_mul(4)
     }
 }

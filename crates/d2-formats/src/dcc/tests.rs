@@ -3,6 +3,8 @@ use crate::testutil;
 use proptest::prelude::*;
 use std::collections::BTreeSet;
 
+mod fuzz;
+
 // ---------------------------------------------------------------------------
 // An independent DCC encoder, written from the format description in the
 // module docs. It cuts frames into cells by the plain "4-pixel chunks, a lone
@@ -503,7 +505,10 @@ fn unchanged_cell_of_a_new_size_is_cleared() {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(96))]
+    #![proptest_config(ProptestConfig {
+        cases: crate::ds1::fuzz_support::cases(96),
+        ..ProptestConfig::default()
+    })]
 
     #[test]
     fn random_animations_round_trip(seed in any::<u64>(), mode_idx in 0usize..4) {

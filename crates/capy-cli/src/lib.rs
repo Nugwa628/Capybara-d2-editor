@@ -160,4 +160,6 @@ fn dispatch(ctx: &mut Ctx<'_>, command: Command) -> CmdResult {
 }
 
 #[cfg(test)]
+mod fuzz_tests;
+#[cfg(test)]
 mod tests;

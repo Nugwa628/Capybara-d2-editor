@@ -2,6 +2,8 @@ use super::*;
 use crate::testutil;
 use proptest::prelude::*;
 
+mod fuzz;
+
 // ---------------------------------------------------------------------------
 // An independent encoder: image rows -> RLE (skips and literal runs of at
 // most 127), rows ordered bottom-up unless `flip`.

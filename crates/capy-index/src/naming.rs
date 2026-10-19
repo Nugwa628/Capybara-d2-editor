@@ -451,4 +451,38 @@ mod tests {
             "Act1 Town Towne1 · DS1"
         );
     }
+
+    proptest::proptest! {
+        /// Paths come from archives and user folders: any text is a valid input.
+        #[test]
+        fn place_and_names_never_panic(
+            path in "\\PC{0,80}",
+            sep_soup in proptest::collection::vec(
+                proptest::sample::select(&["\\", "/", ".", "..", "a", "é", "data", "global", "tiles", "x.dt1", ""][..]),
+                0..16,
+            ),
+            orientation in proptest::num::u8::ANY,
+            main in proptest::num::u8::ANY,
+            sub in proptest::num::u8::ANY,
+        ) {
+            let place = place_from_path(&path);
+            let _ = generated_tile_name(&place, orientation, "x", main, sub);
+            let _ = place_from_path(&sep_soup.concat());
+            for kind in [AssetKind::Tile, AssetKind::Ds1, AssetKind::Cof] {
+                let _ = generated_file_name(&path, kind);
+            }
+        }
+
+        #[test]
+        fn colour_texture_and_descriptor_are_total(
+            rgb in proptest::array::uniform3(proptest::num::u8::ANY),
+            edge in proptest::num::f32::ANY,
+            luma_value in proptest::num::f32::ANY,
+        ) {
+            let color = color_name(rgb);
+            let texture = texture_class(edge);
+            let _ = descriptor(color, texture, luma_value);
+            proptest::prop_assert!(!color.is_empty() && !texture.is_empty());
+        }
+    }
 }

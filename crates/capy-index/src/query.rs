@@ -573,4 +573,93 @@ mod tests {
         assert_eq!(AssetKind::parse("nope"), None);
         assert_eq!(AssetKind::Ds1.label(), "DS1");
     }
+
+    /// Pieces that steer random queries into the parser's corners: every
+    /// key, negation, quotes, colons, slashes, huge numbers, multi-byte
+    /// characters and odd whitespace.
+    const PIECES: &[&str] = &[
+        "type",
+        "act",
+        "color",
+        "colour",
+        "tag",
+        "idx",
+        "file",
+        "similar",
+        "used-in",
+        "used_in",
+        "usedin",
+        "mirrored",
+        "src",
+        "TYPE",
+        "Idx",
+        "-",
+        "--",
+        ":",
+        "::",
+        "\"",
+        "\"\"",
+        "/",
+        "\\",
+        " ",
+        "\t",
+        "\u{3000}",
+        "\u{85}",
+        "\n",
+        "0",
+        "5",
+        "255",
+        "256",
+        "99999999999999999999999999",
+        "-1",
+        "yes",
+        "no",
+        "floor",
+        "ds1",
+        "é",
+        "日本",
+        "\u{1F600}",
+        "\u{0}",
+        "a",
+        "x:y",
+        "\u{FEFF}",
+        "\u{301}",
+    ];
+
+    fn assert_well_formed(input: &str) -> Result<(), proptest::test_runner::TestCaseError> {
+        if let Err(e) = parse_query(input) {
+            proptest::prop_assert!(
+                e.position <= input.len() && input.is_char_boundary(e.position),
+                "position {} is not a char boundary of {input:?}",
+                e.position
+            );
+        }
+        Ok(())
+    }
+
+    proptest::proptest! {
+        /// Arbitrary Unicode text never panics, and error positions are
+        /// valid byte offsets into the input.
+        #[test]
+        fn parse_query_never_panics_on_any_text(input in "\\PC*") {
+            assert_well_formed(&input)?;
+        }
+
+        #[test]
+        fn parse_query_never_panics_on_any_chars(
+            input in proptest::collection::vec(proptest::char::any(), 0..64)
+        ) {
+            let input: String = input.into_iter().collect();
+            assert_well_formed(&input)?;
+        }
+
+        /// Queries assembled from keys, operators and values, so most
+        /// inputs reach the `key:value` paths.
+        #[test]
+        fn parse_query_never_panics_on_token_soup(
+            parts in proptest::collection::vec(proptest::sample::select(PIECES), 0..24)
+        ) {
+            assert_well_formed(&parts.concat())?;
+        }
+    }
 }
