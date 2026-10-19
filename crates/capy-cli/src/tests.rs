@@ -27,7 +27,8 @@ fn is_usage_error(args: &[&str]) -> bool {
 fn non_verbs_are_not_cli() {
     for args in [
         &[][..],
-        &["--help"],
+        &["--version"],
+        &["-help"],
         &["open"],
         &["C:\\maps\\a.ds1"],
         &["renderx"],
@@ -155,6 +156,10 @@ fn bad_arguments_are_usage_errors() {
         with(&["--layers", ","]),
         with(&["--frobnicate", "1"]),
         with(&["--out", "again.png"]),
+        with(&["--object-frame", "256"]),
+        with(&["--object-frame", "-1"]),
+        with(&["--object-frame", "x"]),
+        with(&["--object-frame"]),
         with(&["extra.ds1"]),
         // missing pieces
         vec!["render", "a.ds1", "--profile", "v"],
@@ -278,4 +283,364 @@ fn root_rule_matches_the_app() {
         root_from(None, exe),
         PathBuf::from("C:\\apps\\capy").join("capybara")
     );
+}
+
+#[test]
+fn render_object_frame_and_terrain_only_layers() {
+    let a = render_ok(&["render", "a.ds1", "--profile", "v", "--out", "o.png"]);
+    assert_eq!(a.object_frame, 0);
+    assert!(a.visibility.objects, "objects are drawn by default");
+    let a = render_ok(&[
+        "render",
+        "a.ds1",
+        "--profile",
+        "v",
+        "--out",
+        "o.png",
+        "--Object-Frame",
+        "255",
+    ]);
+    assert_eq!(a.object_frame, 255);
+    let a = render_ok(&[
+        "render",
+        "a.ds1",
+        "--profile",
+        "v",
+        "--out",
+        "o.png",
+        "--object-frame=3",
+        "--layers",
+        "floors,walls,shadow,roofs",
+    ]);
+    assert_eq!(a.object_frame, 3);
+    assert!(
+        !a.visibility.objects,
+        "--layers without objects is terrain only"
+    );
+}
+
+#[test]
+fn help_aliases_print_help() {
+    for alias in ["help", "HELP", "--help", "--HELP", "-h", "-H", "/?"] {
+        assert_eq!(
+            parse(&os(&[alias])),
+            Ok(Some(Command::Help(None))),
+            "{alias}"
+        );
+        let (code, out, err) = run_text(&[alias]);
+        assert_eq!(code, Some(0), "{alias}: {err}");
+        assert!(out.contains("verbs:"), "{alias}: {out}");
+        assert!(err.is_empty(), "{alias}: {err}");
+    }
+    // A verb after the alias shows that verb's help.
+    for alias in ["--help", "-h", "/?"] {
+        assert_eq!(
+            parse(&os(&[alias, "Render"])),
+            Ok(Some(Command::Help(Some("render".into())))),
+            "{alias}"
+        );
+        let (code, out, _) = run_text(&[alias, "render"]);
+        assert_eq!(code, Some(0));
+        assert!(out.contains("--object-frame"), "{out}");
+    }
+    assert_eq!(run_text(&["--help", "bogus"]).0, Some(2));
+    assert_eq!(run_text(&["-h", "a", "b"]).0, Some(2));
+}
+
+#[test]
+fn exit_code_table() {
+    use crate::{Fail, exit_code};
+    assert_eq!(exit_code(&Ok(())), 0);
+    assert_eq!(exit_code(&Err(Fail::Runtime("x".into()))), 1);
+    assert_eq!(exit_code(&Err(Fail::Usage("x".into()))), 2);
+}
+
+#[test]
+fn version_labels_match_the_profile_toml() {
+    use d2_assets::{GameVersion, Profile};
+
+    use crate::profiles::version_label;
+    for (version, label) in [
+        (GameVersion::V113c, "1.13c"),
+        (GameVersion::V114d, "1.14d"),
+        (GameVersion::D2r, "d2r"),
+    ] {
+        assert_eq!(version_label(version), label);
+        let mut profile = Profile::vanilla(std::path::Path::new("C:\\nowhere"));
+        profile.game_version = version;
+        assert!(
+            profile
+                .to_toml()
+                .contains(&format!("game_version = \"{label}\"")),
+            "{label}"
+        );
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("profiles");
+    std::fs::create_dir_all(&dir).unwrap();
+    let profile = Profile::vanilla(std::path::Path::new("C:\\nowhere"));
+    std::fs::write(dir.join("vanilla.toml"), profile.to_toml()).unwrap();
+    let (code, out, _) = run_text_in(tmp.path(), &["profiles", "list"]);
+    assert_eq!(code, Some(0));
+    assert_eq!(out.trim_end(), format!("vanilla\t1.14d\t{}", profile.name));
+}
+
+/// The app's `config.toml` as `Config::save` writes it, with overrides for
+/// two profiles.
+const APP_CONFIG: &str = r#"
+last_profile = "vanilla"
+gamma = 1.3
+autosave_minutes = 5
+mode = "map"
+
+[window]
+width = 1600.0
+
+[[recent_maps]]
+profile = "vanilla"
+path = 'data\global\tiles\act1\town\towne1.ds1'
+
+[[overrides]]
+profile = "vanilla"
+ds1 = 'data\global\tiles\act1\town\towne1.ds1'
+lvl_type = 2
+def = 7
+
+[[overrides]]
+profile = "mxl"
+ds1 = 'data\global\tiles\act1\town\towne1.ds1'
+lvl_type = 9
+
+[[overrides]]
+profile = "vanilla"
+ds1 = 'Data/Global/Tiles/Act2/Town/TownN1.ds1'
+lvl_type = 5
+"#;
+
+#[test]
+fn overrides_are_read_per_profile() {
+    use d2_assets::GamePath;
+
+    use crate::overrides::{MapOverride, parse as parse_overrides};
+    let (vanilla, warnings) = parse_overrides(APP_CONFIG, "vanilla");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(
+        vanilla,
+        vec![
+            MapOverride {
+                ds1: GamePath::new(r"data\global\tiles\act1\town\towne1.ds1"),
+                lvl_type: 2,
+                def: Some(7),
+            },
+            MapOverride {
+                // Canonicalised like the app does (`GamePath::new`).
+                ds1: GamePath::new(r"data\global\tiles\act2\town\townn1.ds1"),
+                lvl_type: 5,
+                def: None,
+            },
+        ]
+    );
+    let (mxl, _) = parse_overrides(APP_CONFIG, "mxl");
+    assert_eq!(mxl.len(), 1);
+    assert_eq!((mxl[0].lvl_type, mxl[0].def), (9, None));
+    assert!(parse_overrides(APP_CONFIG, "other").0.is_empty());
+    // No overrides array at all: nothing, silently.
+    assert_eq!(
+        parse_overrides("gamma = 1.0\n", "vanilla"),
+        (Vec::new(), Vec::new())
+    );
+}
+
+#[test]
+fn malformed_overrides_are_warnings() {
+    use crate::overrides::parse as parse_overrides;
+    // Not TOML.
+    let (o, w) = parse_overrides("[[overrides]\nprofile = ", "vanilla");
+    assert!(o.is_empty());
+    assert_eq!(w.len(), 1, "{w:?}");
+    // Not an array.
+    let (o, w) = parse_overrides("overrides = 3\n", "vanilla");
+    assert!(o.is_empty());
+    assert_eq!(w.len(), 1, "{w:?}");
+    // Bad entries are skipped one by one; good ones survive.
+    let text = r#"
+overrides = [
+    1,
+    { profile = "vanilla", ds1 = 'data\a.ds1' },
+    { profile = "vanilla", ds1 = 'data\b.ds1', lvl_type = -1 },
+    { profile = "vanilla", ds1 = 'data\c.ds1', lvl_type = 3, def = "x" },
+    { profile = "vanilla", lvl_type = 3 },
+    { profile = "mxl", ds1 = 5 },
+    { profile = "vanilla", ds1 = 'data\d.ds1', lvl_type = 4 },
+    { profile = "vanilla", ds1 = 'data\d.ds1', lvl_type = 6, def = 1 },
+]
+"#;
+    let (o, w) = parse_overrides(text, "vanilla");
+    assert_eq!(w.len(), 5, "{w:?}");
+    assert_eq!(o.len(), 1, "{o:?}");
+    assert_eq!(
+        (o[0].lvl_type, o[0].def),
+        (6, Some(1)),
+        "the later entry wins"
+    );
+}
+
+/// A `capybara\` home whose `vanilla` profile is one empty folder layer (no
+/// game data), so verbs run without an install.
+fn folder_home() -> tempfile::TempDir {
+    use d2_assets::{GameVersion, LayerSpec, Profile};
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("gamedata");
+    std::fs::create_dir_all(&data).unwrap();
+    let profile = Profile {
+        id: "vanilla".into(),
+        name: "Folder only".into(),
+        game_version: GameVersion::V114d,
+        layers: vec![LayerSpec::Saves, LayerSpec::Folder { path: data }],
+    };
+    let dir = tmp.path().join("profiles");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("vanilla.toml"), profile.to_toml()).unwrap();
+    tmp
+}
+
+#[test]
+fn overrides_reach_the_map_catalog() {
+    use d2_assets::{GamePath, MapCatalog, Profile};
+
+    use crate::Ctx;
+    let home = folder_home();
+    std::fs::write(home.path().join("config.toml"), APP_CONFIG).unwrap();
+    let text = std::fs::read_to_string(home.path().join("profiles").join("vanilla.toml")).unwrap();
+    let profile = Profile::from_toml(&text).unwrap();
+    let overlay = profile.open(&home.path().join("saves")).unwrap();
+    let (mut catalog, _) = MapCatalog::build(&overlay, profile.game_version, &[]).unwrap();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let mut ctx = Ctx {
+        root: home.path().to_path_buf(),
+        out: &mut out,
+        err: &mut err,
+    };
+    crate::overrides::apply(&mut ctx, &mut catalog, "vanilla");
+    let mut applied = catalog.overrides();
+    applied.sort();
+    assert_eq!(
+        applied,
+        vec![
+            (
+                GamePath::new(r"data\global\tiles\act1\town\towne1.ds1"),
+                2,
+                Some(7)
+            ),
+            (
+                GamePath::new(r"data\global\tiles\act2\town\townn1.ds1"),
+                5,
+                None
+            ),
+        ]
+    );
+    assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
+
+    // A malformed config is a warning, and no overrides are applied.
+    std::fs::write(home.path().join("config.toml"), "overrides = [ nope").unwrap();
+    let (mut catalog, _) = MapCatalog::build(&overlay, profile.game_version, &[]).unwrap();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let mut ctx = Ctx {
+        root: home.path().to_path_buf(),
+        out: &mut out,
+        err: &mut err,
+    };
+    crate::overrides::apply(&mut ctx, &mut catalog, "vanilla");
+    assert!(catalog.overrides().is_empty());
+    let err = String::from_utf8_lossy(&err);
+    assert!(err.starts_with("warning: config.toml"), "{err}");
+}
+
+#[test]
+fn a_map_with_no_tile_set_is_a_runtime_error() {
+    let home = folder_home();
+    let ds1 = d2_formats::ds1::Ds1::new(2, 2, 0);
+    let file = home.path().join("loose.ds1");
+    std::fs::write(&file, ds1.to_bytes().unwrap()).unwrap();
+    let png = home.path().join("o.png");
+    let (code, _, err) = run_text_in(
+        home.path(),
+        &[
+            "render",
+            file.to_str().unwrap(),
+            "--profile",
+            "vanilla",
+            "--out",
+            png.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, Some(1), "{err}");
+    assert!(err.contains("--lvltype"), "{err}");
+    assert!(!png.exists());
+    // An LvlType the (empty) tables do not have is a runtime error too.
+    let (code, _, err) = run_text_in(
+        home.path(),
+        &[
+            "render",
+            file.to_str().unwrap(),
+            "--profile",
+            "vanilla",
+            "--lvltype",
+            "1",
+            "--out",
+            png.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, Some(1), "{err}");
+}
+
+#[test]
+fn object_counts_and_result_line() {
+    use d2_formats::ds1::{Ds1, Object};
+
+    use crate::render_cmd::{ObjectCounts, objects_summary};
+    let mut ds1 = Ds1::new(2, 3, 0);
+    let at = |x, y| Object {
+        kind: 2,
+        id: 1,
+        x,
+        y,
+        flags: 0,
+    };
+    // Sub-tile coordinates: 2x3 cells are 10x15 sub-tiles.
+    ds1.objects = vec![
+        at(0, 0),
+        at(9, 14),
+        at(10, 0),
+        at(0, 15),
+        at(-1, 3),
+        at(5, 5),
+    ];
+    assert_eq!(
+        ObjectCounts::of(&ds1, 1),
+        ObjectCounts {
+            drawn: 2,
+            missing: 1,
+            outside: 3
+        }
+    );
+    assert_eq!(objects_summary(None), "objects: off");
+    assert_eq!(
+        objects_summary(Some(ObjectCounts::of(&ds1, 1))),
+        "objects: 2 drawn, 1 missing"
+    );
+}
+
+#[test]
+fn help_after_a_verb_is_that_verbs_help() {
+    for args in [
+        &["render", "--help"][..],
+        &["render", "a.ds1", "-h"][..],
+        &["maps", "/?"][..],
+        &["index", "--HELP"][..],
+    ] {
+        let (code, out, _) = run_text(args);
+        assert_eq!(code, Some(0), "{args:?}");
+        assert!(!out.is_empty(), "{args:?} printed help");
+    }
 }

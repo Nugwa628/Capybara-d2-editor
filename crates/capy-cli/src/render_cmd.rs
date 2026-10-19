@@ -3,14 +3,15 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
-use capy_render::{RenderOptions, TileSet, render};
-use d2_assets::{GamePath, MapCatalog, MapInfo, MapInfoSource, Overlay};
+use capy_render::{MissingObject, ObjectSprites, RenderOptions, TileSet, render_with_objects};
+use d2_assets::objects::ObjectCatalog;
+use d2_assets::{GamePath, GameVersion, MapCatalog, MapInfo, MapInfoSource, Overlay};
 use d2_formats::ds1::Ds1;
 use d2_formats::palette::{Palette, act_palette_path};
 
 use crate::args::RenderArgs;
 use crate::maps_cmd::{MAX_WARNINGS, warn_limited};
-use crate::{CmdResult, Ctx, Fail, profiles};
+use crate::{CmdResult, Ctx, Fail, overrides, profiles};
 
 /// Where the DS1 comes from.
 enum Source {
@@ -72,7 +73,7 @@ fn read_map(a: &RenderArgs, overlay: &Overlay, saves: &Path) -> Result<(Source, 
 fn resolve_info(
     a: &RenderArgs,
     overlay: &Overlay,
-    version: d2_assets::GameVersion,
+    profile: &d2_assets::Profile,
     source: &Source,
     ctx: &mut Ctx<'_>,
 ) -> Result<MapInfo, Fail> {
@@ -93,7 +94,7 @@ fn resolve_info(
     } else {
         Vec::new()
     };
-    let (catalog, warnings) = MapCatalog::build(overlay, version, &names)
+    let (mut catalog, warnings) = MapCatalog::build(overlay, profile.game_version, &names)
         .map_err(|e| Fail::Runtime(format!("building the map catalog: {e}")))?;
     warn_limited(ctx, &warnings);
     if let Some(lvltype) = a.lvltype {
@@ -101,6 +102,8 @@ fn resolve_info(
             .resolve_explicit(&lookup, lvltype, a.def)
             .map_err(|e| Fail::Runtime(format!("--lvltype {lvltype}: {e}")));
     }
+    // The editor's saved choice for this map, as when it opens the profile.
+    overrides::apply(ctx, &mut catalog, &profile.id);
     match catalog.best(&lookup) {
         Some(info) if !(from_file && info.source == MapInfoSource::Ds1Header) => {
             if info.source == MapInfoSource::Ds1Header {
@@ -110,7 +113,8 @@ fn resolve_info(
             }
             Ok(info)
         }
-        _ => Err(Fail::Usage(format!(
+        // The arguments are well-formed; the map just has no known tile set.
+        _ => Err(Fail::Runtime(format!(
             "{} is not part of the profile, so its tilesets are unknown: pass --lvltype N [--def N]",
             a.map.to_string_lossy()
         ))),
@@ -142,6 +146,105 @@ fn info_line(map: &str, info: &MapInfo) -> String {
     )
 }
 
+/// Object counts of one render: `drawn` objects have a sprite, `missing`
+/// ones lie inside the map but draw nothing, `outside` ones lie outside the
+/// map's cells and are skipped (as in the reference).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObjectCounts {
+    pub drawn: usize,
+    pub missing: usize,
+    pub outside: usize,
+}
+
+impl ObjectCounts {
+    pub fn of(ds1: &Ds1, missing: usize) -> ObjectCounts {
+        let max_x = i64::from(ds1.width) * 5;
+        let max_y = i64::from(ds1.height) * 5;
+        let inside = ds1
+            .objects
+            .iter()
+            .filter(|o| {
+                (0..max_x).contains(&i64::from(o.x)) && (0..max_y).contains(&i64::from(o.y))
+            })
+            .count();
+        ObjectCounts {
+            drawn: inside.saturating_sub(missing),
+            missing,
+            outside: ds1.objects.len() - inside,
+        }
+    }
+}
+
+/// The `objects: ...` part of the result line; `None` when the objects
+/// layer is hidden.
+pub fn objects_summary(counts: Option<ObjectCounts>) -> String {
+    match counts {
+        None => "objects: off".to_owned(),
+        Some(c) => format!("objects: {} drawn, {} missing", c.drawn, c.missing),
+    }
+}
+
+/// The object catalog of the profile, or `None` (with a warning) when it
+/// cannot be built: objects are then reported missing, never fatal.
+fn object_catalog(
+    ctx: &mut Ctx<'_>,
+    overlay: &Overlay,
+    version: GameVersion,
+) -> Option<ObjectCatalog> {
+    match ObjectCatalog::build(overlay, version) {
+        Ok((catalog, warnings)) => {
+            // Vanilla never ships ObjPreset; the embedded DS1Edit obj.txt is
+            // the normal source there, so that note is not worth a warning.
+            let warnings: Vec<String> = warnings
+                .into_iter()
+                .filter(|w| !w.starts_with("no ObjPreset table"))
+                .collect();
+            warn_limited(ctx, &warnings);
+            Some(catalog)
+        }
+        Err(e) => {
+            ctx.warn(format!(
+                "objects are not drawn: building the object catalog: {e}"
+            ));
+            None
+        }
+    }
+}
+
+fn warn_missing_objects(ctx: &mut Ctx<'_>, missing: &[MissingObject]) {
+    if missing.is_empty() {
+        return;
+    }
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for m in missing {
+        *counts
+            .entry(format!("type {} id {} ({})", m.kind, m.id, m.reason))
+            .or_default() += 1;
+    }
+    let mut sorted: Vec<_> = counts.into_iter().collect();
+    sorted.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    let top: Vec<String> = sorted
+        .iter()
+        .take(MAX_WARNINGS)
+        .map(|(what, n)| format!("{what} x{n}"))
+        .collect();
+    let more = if sorted.len() > MAX_WARNINGS {
+        format!(", and {} more kinds", sorted.len() - MAX_WARNINGS)
+    } else {
+        String::new()
+    };
+    let what = if missing.len() == 1 {
+        "object draws"
+    } else {
+        "objects draw"
+    };
+    ctx.warn(format!(
+        "{} {what} nothing: {}{more}",
+        missing.len(),
+        top.join(", ")
+    ));
+}
+
 pub fn run(ctx: &mut Ctx<'_>, a: &RenderArgs) -> CmdResult {
     let profile = profiles::load(ctx, &a.profile)?;
     let overlay = profiles::open(ctx, &profile)?;
@@ -154,7 +257,7 @@ pub fn run(ctx: &mut Ctx<'_>, a: &RenderArgs) -> CmdResult {
             a.map.to_string_lossy()
         ))
     })?;
-    let info = resolve_info(a, &overlay, profile.game_version, &source, ctx)?;
+    let info = resolve_info(a, &overlay, &profile, &source, ctx)?;
     let map_name = match &source {
         Source::Game(g) => g.to_string(),
         Source::File { .. } => a.map.to_string_lossy().into_owned(),
@@ -169,15 +272,32 @@ pub fn run(ctx: &mut Ctx<'_>, a: &RenderArgs) -> CmdResult {
     let tiles = tiles.with_variant_rule(a.variant);
     warn_limited(ctx, &warnings);
     let palette = load_palette(&overlay, info.palette_act)?;
+
+    let draw_objects = a.visibility.objects && !ds1.objects.is_empty();
+    let catalog = if draw_objects {
+        object_catalog(ctx, &overlay, profile.game_version)
+    } else {
+        None
+    };
+    let sprites = catalog
+        .as_ref()
+        .map(|catalog| ObjectSprites::new(&overlay, catalog));
     let opts = RenderOptions {
         zoom_div: a.zoom,
         gamma: a.gamma,
         visibility: a.visibility.clone(),
+        object_frames: (a.object_frame != 0)
+            .then(|| vec![Some(a.object_frame); ds1.objects.len()].into()),
         ..RenderOptions::default()
     };
-    let rendered = render(&ds1, &tiles, &palette, &opts)
+    let rendered = render_with_objects(&ds1, &tiles, sprites.as_ref(), &palette, &opts)
         .map_err(|e| Fail::Runtime(format!("rendering: {e}")))?;
     warn_limited(ctx, &rendered.warnings);
+    let object_counts = a.visibility.objects.then(|| match &sprites {
+        Some(_) => ObjectCounts::of(&ds1, rendered.missing_objects.len()),
+        // No catalog (or no objects): every object inside the map is missing.
+        None => ObjectCounts::of(&ds1, ObjectCounts::of(&ds1, 0).drawn),
+    });
     let png = rendered
         .image
         .to_png()
@@ -187,13 +307,14 @@ pub fn run(ctx: &mut Ctx<'_>, a: &RenderArgs) -> CmdResult {
 
     let missing = rendered.missing.len();
     ctx.say(format!(
-        "rendered 1:{} gamma {:.2}: {}x{} px, origin {},{}, missing tiles: {missing}, wrote {}",
+        "rendered 1:{} gamma {:.2}: {}x{} px, origin {},{}, missing tiles: {missing}, {}, wrote {}",
         a.zoom,
         a.gamma,
         rendered.image.width,
         rendered.image.height,
         rendered.origin.0,
         rendered.origin.1,
+        objects_summary(object_counts),
         a.out.display()
     ));
     if missing > 0 {
@@ -214,6 +335,17 @@ pub fn run(ctx: &mut Ctx<'_>, a: &RenderArgs) -> CmdResult {
             "{missing} tiles have no matching DT1 tile (orientation/main/sub): {}",
             top.join(", ")
         ));
+    }
+    warn_missing_objects(ctx, &rendered.missing_objects);
+    if let Some(c) = object_counts
+        && c.outside > 0
+    {
+        let what = if c.outside == 1 {
+            "object lies"
+        } else {
+            "objects lie"
+        };
+        ctx.warn(format!("{} {what} outside the map, not drawn", c.outside));
     }
     Ok(())
 }

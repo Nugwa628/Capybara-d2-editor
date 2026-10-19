@@ -1,6 +1,6 @@
 # Capybara Map Editor — Plan
 
-Status: **P0, P1, P2 and P6 done** (2026-10-19). P3/P4/P5 libraries done; UI lane: P3 tile browser + Ctrl+K in progress, then P4 history UI, P5 object/NPC placement, release.
+Status: **P0, P1, P2, P3 and P6 done** (2026-10-19). P4/P5 libraries done; UI lane: P4 history UI in progress, then P5 object/NPC placement in the map view, release.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -143,6 +143,10 @@ Status: **P0, P1, P2 and P6 done** (2026-10-19). P3/P4/P5 libraries done; UI lan
 - Converter: PNG export -> import (with sprite.json) -> encode -> decode is exact; sheet round trip; batch conversion of trees both ways with cancel.
 - Editor: palette lock (no opaque index 0, every pixel a palette index) and undo/redo laws hold under randomized operation sequences; DCC 4x4-cell limit check uses the decoder's own cell partition and is proven by an encode/decode round trip.
 - App: scripted end-to-end test exports a real DCC, re-imports and saves it to a game path (identical frames, CHANGED.txt, snapshot), edits it with outline and gradient (still palette-locked), and runs the single-exe CLI render.
+
+### P3 acceptance (2026-10-19)
+- Index search: 26/26 table-driven queries over the Median XL index (index, generated name, colour, tag, alias, source file, used-in, similar, mirrored, src, type) return the expected asset in the top 5.
+- App: scripted end-to-end test on Median XL searches `color:green type:floor file:whimsyfloor.dt1`, uses the hit as the paint brush, paints, and checks recents, favorite, alias and the saved cell; alias search returns it first.
 
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
@@ -292,9 +296,9 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **Build setup:** agents run on Opus high; sccache via gitignored `.cargo/config.toml`; fixed lane slots `.claude/worktrees/lane-1..4`; only one Bevy-building agent at a time (user may relax this to run P4 and P5 UI in parallel).
 
 ## Pending small fixes (lead decisions, not yet implemented)
-- Library wishes from the browser UI: `capy_render::ObjectFrame` direction count (preview still parses the COF for it); `capy_index::Filter::AnyOf`/multi-`File` so "this map's tile set" is one query; document `Index::used_in`, `lvltypes_of`, `UserDb::use_count` in `capy-index.md`; saved-search reorder/rename; `capy_sprite::import_frames` for a subset of an export's files.
 - **CLI (from the docs review):** `render` draws objects when the `objects` layer is on (`render_with_objects` + `ObjectCatalog`); `profiles list` prints the game version as `1.13c`/`1.14d`; `maps list`/`render` honour the app's per-profile overrides from `config.toml`; a runtime condition (map outside the profile with no tile set) exits 1, usage errors 2; `--help`, `-h`, `/?` print CLI help instead of starting the GUI.
 - **P4 app round:** Settings dialog (gamma, default layer visibility, autosave interval); autosave timer actually wired; "Add game install..." (folder picker + read-only registry lookup of the D2 install path, detect vanilla vs Median XL, write a profile TOML); first run prefers `vanilla` over alphabetical order; selection intersect modifier consistent between Map and Sprite editors (Shift+Ctrl in both, Alt kept as an alias in the map editor); Replace-colour tool hint text ("replaces the clicked colour with the primary").
+- **P5 app round (also):** drop app workarounds now covered by libraries: one query per DT1 in `browser/scope.rs` -> `Filter::AnyFile`; COF parse in `sprites/preview.rs` -> `ObjectFrame.directions`; hand-rolled partial import in `sprites/convert.rs` -> `capy_sprite::import_frames_subset`.
 - **P5 app round:** draw objects and NPCs in the map view itself (the GPU view currently shows diamond markers; the CPU library already renders them), with animation playback.
 - **Release:** `C:\games\median-xl` is only an auto-detect candidate on this machine; docs should not present it as the standard path.
 - Release: GUI-subsystem exe attaches to the parent console for CLI output; the prompt can return before output finishes when run from cmd. Decide at release whether to also ship a console-subsystem `capy.exe`.
