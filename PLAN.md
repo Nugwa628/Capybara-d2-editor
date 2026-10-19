@@ -307,6 +307,14 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **P5 app round (also):** drop app workarounds now covered by libraries: one query per DT1 in `browser/scope.rs` -> `Filter::AnyFile`; COF parse in `sprites/preview.rs` -> `ObjectFrame.directions`; hand-rolled partial import in `sprites/convert.rs` -> `capy_sprite::import_frames_subset`.
 - **P5 app round:** draw objects and NPCs in the map view itself (the GPU view currently shows diamond markers; the CPU library already renders them), with animation playback.
 - **Release:** `C:\games\median-xl` is only an auto-detect candidate on this machine; docs should not present it as the standard path.
+- **Release round (from the dry run, `docs/release-checklist.md`):**
+  - panic hook writing `capybara\crash.log` plus a message box (startup failures such as "no GPU" are silent today);
+  - `scripts/build-release.ps1`: `--target x86_64-pc-windows-msvc` with `RUSTFLAGS=-C target-feature=+crt-static --remap-path-prefix=...` (no VCRUNTIME140 dependency, no builder paths in the exe; tested in the dry run);
+  - profile seeding and install detection moved into a library so the CLI works before the GUI has ever run;
+  - app icon and version resource (needs an .ico);
+  - README/user guide: remove stale "planned" notes, add system requirements (Windows 10/11 x64, Vulkan or DX12 driver), no machine-specific Median XL path;
+  - ship `THIRD-PARTY-LICENSES.md` in the release zip.
+  - Minor/backlog: an interrupted index build restarts from scratch.
 - Release: GUI-subsystem exe attaches to the parent console for CLI output; the prompt can return before output finishes when run from cmd. Decide at release whether to also ship a console-subsystem `capy.exe`.
 - `capy-render`: a mod colormap that maps a visible index to 0 makes that pixel transparent here; DS1Edit keeps it opaque. No vanilla row does this. Match DS1Edit later.
 - `capy-render`: DS1Edit re-derives DCC indices with `palette_find_closest` (first duplicate colour wins, `cof.c:149-170`), causing ~3 pixel differences on Coldcrow. Not reproduced; low value.
