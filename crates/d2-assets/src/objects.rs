@@ -149,10 +149,13 @@ pub struct ObjectInfo {
     pub parts: Vec<String>,
     /// Per-component skin/armor token for DCC file names, e.g. `("TR", "LIT")`,
     /// from DS1Edit's obj.txt. Empty, or a component missing here, means `LIT`.
+    /// Type 1 objects resolved through MonPreset take them from the obj.txt
+    /// row `(act, 1, id)` when it draws the same token (DS1 v5+).
     pub skins: Vec<(String, String)>,
     /// Default facing from DS1Edit's obj.txt `Direction` column (e.g. rogues
     /// 7, chickens 6), which the reference uses as the user direction. None
-    /// when no obj.txt row applies; renderers then use direction 0.
+    /// when no obj.txt row applies; renderers then use direction 0. Type 1
+    /// objects get it like `skins`.
     pub direction: Option<u8>,
     /// SizeX/SizeY.
     pub size: (i32, i32),
@@ -845,19 +848,27 @@ impl ObjectCatalog {
             2 => self.resolve_object(act, ds1_version, object.id),
             kind => return ObjectInfo::unresolved(kind, object.id),
         };
-        info.colormap = self.colormap_for(act, ds1_version, &info);
+        if let Some((row, visual)) = self.matching_edit_row(act, ds1_version, &info) {
+            info.colormap.clone_from(&row.colormap);
+            if info.ds1_kind == 1 && info.skins.is_empty() {
+                info.skins.clone_from(&visual.skins);
+            }
+            if info.ds1_kind == 1 && info.direction.is_none() {
+                info.direction = visual.direction;
+            }
+        }
         info
     }
 
-    /// The obj.txt palette shift of `(act, type, id)` when that row draws the
-    /// same token as `info` (type 1 needs DS1 v5+, where ids are presets as
-    /// in obj.txt).
-    fn colormap_for(
+    /// DS1Edit's obj.txt row `(act, type, id)` and its visual, when that row
+    /// draws the same token as `info` (type 1 needs DS1 v5+, where ids are
+    /// presets as in obj.txt).
+    fn matching_edit_row(
         &self,
         act: usize,
         ds1_version: i32,
         info: &ObjectInfo,
-    ) -> Option<PaletteShift> {
+    ) -> Option<(&EditRow, &EditVisual)> {
         if info.ds1_kind == 1 && ds1_version < 5 {
             return None;
         }
@@ -867,12 +878,12 @@ impl ObjectCatalog {
             .by_key
             .get(&(act, info.ds1_kind, info.ds1_id))
             .and_then(|i| self.edit.rows.get(*i))?;
-        let shift = row.colormap.as_ref()?;
         let token = info.token.as_deref()?;
-        row.visual
+        let visual = row
+            .visual
             .as_ref()
-            .filter(|v| v.token.eq_ignore_ascii_case(token))
-            .map(|_| shift.clone())
+            .filter(|v| v.token.eq_ignore_ascii_case(token))?;
+        Some((row, visual))
     }
 
     /// Every placeable (kind, id) for an act, for the object picker.

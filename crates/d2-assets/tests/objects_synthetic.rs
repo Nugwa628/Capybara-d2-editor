@@ -824,7 +824,7 @@ fn monstats_with(count: usize, code: &str) -> Vec<u8> {
 }
 
 #[test]
-fn palette_shifts_come_from_obj_txt_when_the_token_matches() {
+fn obj_txt_shifts_skins_and_facing_apply_when_the_token_matches() {
     let bishibosh = d2_assets::PaletteShift {
         path: r"Data\Global\Monsters\RandTransforms.dat".to_owned(),
         row: 15,
@@ -856,16 +856,18 @@ fn palette_shifts_come_from_obj_txt_when_the_token_matches() {
         ("monpreset", Some("FS"))
     );
     assert_eq!(info.colormap.as_ref(), Some(&bishibosh));
-    assert_eq!(
-        resolve(&same, 0, 4, 1, 34).colormap,
-        None,
-        "pre-v5 ids are raw rows"
-    );
+    // the same row also supplies the skins and default facing DS1Edit uses
+    assert_eq!(info.skins, [("TR".to_owned(), "LIT".to_owned())]);
+    assert_eq!(info.direction, Some(2));
+    let raw = resolve(&same, 0, 4, 1, 34);
+    assert_eq!(raw.colormap, None, "pre-v5 ids are raw rows");
+    assert!(raw.skins.is_empty() && raw.direction.is_none());
     // ... dropped when the mod draws something else there
     let (_d, other, _w) = build_owned(&mon_files(40), GameVersion::V114d);
     let info = resolve(&other, 0, 18, 1, 34);
     assert_eq!(info.token.as_deref(), Some("M34"));
     assert_eq!(info.colormap, None);
+    assert!(info.skins.is_empty() && info.direction.is_none());
 }
 
 #[test]

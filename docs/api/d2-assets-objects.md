@@ -43,6 +43,8 @@ pub struct ObjectInfo {
     pub parts: Vec<String>,           // enabled components (HD TR LG RA LA RH LH SH S1..S8)
     pub skins: Vec<(String, String)>, // per-component skin token from obj.txt, e.g. ("TR","LIT"); missing = "LIT"
     pub direction: Option<u8>,        // default facing from obj.txt `Direction` (renderer default when no override)
+    // Type 1 via MonPreset (DS1 v5+): skins, direction and colormap come from the obj.txt row
+    // (act, 1, id) when it draws the same token as the MonStats route (as DS1Edit draws it).
     pub size: (i32, i32),             // SizeX/SizeY
     pub offset: (i32, i32),           // Xoffset/Yoffset
     pub draw_effect: Option<u8>,      // object-level transparency/blend if the table has one
