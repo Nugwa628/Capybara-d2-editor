@@ -104,3 +104,5 @@ distributed with this program.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Third-party licenses for everything bundled in the exe: [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).

@@ -5,6 +5,12 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **P4 complete.** History panel: autosave (dirty maps only, never touches saves),
+  per-map timeline, named checkpoints, visual tile diff overlay and read-only
+  snapshot view, undoable restore, retention with prune, gix milestones.
+  Settings dialog (gamma, default layers, autosave, retention, profiles) and
+  "Add game install..." with registry detection; first run prefers vanilla.
+- CLI: renders draw objects; overrides, version labels, exit codes, help aliases.
 - **P3 complete.** Tiles panel asset browser (virtualized thumbnails, Ctrl+wheel
   size, map/profile/sprite scopes, set tile as brush), Ctrl+K command palette with
   filter tokens and inline query errors, recents, favorite groups with drag
