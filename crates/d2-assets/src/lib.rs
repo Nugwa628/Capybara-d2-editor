@@ -13,6 +13,7 @@
 pub mod error;
 pub mod mpq;
 pub mod names;
+pub mod objects;
 pub mod overlay;
 pub mod path;
 pub mod presets;
@@ -23,6 +24,7 @@ pub mod tables;
 pub use error::{AssetError, Result};
 pub use mpq::{MpqArchive, MpqCoverage, MpqHeader};
 pub use names::{HarvestStats, KnownNames};
+pub use objects::{ObjectCatalog, ObjectClass, ObjectInfo, SpriteBase};
 pub use overlay::{LayerId, Overlay};
 pub use path::GamePath;
 pub use presets::{LegacyEntry, MapCatalog, MapInfo, MapInfoSource, parse_legacy_ini};
