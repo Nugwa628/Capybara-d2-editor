@@ -1,6 +1,6 @@
 # Capybara's D2 Editor (formerly Capybara Map Editor) — Plan
 
-Status: **P0-P6 done** (2026-10-19). Robustness audit merged. Next: release round (rename to "Capybara's D2 Editor", icon and opening animation, packaging).
+Status: **Release 0.1.0 built** (2026-10-19): P0-P6, robustness audit and release round done; `dist\CapybarasD2Editor-0.1.0-win64.zip` (see `docs/release-checklist.md`). Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -308,16 +308,8 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 
 ## Pending small fixes (lead decisions, not yet implemented)
 - **Release:** `C:\games\median-xl` is only an auto-detect candidate on this machine; docs should not present it as the standard path.
-- **Release round (from the dry run, `docs/release-checklist.md`):**
-  - lead, after the app lane merges: update `docs/release-checklist.md` 4a (CLI now seeds profiles) and open issues 2-5, then run `scripts/build-release.ps1` for real (watch for `CARGO_MANIFEST_DIR` paths that `--remap-path-prefix` does not cover);
-  - panic hook writing `capybara\crash.log` plus a message box (startup failures such as "no GPU" are silent today);
-  - DONE (release-cli lane): `scripts/build-release.ps1`: `--target x86_64-pc-windows-msvc` with `RUSTFLAGS=-C target-feature=+crt-static --remap-path-prefix=...` (no VCRUNTIME140 dependency, no builder paths in the exe; tested in the dry run);
-  - DONE (release-cli lane): profile seeding and install detection moved into `d2_assets::installs`; the CLI seeds default profiles on a clean folder (app adoption pending in the app lane);
-  - rename the product to **Capybara's D2 Editor** (window title, loading screen, docs, exe `CapybarasD2Editor.exe`); app icon and the opening animation taken from the user's own MXL Capybara Editor (user, 2026-10-19); version resource;
-  - README/user guide: remove stale "planned" notes, add system requirements (Windows 10/11 x64, Vulkan or DX12 driver), no machine-specific Median XL path;
-  - ship `THIRD-PARTY-LICENSES.md` in the release zip.
-  - DONE in the library (release-cli lane; app adoption pending): P5 follow-ups from the app round: `capy-render` public `ObjectSprites::frames_of_info` (animation delta + all frames of a direction) and an owned `ObjectSprites` (Arc overlay/catalog), so the app stops copying the delta rule; fix the `capy-render` doc on the cell origin (`(x-y)*80` is the bitmap's left edge, the diamond top is +80).
-  - Minor/backlog: an interrupted index build restarts from scratch.
+- **Release round: DONE (2026-10-19).** Rename to Capybara's D2 Editor, capybara icon and version resource, loading screen ported from the user's MXL Capybara Editor (door animation from the game files, capybara, gold title), crash log and message box, CLI profile seeding via `d2_assets::installs`, `scripts/build-release.ps1` (static CRT, path checks, zip), capy-render `frames_of_info` and owned `ObjectSprites` adopted by the app, README, user guide and checklist current. Final pass on main 5b3f01b: 1062 tests with the full corpora, render oracle 87, edit oracle, all 8 GPU suites; release exe smoke-tested from the zip.
+  - Backlog: an interrupted index build restarts from scratch; a `capybara\log.txt` for Bevy's log in release; a `d2-formats` font-table reader (the splash parses `.tbl` fonts in the app); the splash keeps the old program's timing (the door plays once, then frames 8/9 flicker).
 - Release: one exe only, no separate console `capy.exe` (user, 2026-10-19). The GUI-subsystem exe attaches to the parent console; from cmd the prompt can return before CLI output finishes (documented; redirection and exit codes work).
 - `capy-render`: a mod colormap that maps a visible index to 0 makes that pixel transparent here; DS1Edit keeps it opaque. No vanilla row does this. Match DS1Edit later.
 - `capy-render`: DS1Edit re-derives DCC indices with `palette_find_closest` (first duplicate colour wins, `cof.c:149-170`), causing ~3 pixel differences on Coldcrow. Not reproduced; low value.
