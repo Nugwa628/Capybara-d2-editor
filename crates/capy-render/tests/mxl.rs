@@ -16,8 +16,11 @@
 
 mod common;
 
-use capy_render::{RenderOptions, TileSet, render};
+use capy_render::{
+    ObjectOptions, ObjectSprites, RenderOptions, TileSet, render, render_with_objects,
+};
 use common::*;
+use d2_assets::objects::ObjectCatalog;
 use d2_assets::tables::load_excel;
 use d2_assets::{GamePath, GameVersion, Profile};
 use d2_formats::excel::ExcelTableKind;
@@ -51,10 +54,18 @@ fn median_xl_maps_render_without_missing_tiles() {
     };
     let out_dir = private_dir().join("mxl-renders");
     std::fs::create_dir_all(&out_dir).unwrap();
+    let object_dir = out_dir.join("objects");
+    std::fs::create_dir_all(&object_dir).unwrap();
 
     let game = open_profile(Profile::median_xl(&mxl));
     assert_eq!(game.version, GameVersion::V113c);
     let tables = load_tables(&game);
+    let (catalog, catalog_warnings) = ObjectCatalog::build(&game.overlay, game.version).unwrap();
+    for w in &catalog_warnings {
+        eprintln!("object catalog warning: {w}");
+    }
+    let sprites = ObjectSprites::new(&game.overlay, &catalog);
+    let mut object_totals = (0usize, 0usize);
     let lv =
         levels(&load_excel(&game.overlay, ExcelTableKind::Levels, game.version).unwrap()).unwrap();
 
@@ -141,8 +152,50 @@ fn median_xl_maps_render_without_missing_tiles() {
         for w in &out.warnings {
             failures.push(format!("{rel}: render warning {w}"));
         }
+        // Objects and monsters. Median XL's monster tables may be only
+        // partly decodable, so unresolved objects are reported, not failed.
+        let with_objects =
+            render_with_objects(&ds1, &tiles, Some(&sprites), &palette, &opts).unwrap();
+        std::fs::write(
+            object_dir.join(format!("{name}.png")),
+            with_objects.image.to_png().unwrap(),
+        )
+        .unwrap();
+        let (placed, missing) = sprites.place(&ds1, &ObjectOptions::default());
+        object_totals.0 += placed.len();
+        object_totals.1 += missing.len();
+        eprintln!(
+            "  objects: {} in the DS1, {} drawn, {} missing",
+            ds1.objects.len(),
+            placed.len(),
+            missing.len()
+        );
+        let mut reasons: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for m in &missing {
+            let why = match &m.reason {
+                capy_render::MissingReason::CofNotFound(p) => format!("cof not found {p}"),
+                other => other.to_string(),
+            };
+            *reasons
+                .entry(format!("t{}/id{} {why}", m.kind, m.id))
+                .or_default() += 1;
+        }
+        let mut reasons: Vec<_> = reasons.into_iter().collect();
+        reasons.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        for (why, n) in reasons.iter().take(8) {
+            eprintln!("    missing x{n}: {why}");
+        }
+        for w in &with_objects.warnings {
+            failures.push(format!("{rel}: object render warning {w}"));
+        }
         rendered += 1;
     }
+    eprintln!(
+        "objects over all maps: {} drawn, {} missing",
+        object_totals.0, object_totals.1
+    );
+    assert!(object_totals.0 > 0, "no object drew on any Median XL map");
     assert!(rendered >= 5, "only {rendered} maps rendered: {failures:?}");
     assert!(failures.is_empty(), "{failures:#?}");
 }

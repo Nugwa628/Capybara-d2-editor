@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **P1 complete.** Textured Bevy map view (single draw call per map, premultiplied
+  atlas, reference shadow blend, DS1Edit zoom grid) matching the CPU renderer on
+  all 18 oracle maps; background asset index with progress bar and cache.
+- `capy-render`: tile lookup and DS1Edit variant rule, reference draw order, CPU
+  compositor, oracle comparison (18/18).
+- `d2-assets`: map catalog (LvlPrest/Levels/LvlTypes, tile-coverage ranking,
+  Levels.Pal palettes, legacy DS1Edit ini import) and object catalog
+  (objects/NPCs to COF tokens, modes, parts, skins; Median XL monster tables).
+- `d2-formats`: DC6/DCC encoders (all game sprites round-trip), monster-table
+  `.bin` decoders, `dcc::cell_spans`.
+- `capy-index`: SQLite index with FTS, thumbnails, pHash, used-in links, search
+  with filter tokens (P3 query test 26/26), user.db, saves refresh.
+- `capy-edit`: patches with undo/redo, selections, clipboard with conflict
+  preview, layer moves, object and NPC-path ops (P2 oracle-load test 22/22).
+- `capy-sprite`, `capy-paint`: sprite converter and palette-locked editing engine.
+- `capy-cli`: headless `render`, `index`, `maps`, `profiles`.
 - **P0 complete.** Acceptance (vanilla 1.14d + Median XL): every DS1 round-trips
   byte-identically (2,276 + 2,424), every DT1 parses (six unreferenced 4.1 files
   excepted), every known name resolves, `.bin` equals `.txt`, every Median XL

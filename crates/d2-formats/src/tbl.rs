@@ -33,6 +33,10 @@ const NODE_LEN: usize = 17;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StringTable {
     entries: Vec<(String, String)>,
+    /// String id of each entry (the node's id field), parallel to `entries`.
+    ids: Vec<u16>,
+    /// String id -> entry (the first node in file order wins on a repeat).
+    by_id: HashMap<u16, usize>,
     /// key -> entry the game's hash-and-probe walk would reach first.
     index: HashMap<String, usize>,
 }
@@ -114,6 +118,8 @@ impl StringTable {
         }
 
         let mut entries = Vec::new();
+        let mut ids = Vec::new();
+        let mut by_id: HashMap<u16, usize> = HashMap::new();
         let mut best: HashMap<String, (u32, usize)> = HashMap::new();
         for slot in 0..node_count {
             let base = nodes_start + slot as usize * NODE_LEN;
@@ -129,6 +135,9 @@ impl StringTable {
             let home = key_hash(key_bytes, node_count);
             let dist = (slot + node_count - home) % node_count;
             let idx = entries.len();
+            let id = u16_at(bytes, base + 1).unwrap_or(0);
+            ids.push(id);
+            by_id.entry(id).or_insert(idx);
             entries.push((key.clone(), latin1(text_bytes)));
             best.entry(key)
                 .and_modify(|e| {
@@ -139,7 +148,12 @@ impl StringTable {
                 .or_insert((dist, idx));
         }
         let index = best.into_iter().map(|(k, (_, i))| (k, i)).collect();
-        Ok(StringTable { entries, index })
+        Ok(StringTable {
+            entries,
+            ids,
+            by_id,
+            index,
+        })
     }
 
     /// The text for `key`. If several entries share a key, this is the one the
@@ -147,6 +161,21 @@ impl StringTable {
     pub fn get(&self, key: &str) -> Option<&str> {
         let idx = *self.index.get(key)?;
         self.entries.get(idx).map(|(_, text)| text.as_str())
+    }
+
+    /// The `(key, text)` pair with string id `id`: the number compiled excel
+    /// tables store instead of a key (`patchstring.tbl` ids are offset by
+    /// 10000 and `expansionstring.tbl` ids by 20000 in those tables).
+    pub fn entry_by_id(&self, id: u16) -> Option<(&str, &str)> {
+        let idx = *self.by_id.get(&id)?;
+        self.entries
+            .get(idx)
+            .map(|(key, text)| (key.as_str(), text.as_str()))
+    }
+
+    /// String id of each entry of [`StringTable::entries`], in the same order.
+    pub fn entry_ids(&self) -> &[u16] {
+        &self.ids
     }
 
     /// Active `(key, text)` pairs in node-array order.
@@ -242,6 +271,19 @@ mod tests {
         }
         assert_eq!(t.get("color"), Some("\u{ff}c5Magic"));
         assert_eq!(t.get("missing"), None);
+        // the synthetic compiler numbers entries in input order
+        for (id, (k, v)) in entries.iter().enumerate() {
+            let id = u16::try_from(id).expect("small");
+            assert_eq!(
+                t.entry_by_id(id),
+                Some((latin1(k).as_str(), latin1(v).as_str())),
+                "id {id}"
+            );
+        }
+        assert_eq!(t.entry_by_id(5), None);
+        let mut ids = t.entry_ids().to_vec();
+        ids.sort_unstable();
+        assert_eq!(ids, [0, 1, 2, 3, 4]);
     }
 
     #[test]

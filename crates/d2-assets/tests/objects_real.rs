@@ -74,6 +74,10 @@ struct Report {
     per_kind: BTreeMap<i32, (usize, usize, usize)>,
     /// Type 1 objects that resolved but have no token, by `(act, id, name)`.
     tokenless: BTreeMap<(u8, i32, String), usize>,
+    /// Type 1 objects that resolved to a MonStats row but only got the
+    /// `monster <row>` fallback name, and those whose parts list is empty.
+    fallback_named: usize,
+    no_parts: usize,
 }
 
 fn ds1_names(f: &Fixture) -> Vec<GamePath> {
@@ -117,7 +121,11 @@ fn report(f: &Fixture) -> Report {
                 *r.unresolved
                     .entry((object.kind, object.id, act))
                     .or_default() += 1;
-            } else if info.token.is_none() && object.kind == 1 {
+            } else if object.kind == 1 && info.token.is_some() {
+                r.fallback_named += usize::from(info.name.starts_with("monster "));
+                r.no_parts += usize::from(info.parts.is_empty());
+            }
+            if info.source != "unresolved" && info.token.is_none() && object.kind == 1 {
                 *r.tokenless
                     .entry((act, object.id, info.name.clone()))
                     .or_default() += 1;
@@ -141,6 +149,10 @@ fn print_report(f: &Fixture, r: &Report) {
     for u in &r.unparsed {
         println!("unparsed: {u}");
     }
+    println!(
+        "type 1 with a token: {} named by the row fallback, {} without MonStats2 parts",
+        r.fallback_named, r.no_parts
+    );
     println!("by source: {:?}", r.by_source);
     println!("by class: {:?}", r.by_class);
     for (kind, (n, tokens, resolved)) in &r.per_kind {
@@ -253,7 +265,26 @@ fn median_xl_resolves_every_object() {
         100.0 * tokens2 as f64 / n2.max(1) as f64
     );
     assert!(*r.by_source.get("objpreset").unwrap_or(&0) > 0);
-    assert!(f.warnings.iter().any(|w| w.contains("TODO(excel-mon)")));
+    // Type 1 goes through monpreset.bin, monstats.bin, monstats2.bin and
+    // superuniques.bin.
+    assert!(
+        !f.warnings
+            .iter()
+            .any(|w| w.contains("MonPreset") || w.contains("cannot be loaded")),
+        "{:?}",
+        f.warnings
+    );
+    let (n1, tokens1, resolved1) = r.per_kind.get(&1).copied().unwrap_or_default();
+    println!(
+        "median-xl type 1: {resolved1}/{n1} resolved ({:.2}%), {tokens1}/{n1} with a token ({:.2}%)",
+        100.0 * resolved1 as f64 / n1.max(1) as f64,
+        100.0 * tokens1 as f64 / n1.max(1) as f64,
+    );
+    assert!(*r.by_source.get("monpreset").unwrap_or(&0) > 0);
+    // What is left without a token are MonPlace markers (groups, corpses),
+    // exactly as in vanilla.
+    assert_eq!(resolved1, n1);
+    assert!(tokens1 * 100 >= n1 * 85, "type 1 token rate too low");
 }
 
 #[test]

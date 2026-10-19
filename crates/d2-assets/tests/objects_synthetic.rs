@@ -537,13 +537,128 @@ fn bin_only_mon_tables_are_not_read_from_stale_txt() {
     assert!(
         warnings
             .iter()
-            .any(|w| w.contains("monstats.bin") && w.contains("TODO(excel-mon)")),
+            .any(|w| w.contains("monstats") && w.contains("cannot be loaded")),
         "{warnings:?}"
     );
     // Falls back to DS1Edit's table: Gheed is still found there.
     let gheed = resolve(&c, 0, 18, 1, 0);
     assert_eq!(gheed.source, "obj.txt");
     assert_eq!(gheed.token.as_deref(), Some("GH"));
+}
+
+/// A `.bin`: record count, then the records.
+fn bin(record: usize, count: usize, fill: impl Fn(usize, &mut [u8])) -> Vec<u8> {
+    let mut out = u32::try_from(count).unwrap().to_le_bytes().to_vec();
+    for i in 0..count {
+        let mut rec = vec![0u8; record];
+        fill(i, &mut rec);
+        out.extend_from_slice(&rec);
+    }
+    out
+}
+
+fn put(rec: &mut [u8], offset: usize, bytes: &[u8]) {
+    rec[offset..offset + bytes.len()].copy_from_slice(bytes);
+}
+
+/// The monster tables as Median XL ships them (compiled), over a tiny world:
+/// MonStats rows gheed 0, akara 1, fallen1 2; one superunique (class fallen1).
+fn mon_bin_files() -> Vec<(String, Vec<u8>)> {
+    let stats = bin(0x1A8, 3, |i, r| {
+        put(r, 6, &(10_000 + [0u16, 1, 2][i]).to_le_bytes());
+        put(r, 16, [b"GH  ", b"PS  ", b"FA  "][i]);
+        // MonStatsEx: gheed -> MonStats2 row 0, akara -> row 1, fallen1 blank.
+        put(r, 24, &[0u16, 1, 0xFFFF][i].to_le_bytes());
+    });
+    let stats2 = bin(0x134, 2, |i, r| {
+        put(r, 8, &[1, 1]);
+        put(r, 16, if i == 1 { b"bow " } else { b"    " });
+        // part flags: row 0 TR; row 1 HD TR LG
+        put(r, 232, &[0b10u32, 0b111][i].to_le_bytes());
+    });
+    let supers = bin(0x34, 1, |_, r| {
+        put(r, 2, &10_003u16.to_le_bytes());
+        put(r, 4, &2u16.to_le_bytes());
+    });
+    // (act, kind, index)
+    let places: [(u8, u8, u16); 7] = [
+        (1, 1, 0),
+        (1, 1, 1),
+        (1, 0, 17),
+        (1, 2, 0),
+        (1, 1, 99),
+        (1, 2, 5),
+        (2, 1, 1),
+    ];
+    let preset = bin(4, places.len(), |i, r| {
+        r[0] = places[i].0;
+        r[1] = places[i].1;
+        put(r, 2, &places[i].2.to_le_bytes());
+    });
+    vec![
+        (excel("objects.txt"), objects_txt(30)),
+        (excel("monpreset.bin"), preset),
+        (excel("monstats.bin"), stats),
+        (excel("monstats2.bin"), stats2),
+        (excel("superuniques.bin"), supers),
+        (
+            r"data\local\lng\eng\patchstring.tbl".to_owned(),
+            tbl(&[
+                ("Gheed", "Gheed the Trader"),
+                ("Akara", "Akara"),
+                ("dummy", "an evil force"),
+                ("Bishibosh", "Bishibosh"),
+            ]),
+        ),
+    ]
+}
+
+#[test]
+fn type1_through_compiled_bin_tables() {
+    let (_d, c, warnings) = build_owned(&mon_bin_files(), GameVersion::V113c);
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| w.contains("MonPreset") || w.contains("cannot be loaded")),
+        "{warnings:?}"
+    );
+
+    // MonStats row 0 through the preset; name from the patchstring id 10000.
+    let gheed = resolve(&c, 0, 18, 1, 0);
+    assert_eq!(gheed.source, "monpreset");
+    assert_eq!((gheed.row, gheed.token.as_deref()), (Some(0), Some("GH")));
+    assert_eq!(gheed.name, "Gheed the Trader");
+    assert_eq!(gheed.sprite_base, Some(SpriteBase::Monsters));
+    assert_eq!(gheed.parts, ["TR"]);
+    // MonStats2 row 1: three parts, a weapon class and a size.
+    let akara = resolve(&c, 0, 18, 1, 1);
+    assert_eq!((akara.row, akara.token.as_deref()), (Some(1), Some("PS")));
+    assert_eq!(akara.parts, ["HD", "TR", "LG"]);
+    assert_eq!(akara.weapon_class, "BOW");
+    assert_eq!(akara.size, (1, 1));
+    // A MonPlace marker is named by its monplace.txt code.
+    let marker = resolve(&c, 0, 18, 1, 2);
+    assert_eq!(marker.source, "monpreset");
+    assert_eq!(marker.row, None);
+    // A superunique takes the MonStats row of its class and its own name.
+    let sup = resolve(&c, 0, 18, 1, 3);
+    assert_eq!((sup.row, sup.token.as_deref()), (Some(2), Some("FA")));
+    assert_eq!(sup.name, "Bishibosh");
+    assert!(
+        sup.parts.is_empty(),
+        "blank MonStatsEx has no MonStats2 row"
+    );
+    // Indices past their tables do not resolve.
+    assert_eq!(resolve(&c, 0, 18, 1, 4).source, "unresolved");
+    assert_eq!(resolve(&c, 0, 18, 1, 5).source, "unresolved");
+    // The second act's block starts after the first.
+    let akara2 = resolve(&c, 1, 18, 1, 0);
+    assert_eq!((akara2.row, akara2.token.as_deref()), (Some(1), Some("PS")));
+    // Below version 5 the id is a raw MonStats row; a `dummy` name falls back
+    // to the row (the compiled table has no Id text).
+    let raw = resolve(&c, 0, 4, 1, 2);
+    assert_eq!((raw.row, raw.token.as_deref()), (Some(2), Some("FA")));
+    assert_eq!(raw.name, "monster 2");
 }
 
 // ---------------------------------------------------------------- robustness

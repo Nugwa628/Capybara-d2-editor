@@ -48,7 +48,8 @@ MASK_ADPCM_STEREO = 0x80
 MASK_SUPPORTED = MASK_ZLIB | MASK_PKWARE | MASK_BZIP2
 
 EXCEL = "data\\global\\excel\\"
-EXCEL_EXTRA_STEMS = ["lvltypes", "lvlprest", "lvlwarp", "objects", "objpreset", "levels", "automap"]
+EXCEL_EXTRA_STEMS = ["lvltypes", "lvlprest", "lvlwarp", "objects", "objpreset", "levels", "automap",
+                     "monpreset", "monstats", "monstats2", "superuniques", "monplace"]
 
 
 class ExtractError(Exception):

@@ -27,7 +27,9 @@ pub enum EditError {
     #[error("cell ({x}, {y}) is outside the {width}x{height} map")]
     OutOfBounds { x: i64, y: i64, width: u32, height: u32 },
     /// The change needs a newer DS1 version (e.g. a 2nd wall layer in a v3 file).
-    /// The app offers `Document::upgrade_version(required)`.
+    /// The app offers `Document::upgrade_version(required)`. `required` is the
+    /// lowest version that works: after `upgrade_version(required)` the same
+    /// call succeeds, and no lower version would do (see "NeedsVersion" below).
     #[error("needs DS1 version {required} (file is version {current})")]
     NeedsVersion { current: i32, required: i32 },
     #[error("layer limit reached: {0}")]
@@ -134,11 +136,14 @@ impl Document {
 
     // objects (index into ds1.objects)
     pub fn add_object(&mut self, object: d2_formats::ds1::Object) -> Result<usize>;
-    pub fn move_objects(&mut self, indices: &[usize], dx: i32, dy: i32) -> Result<()>;
+    pub fn move_objects(&mut self, indices: &[usize], dx: i32, dy: i32) -> Result<()>; // Format(Invalid) on an ambiguous path anchor (below)
     pub fn delete_objects(&mut self, indices: &[usize]) -> Result<()>;           // NPC paths anchored on them move to undo data
     /// Replace one object's type/id/flags/position (position change moves its anchored path).
+    /// Format(Invalid) on an ambiguous path anchor (below).
     pub fn set_object(&mut self, index: usize, object: d2_formats::ds1::Object) -> Result<()>;
-    // NPC paths (keyed by the anchor object's sub-tile coordinate; need DS1 v>=14, else NeedsVersion{14}).
+    // NPC paths (keyed by the anchor object's sub-tile coordinate; creating one needs DS1 v>=14,
+    // an action other than 1 needs v>=15, else NeedsVersion). Editing a path that does not exist
+    // (every map below v14) or a missing point is Format(Invalid).
     pub fn path_of(&self, object_index: usize) -> Option<&d2_formats::ds1::NpcPath>;
     pub fn add_path_point(&mut self, object_index: usize, point: d2_formats::ds1::PathPoint, at: Option<usize>) -> Result<()>; // creates the path if missing
     pub fn move_path_point(&mut self, object_index: usize, point_index: usize, x: i32, y: i32) -> Result<()>;
@@ -200,7 +205,7 @@ pub struct PastePreview {
     pub conflicts: Vec<PasteConflict>,    // non-empty targets with different content
     pub out_of_bounds: usize,             // clip cells that fall outside the map (dropped)
     pub layers_to_add: Vec<LayerRef>,
-    pub needs_version: Option<i32>,
+    pub needs_version: Option<i32>,        // the `required` that `paste` would return
     pub warnings: Vec<String>,            // e.g. different act / LvlType: tiles may not exist in this map's DT1 set
 }
 
@@ -221,3 +226,48 @@ pub struct Ds1Diff {
 impl Ds1Diff { pub fn is_empty(&self) -> bool; }
 pub fn diff(before: &d2_formats::ds1::Ds1, after: &d2_formats::ds1::Ds1) -> Ds1Diff;
 ```
+
+## NeedsVersion
+
+`EditError::NeedsVersion { required }` is the lowest version the document can
+be upgraded to so that the same call then succeeds and the result can be
+written. It is never lower than the call's own gate (a 2nd wall needs 4, a 2nd
+floor 16, the tag layer 10, objects 2, object flags 6, NPC paths 14, a path
+action other than 1 15) and is higher when `upgrade_version` cannot reach that
+gate or changes the map on the way:
+
+- A v3 map whose tag layer holds data cannot be v4..=9 (those store no tag
+  layer), so a 2nd wall or object flags on it ask for 10, not 4 or 6.
+- An all-zero v3 tag layer is dropped by an upgrade to v4..=9, so a paste that
+  writes tag cells and needs v6 for object flags asks for 10.
+- `upgrade_version` itself answers `NeedsVersion { required: 10 }` when asked
+  for v4..=9 on such a map.
+
+Every method checks the request against the document first and the version
+last: a request that would fail anyway (a bad index, an ambiguous path anchor,
+a path or point that does not exist) gets that error, not `NeedsVersion`.
+`PastePreview::needs_version` is the `required` that `paste` returns.
+
+## Ambiguous NPC path anchors
+
+A path belongs to the object on its anchor sub-tile and the file stores no
+other link, so two objects on one sub-tile with a path there (or two paths on
+one sub-tile) leave the path's owner undecidable.
+
+- `set_object` and `move_objects` return `Format(Invalid)` and change nothing
+  when a moved object would land on a sub-tile holding an object or a path
+  that is not moving with it, and the result would hold two objects and a
+  path, or two paths. The detail names the sub-tile and the objects, e.g.
+  "object 0 would share sub-tile (2, 2) with object 1 that has an NPC path" or
+  "object 1 has an NPC path and would share sub-tile (1, 1) with object 0".
+- Allowed: moves where no path is involved (objects may share a sub-tile),
+  moving an object without a path onto a stray path that has no object (it
+  takes the path over), a sharer leaving an ambiguous sub-tile, and moving
+  every object of an already ambiguous sub-tile together (it stays as it was).
+- `add_path_point` refuses an object that shares its sub-tile with another
+  object. `move_path_point`, `set_path_action` and `delete_path_points` work on
+  an already ambiguous path (the first path anchored there) so it can be
+  cleaned up, and `delete_objects` removes paths anchored only on the deleted
+  objects.
+- `paste` and `add_object` do not check anchors: a pasted or added object may
+  land on a pathed object's sub-tile.

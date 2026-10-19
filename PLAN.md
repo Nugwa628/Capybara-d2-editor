@@ -1,6 +1,6 @@
 # Capybara Map Editor — Plan
 
-Status: **P0 done** (2026-10-19; all acceptance tests pass, full corpus). In parallel at the user's request: capy-history merged (P4 library); capy-edit, capy-index, capy-render, map catalog and the capy-app shell in progress.
+Status: **P0 and P1 done** (2026-10-19). P2-P6 libraries largely done (editing, history, search, sprites, CLI, object catalog); app UI for P2 in progress, then P6, P3, P4, P5 UI. See CHANGELOG.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -125,6 +125,13 @@ Status: **P0 done** (2026-10-19; all acceptance tests pass, full corpus). In par
   - DT1 shadows: 50% mode, `out = d*127/255 + s*(128/255)^2`.
 - **Variant choice default = DS1Edit's rule (`VariantRule::ReferenceQuirk`, `misc.c:156-187`)**, lead decision. In vanilla every multi-candidate group is a rarity tie (rarities are almost all 1); the documented "first highest" rule matched only 8/18 oracle maps, DS1Edit's matched 18/18. The real game picks randomly among nonzero-rarity blocks, so neither rule is "the game"; matching the editor modders know wins. `Documented` stays available as an option.
 - **Palette = Levels `Pal` when the map's Level is known**, else the reference rule (LvlTypes act, overridden when all File entries sit under one `ActN\`, which makes LvlTypes 35 use Act 4). Median XL needs `Pal` (e.g. Level 241: LvlTypes act 5, `Pal` 2 = jungle); for vanilla test maps both agree.
+
+### P1 acceptance (2026-10-19)
+- Oracle: the CPU renderer matches all 18 vanilla oracle maps (canvas equal, shift 0,0, within_tolerance(16) >= 0.9915 with objects masked; object-free maps pixel-exact).
+- The app's GPU renderer matches the CPU renderer on all 18 maps (within_tolerance(16) = 1.0000; differences at tolerance 0 are 1-level shadow rounding).
+- Median XL: 8 maps render with 0 missing tiles; the user checked 5 by eye and confirmed them (2026-10-19).
+- Index: background build with progress bar and cancel; second launch reports up to date with no rebuild (0.01 s); the unit test proves a size/mtime change makes only that profile stale.
+- Zoom 1:1-1:16 on DS1Edit's integer zoom grid, pan, layer toggles (floors, walls, shadow, roofs, special, tag).
 
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
@@ -264,12 +271,13 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **DS1 parse limits**: the header and cell layers must be complete; zero-padding past EOF is tolerated only in the object/group/NPC blocks, up to 256 bytes (the shipped short files need 12 and 4). `to_bytes` refuses any model the file's version cannot store, rather than silently dropping data.
 - **Phases overlap at the user's request (2026-10-19: "need this done fast").** While P0 wave 2 finishes, `capy-history` (P4), `capy-edit` (P2), `capy-index` (P1/P3 groundwork) and the `capy-app` shell (P1) are built in parallel against the API contracts in `docs/api/`. Each phase's acceptance tests must still pass before that phase is declared done, and each phase still ends with a summary to the user.
 - **Writes outside `capybara\` (user-approved, 2026-10-19):** the sprite converter's "Export to…" and batch conversion write to a folder the user picks in a dialog. Everything else still stays under `capybara\`.
+- **Agent models (user, 2026-10-19):** new agents run on Opus 5.5 with high effort instead of the original Sonnet/Haiku split. Agents already running were not restarted. Compile time remains the main bottleneck, so non-app agents test with `--exclude capy-app` and UI agents reuse the warm app worktree.
 - Repo-local git identity `ZF <112085691+Nugwa628@users.noreply.github.com>` was set because none existed.
 
 ## Pending small fixes (lead decisions, not yet implemented)
-- `capy-edit`: `EditError::NeedsVersion.required` must be the true minimum version for the requested result (today a v3 map with tag cells asks for 4, then `upgrade_version(4)` asks for 10). Compute it with `min_version_for_model` on the hypothetical model.
-- `capy-edit`: `set_object` / `move_objects` must refuse a destination sub-tile where it would leave two NPC paths on one anchor (or a pathed object sharing a sub-tile). Path edits on an already-ambiguous path stay allowed so it can be cleaned up.
-- `docs/api/capy-edit.md`: document `Format(Invalid)` for shared sub-tiles and the edge cases above.
+- `capy-edit`: `paste` and `add_object` should refuse (and `PastePreview` should warn about) placing an object on a sub-tile where it would make an NPC path anchor ambiguous, matching `set_object`/`move_objects`.
+- `capy-render` duplicates COF compositing from `capy-sprite` because `capy-sprite` depends on `capy-render::Blend`; move `Blend` into `d2-formats` and unify later.
+- obj.txt `Colormap`/`Index` palette shifts for unique monsters (applies to layers with `trans_a == 0`, `cof.c:216-242,343-361`) are not rendered yet.
 
 ## Known gaps
 - `Patch_D2.mpq`: 77 of 209 files (vanilla) and 53 of Median XL's copy remain unnamed after the harvest; every map, tile set and table the game references is named. A COF-derived name pass (objects/monsters) can recover sprite names later.
