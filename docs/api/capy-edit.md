@@ -56,6 +56,8 @@ impl LayerRef {
     pub fn exists_in(self, ds1: &d2_formats::ds1::Ds1) -> bool;
     pub fn all_in(ds1: &d2_formats::ds1::Ds1) -> Vec<LayerRef>; // floors, walls, shadow, tag (if any) — draw order not implied
     pub fn get(self, ds1: &d2_formats::ds1::Ds1, x: u32, y: u32) -> Option<CellValue>;
+    /// Layer-aware emptiness: Tag → cell == 0; others → prop1 == 0. Prefer this over CellValue::is_empty.
+    pub fn is_empty_value(self, value: CellValue) -> bool;
 }
 
 // ───────────── patch.rs ─────────────
@@ -68,6 +70,8 @@ impl Patch {
     pub fn is_empty(&self) -> bool;
     pub fn apply(&self, ds1: &mut d2_formats::ds1::Ds1) -> Result<()>;
     pub fn revert(&self, ds1: &mut d2_formats::ds1::Ds1) -> Result<()>;
+    /// Whole-model swap (restore from snapshot, external reload).
+    pub fn replace(label: &str, before: d2_formats::ds1::Ds1, after: d2_formats::ds1::Ds1) -> Patch;
 }
 
 // ───────────── document.rs ─────────────
@@ -78,6 +82,9 @@ pub struct MoveReport { pub moved: usize, pub skipped_occupied: usize, pub layer
 
 /// A DS1 plus its undo/redo history. Every mutating method builds one Patch,
 /// applies it, and pushes it (clearing redo). A failed method changes nothing.
+/// A method whose effect is no change returns Ok and records nothing (no
+/// method returns EditError::Empty). Behaviours chosen where this contract is
+/// silent are listed in the crate docs (capy-edit/src/lib.rs).
 pub struct Document { /* ds1, undo: Vec<Patch>, redo: Vec<Patch>, revision, saved_revision, group */ }
 impl Document {
     pub fn new(ds1: d2_formats::ds1::Ds1) -> Document;
@@ -102,6 +109,8 @@ impl Document {
     pub fn end_group(&mut self);
     /// Apply a prebuilt patch (used by tests and by restore-from-snapshot).
     pub fn apply_patch(&mut self, patch: Patch) -> Result<()>;
+    /// Fills ClipSource on copy and drives act/LvlType mismatch warnings on paste.
+    pub fn set_clip_context(&mut self, game_path: Option<String>, lvl_type: Option<u32>);
 
     // edits
     pub fn paint(&mut self, layer: LayerRef, cells: &[(u32, u32, CellValue)]) -> Result<()>;
