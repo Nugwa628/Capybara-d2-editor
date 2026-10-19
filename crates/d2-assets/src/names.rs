@@ -10,8 +10,7 @@ use crate::error::{AssetError, Result};
 use crate::path::GamePath;
 
 /// Embedded well-known paths, one per line; `#` comments and blank lines ignored.
-// TODO(seed): include_str! assets/known-names/seed.txt
-const SEED: &str = "";
+const SEED: &str = include_str!("../../../assets/known-names/seed.txt");
 
 #[derive(Clone, Debug, Default)]
 pub struct KnownNames {
@@ -100,6 +99,15 @@ impl KnownNames {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seed_is_embedded() {
+        let seed = KnownNames::seed();
+        assert!(seed.len() > 100, "seed has {} names", seed.len());
+        assert!(seed.contains(&GamePath::new(r"data\global\excel\lvltypes.bin")));
+        assert!(seed.contains(&GamePath::new(r"data\global\palette\act1\pal.dat")));
+        assert!(seed.iter().all(|p| !p.as_str().starts_with('#')));
+    }
 
     #[test]
     fn container_basics() {
