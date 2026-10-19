@@ -113,3 +113,28 @@ pub struct ImageDiff { pub width: u32, pub height: u32, pub best_shift: (i32, i3
 /// Pixels transparent/background in both images are excluded.
 pub fn compare_images(ours: &RgbaImage, oracle: &RgbaImage, tolerance: u8, max_shift: i32) -> ImageDiff;
 ```
+
+## Objects (render-objects lane)
+Objects and monsters draw through `ObjectSprites` (borrowing the `Overlay` and an
+`ObjectCatalog`); terrain-only `render`/`draw_list` are unchanged.
+
+```rust
+pub struct ObjectSprites<'a>;                     // ::new(&Overlay, &ObjectCatalog), caches COF + sprites per (key, direction, frame)
+pub struct ObjectOptions { pub direction: u8, pub animation_tick: Option<u32>,
+    pub frame_overrides: Option<Arc<[Option<u8>]>>, pub direction_overrides: Option<Arc<[Option<u8>]>> }
+pub struct ObjectFrame { pub layers: Vec<FrameLayer>, pub offset: (i32, i32), pub order_flag: u8 }  // .composite(&Palette), .to_rgba()
+pub struct FrameLayer { component, image: Arc<IndexedImage>, box_origin: (i32, i32), blend: Blend, shadow: Option<u8> }
+pub struct MissingObject { index, kind, id, x, y, reason: MissingReason }
+pub fn draw_list_with_objects(ds1, tiles, vis, Option<(&ObjectSprites, &ObjectOptions)>) -> Result<DrawList>;
+pub struct DrawList { entries: Vec<DrawEntry>, missing: Vec<MissingTile>, missing_objects: Vec<MissingObject> }
+pub enum DrawEntry { Tile(DrawItem), Object(ObjectDrawItem) }
+pub fn render_with_objects(ds1, tiles, Option<&ObjectSprites>, palette, &RenderOptions) -> Result<RenderOutput>; // + RenderOutput::missing_objects
+// RenderOptions gains animation_tick, object_direction, object_frames, object_directions.
+// Blend gains Darken(level): the reference's object shadow, out = dst * level / 32.
+```
+Rules (`preview.c` line numbers in `order.rs` and `objects.rs`): object shadows (pass 2),
+orderflag-1 objects (pass 3), then per tile the upper walls followed by that tile's
+orderflag-0/2 objects (pass 4, over every map tile), in `editobj_set_drawing_order` order.
+Anchor `((x-y+5)*16, 4+(x+y+1)*8)` at 1:1 (`object_anchor` does the zoomed integer maths).
+`capy-sprite::compose_cof_frame` is not used because `capy-sprite` depends on `capy-render`.
+

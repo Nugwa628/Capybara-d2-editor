@@ -9,11 +9,18 @@
 //!
 //! 1. per cell: lower walls, then floors, then DT1 shadows (the three are
 //!    interleaved per cell, not three separate sweeps);
-//! 2. object shadows;
-//! 3. objects with order flag 1;
-//! 4. per cell: upper walls, then the cell's objects with order flag 0/2;
+//! 2. object shadows (`wpreview_draw_obj_tile_shad`, 2306);
+//! 3. objects with order flag 1 (`wpreview_draw_obj_tile_1`, 2429);
+//! 4. per cell: upper walls, then the cell's objects with order flag 0/2
+//!    (`wpreview_draw_obj_tile_0_2`, 2361; loop 3 at 3675-3697);
 //! 5. roofs;
 //! 6. special tiles (orientation 10 and 11), only when shown.
+//!
+//! Objects are visited in `editobj_set_drawing_order` order (`objects.c:15-80`):
+//! tile row, tile column, the sub-tile table, then file order. Every object
+//! of a tile is drawn when the pass reaches that tile, so in pass 4 an object
+//! lands after the upper walls of its tile and before the walls of every
+//! later tile, including tiles that hold no wall at all.
 //!
 //! Inside one cell the layers of one family are drawn by ascending `prop1`
 //! (ties: lower layer index first), `wpreview_sort_order_data` (557); for
@@ -26,7 +33,10 @@
 use d2_formats::ds1::{Cell, Ds1};
 use d2_formats::dt1::TileKey;
 
+use std::sync::Arc;
+
 use crate::error::Result;
+use crate::objects::{MissingObject, ObjectFrame, ObjectOptions, ObjectSprites, PlacedObject};
 use crate::tileset::{TILE_H, TILE_W, TileClass, TileRef, TileSet};
 
 /// Which sweep an item belongs to.
@@ -89,6 +99,57 @@ pub struct MissingTile {
     pub x: u32,
     pub y: u32,
     pub key: TileKey,
+}
+
+/// One object (or monster) sprite in the list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObjectDrawItem {
+    /// `ObjectShadows` for projected shadows, `Objects1` for order flag 1,
+    /// `UpperWalls` for objects drawn in the upper-wall pass (order flag 0/2).
+    pub pass: DrawPass,
+    /// Position in the list.
+    pub order: u32,
+    /// Index into `Ds1::objects`.
+    pub object: usize,
+    pub kind: i32,
+    pub id: i32,
+    /// DS1 sub-tile coordinates (5 per tile).
+    pub x: i32,
+    pub y: i32,
+    /// The tile the object stands on.
+    pub tile: (u32, u32),
+    /// 1:1 map-space position of the sprite anchor (`preview.c:2084-2086`);
+    /// each layer sits at `anchor + frame.offset + layer.box_origin`.
+    pub screen_x: i32,
+    pub screen_y: i32,
+    /// For an `ObjectShadows` item only the layers with `shadow` are drawn,
+    /// each as a darkening silhouette ([`crate::Blend::Darken`]).
+    pub frame: Arc<ObjectFrame>,
+}
+
+/// An entry of [`DrawList`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DrawEntry {
+    Tile(DrawItem),
+    Object(ObjectDrawItem),
+}
+
+impl DrawEntry {
+    pub fn pass(&self) -> DrawPass {
+        match self {
+            DrawEntry::Tile(t) => t.pass,
+            DrawEntry::Object(o) => o.pass,
+        }
+    }
+}
+
+/// The full draw list: tiles and objects in reference order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DrawList {
+    pub entries: Vec<DrawEntry>,
+    pub missing: Vec<MissingTile>,
+    /// Objects that draw nothing (only filled when objects are visible).
+    pub missing_objects: Vec<MissingObject>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -293,39 +354,69 @@ fn collect(
 }
 
 /// Draw items in reference order plus every visible non-empty cell that has no
-/// tile. See the module docs for the order.
+/// tile. See the module docs for the order. Terrain only; objects need
+/// [`draw_list_with_objects`].
 pub fn draw_list(
     ds1: &Ds1,
     tiles: &TileSet,
     vis: &Visibility,
 ) -> Result<(Vec<DrawItem>, Vec<MissingTile>)> {
+    let list = draw_list_with_objects(ds1, tiles, vis, None)?;
+    let items = list
+        .entries
+        .into_iter()
+        .filter_map(|e| match e {
+            DrawEntry::Tile(t) => Some(t),
+            DrawEntry::Object(_) => None,
+        })
+        .collect();
+    Ok((items, list.missing))
+}
+
+/// [`draw_list`] with objects: shadows, order-flag-1 objects and the
+/// objects interleaved with the upper walls (module docs). `objects` is the
+/// sprite source and its options; `None`, or `vis.objects == false`, gives
+/// terrain only.
+pub fn draw_list_with_objects(
+    ds1: &Ds1,
+    tiles: &TileSet,
+    vis: &Visibility,
+    objects: Option<(&ObjectSprites<'_>, &ObjectOptions)>,
+) -> Result<DrawList> {
     let mut missing = Vec::new();
     let entries = collect(ds1, tiles, vis, &mut missing);
-    let mut items: Vec<DrawItem> = Vec::with_capacity(entries.len());
+    let mut out: Vec<DrawEntry> = Vec::with_capacity(entries.len());
 
-    let mut push = |pass: DrawPass, e: &Entry, tile: &TileRef| -> Result<()> {
-        let Some(geom) = tiles.geometry(tile) else {
-            return Ok(());
+    let push =
+        |out: &mut Vec<DrawEntry>, pass: DrawPass, e: &Entry, tile: &TileRef| -> Result<()> {
+            let Some(geom) = tiles.geometry(tile) else {
+                return Ok(());
+            };
+            if geom.is_empty() {
+                return Ok(()); // no bitmap: nothing to draw (1186)
+            }
+            let image = tiles.image(tile)?;
+            let x = i32::try_from(e.x).unwrap_or(i32::MAX);
+            let y = i32::try_from(e.y).unwrap_or(i32::MAX);
+            let mx = (x - y).saturating_mul(TILE_W / 2);
+            let my = (x + y).saturating_mul(TILE_H / 2);
+            out.push(DrawEntry::Tile(DrawItem {
+                pass,
+                order: u32::try_from(out.len()).unwrap_or(u32::MAX),
+                layer: e.layer,
+                x: e.x,
+                y: e.y,
+                tile: tile.clone(),
+                screen_x: mx + image.offset_x,
+                screen_y: my + geom.bitmap_top(1) + image.offset_y,
+            }));
+            Ok(())
         };
-        if geom.is_empty() {
-            return Ok(()); // no bitmap: nothing to draw (1186)
-        }
-        let image = tiles.image(tile)?;
-        let x = i32::try_from(e.x).unwrap_or(i32::MAX);
-        let y = i32::try_from(e.y).unwrap_or(i32::MAX);
-        let mx = (x - y).saturating_mul(TILE_W / 2);
-        let my = (x + y).saturating_mul(TILE_H / 2);
-        items.push(DrawItem {
-            pass,
-            order: u32::try_from(items.len()).unwrap_or(u32::MAX),
-            layer: e.layer,
-            x: e.x,
-            y: e.y,
-            tile: tile.clone(),
-            screen_x: mx + image.offset_x,
-            screen_y: my + geom.bitmap_top(1) + image.offset_y,
-        });
-        Ok(())
+
+    // Objects in drawing order.
+    let (placed, missing_objects) = match objects {
+        Some((sprites, opts)) if vis.objects => sprites.place(ds1, opts),
+        _ => (Vec::new(), Vec::new()),
     };
 
     // Entries are sorted by cell; walk them as per-cell groups.
@@ -339,35 +430,97 @@ pub fn draw_list(
             (Kind::Shadow, DrawPass::Shadows),
         ] {
             for e in g.iter().filter(|e| e.kind == kind) {
-                push(pass, e, &e.tile)?;
+                push(&mut out, pass, e, &e.tile)?;
             }
         }
     }
-    // Passes 2 and 3 (object shadows, objects behind walls): objects are not
-    // drawn yet.
-    // Pass 4: upper walls, each followed by the orientation-3 corner partner
-    // (1131-1160); objects of the cell would follow here.
-    for g in &groups {
-        for e in g.iter().filter(|e| e.kind == Kind::Upper) {
-            push(DrawPass::UpperWalls, e, &e.tile)?;
-            if let Some(partner) = tiles.corner_pair(&e.tile) {
-                push(DrawPass::UpperWalls, e, &partner)?;
+    // Pass 2 (1B, 3629): shadows of objects, every object, drawing order.
+    // Pass 3 (2, 3651): objects with order flag 1.
+    // Both only need the objects' own order: the reference's per-tile cursor
+    // visits them in that order.
+    let object_item = |pass: DrawPass, p: &PlacedObject, order: usize| {
+        let (sx, sy) = crate::objects::object_anchor(p.x, p.y, 1);
+        DrawEntry::Object(ObjectDrawItem {
+            pass,
+            order: u32::try_from(order).unwrap_or(u32::MAX),
+            object: p.index,
+            kind: p.kind,
+            id: p.id,
+            x: p.x,
+            y: p.y,
+            tile: p.tile(),
+            screen_x: sx,
+            screen_y: sy,
+            frame: Arc::clone(&p.frame),
+        })
+    };
+    for p in placed.iter().filter(|p| p.frame.has_shadow()) {
+        let item = object_item(DrawPass::ObjectShadows, p, out.len());
+        out.push(item);
+    }
+    for p in placed.iter().filter(|p| p.frame.order_flag == 1) {
+        let item = object_item(DrawPass::Objects1, p, out.len());
+        out.push(item);
+    }
+    // Pass 4 (loop 3, 3675): per tile, the upper walls and then the tile's
+    // objects with order flag 0 or 2, over every tile of the map.
+    let front: Vec<&PlacedObject> = placed
+        .iter()
+        .filter(|p| matches!(p.frame.order_flag, 0 | 2))
+        .collect();
+    let (mut gi, mut oi) = (0, 0);
+    while gi < groups.len() || oi < front.len() {
+        let group_cell = groups.get(gi).and_then(|g| g.first()).map(|e| (e.y, e.x));
+        let object_cell = front.get(oi).map(|p| {
+            let (tx, ty) = p.tile();
+            (ty, tx)
+        });
+        let cell = match (group_cell, object_cell) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(a), None) => a,
+            (None, Some(b)) => b,
+            (None, None) => break,
+        };
+        if group_cell == Some(cell)
+            && let Some(g) = groups.get(gi)
+        {
+            // Upper walls, each followed by the orientation-3 corner partner
+            // (1131-1160).
+            for e in g.iter().filter(|e| e.kind == Kind::Upper) {
+                push(&mut out, DrawPass::UpperWalls, e, &e.tile)?;
+                if let Some(partner) = tiles.corner_pair(&e.tile) {
+                    push(&mut out, DrawPass::UpperWalls, e, &partner)?;
+                }
             }
+            gi += 1;
+        }
+        while let Some(p) = front.get(oi) {
+            let (tx, ty) = p.tile();
+            if (ty, tx) != cell {
+                break;
+            }
+            let item = object_item(DrawPass::UpperWalls, p, out.len());
+            out.push(item);
+            oi += 1;
         }
     }
     // Pass 5: roofs.
     for g in &groups {
         for e in g.iter().filter(|e| e.kind == Kind::Roof) {
-            push(DrawPass::Roofs, e, &e.tile)?;
+            push(&mut out, DrawPass::Roofs, e, &e.tile)?;
         }
     }
     // Pass 6: special tiles (only collected when visible).
     for g in &groups {
         for e in g.iter().filter(|e| e.kind == Kind::Special) {
-            push(DrawPass::Special, e, &e.tile)?;
+            push(&mut out, DrawPass::Special, e, &e.tile)?;
         }
     }
-    Ok((items, missing))
+    Ok(DrawList {
+        entries: out,
+        missing,
+        missing_objects,
+    })
 }
 
 /// Splits sorted entries into runs of one cell.
