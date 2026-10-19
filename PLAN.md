@@ -1,6 +1,6 @@
 # Capybara Map Editor — Plan
 
-Status: **P0, P1, P2, P3 and P6 done** (2026-10-19). P4/P5 libraries done; UI lane: P4 history UI in progress, then P5 object/NPC placement in the map view, release.
+Status: **P0-P4 and P6 done** (2026-10-19). P5: library, CLI and renderer done; app round (objects in the map view, placement, NPC paths, animation, legacy ini import) in progress; then release.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -147,6 +147,11 @@ Status: **P0, P1, P2, P3 and P6 done** (2026-10-19). P4/P5 libraries done; UI la
 ### P3 acceptance (2026-10-19)
 - Index search: 26/26 table-driven queries over the Median XL index (index, generated name, colour, tag, alias, source file, used-in, similar, mirrored, src, type) return the expected asset in the top 5.
 - App: scripted end-to-end test on Median XL searches `color:green type:floor file:whimsyfloor.dt1`, uses the hit as the paint brush, paints, and checks recents, favorite, alias and the saved cell; alias search returns it first.
+
+### P4 acceptance (2026-10-19)
+- Crash safety: killing the process during saves (40 random kills) never corrupts the target; CHANGED.txt lists the path exactly once.
+- Snapshot store: dedupe, checkpoints survive pruning, corrupt blobs detected; gix milestones commit/no-op/log.
+- App: scripted end-to-end test paints, autosaves, checkpoints, diffs (48 changed floor cells), restores (BeforeRestore recorded, one undo step), saves (file equals the checkpoint), commits a milestone (second commit is a no-op) and prunes (checkpoint survives); autosave/checkpoint/restore never touch CHANGED.txt; the game install folder is unchanged (file list, sizes, mtimes).
 
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
