@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **P5 complete.** Objects and NPCs drawn in the map view (DS1Edit order and
+  blends, matches the CPU renderer on all 18 oracle maps), animation at 25 Hz
+  (View > Animate objects), object placement picker with animated preview,
+  object properties, NPC path editing (add, insert, move, delete, actions),
+  File > Import DS1Edit ini mappings.
+- Robustness audit of the library crates: fuzz tests on every parser; bounded
+  allocations, loops and recursion on hostile files (`docs/robustness-audit.md`).
 - **P4 complete.** History panel: autosave (dirty maps only, never touches saves),
   per-map timeline, named checkpoints, visual tile diff overlay and read-only
   snapshot view, undoable restore, retention with prune, gix milestones.
@@ -77,3 +84,8 @@ All notable changes to this project are documented here.
   byte-identical round trip on the full vanilla and Median XL corpora), `.txt`
   tables, excel `.bin` decoders (LvlTypes, LvlPrest, LvlWarp, Objects, ObjPreset,
   Levels), typed level tables and `.tbl` string tables.
+
+### Fixed
+- The map was drawn half a cell right of its overlays (hover, selection, markers).
+- A map could stay at "Loading" after a context refresh that changed nothing.
+- Pasting many objects no longer freezes on the anchor-conflict check.
