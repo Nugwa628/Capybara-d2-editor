@@ -2,7 +2,7 @@
 //! bit-identical on every platform (no libm `pow`).
 
 /// `a^(1/n)` for `a` in `[0, 1]` by Newton iteration.
-fn nth_root(a: f64, n: u32) -> f64 {
+pub(crate) fn nth_root(a: f64, n: u32) -> f64 {
     if a <= 0.0 {
         return 0.0;
     }
