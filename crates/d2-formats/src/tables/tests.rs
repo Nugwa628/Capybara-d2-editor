@@ -48,7 +48,9 @@ fn lvl_types_from_txt() {
     assert!(t[0].files.iter().all(Option::is_none));
     assert_eq!(t[1].id, 1);
     assert_eq!(t[1].name, "Act 1 - Town");
-    assert_eq!(t[1].act, 1);
+    assert_eq!(t[0].act, 0, "stored 0 saturates");
+    assert_eq!(t[1].act, 0, "stored 1 is Act 1 = 0");
+    assert_eq!(t[2].act, 4, "stored 5 is Act 5 = 4");
     assert_eq!(t[1].files[0].as_deref(), Some("Act1/Town/Floor.dt1"));
     assert_eq!(t[1].files[1].as_deref(), Some("Act1/Town/Objects.dt1"));
     assert_eq!(t[1].files[2], None);
@@ -228,7 +230,7 @@ fn bin_decoded_tables_parse_like_txt() {
     assert_eq!(parsed[0].files[1].as_deref(), Some("b.dt"));
     assert_eq!(
         (parsed[0].act, parsed[0].expansion, parsed[0].name.as_str()),
-        (3, true, "")
+        (2, true, "")
     );
 }
 

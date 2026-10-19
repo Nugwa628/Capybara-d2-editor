@@ -26,7 +26,9 @@ pub struct LvlType {
     pub row: usize,
     pub id: u32,
     pub name: String,
-    /// The `Act` column as stored (1-based in `LvlTypes`).
+    /// 0-based act (Act 1 = 0), like `Level.act` and the DS1 act field.
+    /// `LvlTypes.txt` stores the act 1-based; the loader subtracts one
+    /// (saturating, so a stored 0 stays 0).
     pub act: u8,
     /// File1..File32 by slot; None for empty or "0".
     pub files: Vec<Option<String>>,
@@ -178,7 +180,7 @@ pub fn lvl_types(table: &TxtTable) -> Result<Vec<LvlType>> {
             row: row.index(),
             id: narrow(&row, "Id", id)?,
             name: row.get("Name").unwrap_or("").to_string(),
-            act: opt(&row, "Act", &["Act"])?,
+            act: opt::<u8>(&row, "Act", &["Act"])?.saturating_sub(1),
             files: (1..=32).map(|n| file_slot(&row, n)).collect(),
             expansion: expansion(&row, after_separator, has_expansion)?,
         });
