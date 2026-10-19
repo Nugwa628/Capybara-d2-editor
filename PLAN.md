@@ -264,6 +264,7 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **DS1 parse limits**: the header and cell layers must be complete; zero-padding past EOF is tolerated only in the object/group/NPC blocks, up to 256 bytes (the shipped short files need 12 and 4). `to_bytes` refuses any model the file's version cannot store, rather than silently dropping data.
 - **Phases overlap at the user's request (2026-10-19: "need this done fast").** While P0 wave 2 finishes, `capy-history` (P4), `capy-edit` (P2), `capy-index` (P1/P3 groundwork) and the `capy-app` shell (P1) are built in parallel against the API contracts in `docs/api/`. Each phase's acceptance tests must still pass before that phase is declared done, and each phase still ends with a summary to the user.
 - **Writes outside `capybara\` (user-approved, 2026-10-19):** the sprite converter's "Export to…" and batch conversion write to a folder the user picks in a dialog. Everything else still stays under `capybara\`.
+- **Agent models (user, 2026-10-19):** new agents run on Opus 5.5 with high effort instead of the original Sonnet/Haiku split. Agents already running were not restarted. Compile time remains the main bottleneck, so non-app agents test with `--exclude capy-app` and UI agents reuse the warm app worktree.
 - Repo-local git identity `ZF <112085691+Nugwa628@users.noreply.github.com>` was set because none existed.
 
 ## Pending small fixes (lead decisions, not yet implemented)
