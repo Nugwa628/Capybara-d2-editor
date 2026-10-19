@@ -85,14 +85,14 @@ fn blend_modes_come_from_trans_b() {
     let cof = synthetic_cof();
     let base = opaque_layer(1, 0, 0, 2, 2, 20);
     for (effect, blend) in [
-        (0u8, capy_render::Blend::Alpha25),
-        (1, capy_render::Blend::Alpha50),
-        (2, capy_render::Blend::Alpha75),
-        (3, capy_render::Blend::Additive),
-        (4, capy_render::Blend::Multiply),
-        (6, capy_render::Blend::Screen),
-        (5, capy_render::Blend::Normal),
-        (9, capy_render::Blend::Normal),
+        (0u8, d2_formats::blend::Blend::Alpha25),
+        (1, d2_formats::blend::Blend::Alpha50),
+        (2, d2_formats::blend::Blend::Alpha75),
+        (3, d2_formats::blend::Blend::Additive),
+        (4, d2_formats::blend::Blend::Multiply),
+        (6, d2_formats::blend::Blend::Screen),
+        (5, d2_formats::blend::Blend::Normal),
+        (9, d2_formats::blend::Blend::Normal),
     ] {
         let top = CofLayerSprite {
             transparent: true,

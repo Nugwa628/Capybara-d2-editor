@@ -122,10 +122,14 @@ pub fn batch_convert(input: &std::path::Path, output: &std::path::Path, directio
                      progress: &mut dyn FnMut(usize, usize, &str), cancel: &std::sync::atomic::AtomicBool) -> Result<BatchReport>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum UnitKind { Object, Monster, Character }
+impl UnitKind { pub fn base_dir(self) -> &'static str; } // data\global\{objects|monsters|chars}
+pub use d2_formats::cof::COMPONENT_CODES;                // as cof::COMPONENT_CODES
 /// Component sprite paths for a COF layer per docs/specs/cof.md: `.dcc` first,
 /// then `.dc6` as a separate candidate (the caller picks what resolves).
+/// Delegates to `d2_formats::cof::component_paths`, which capy-render uses too.
 pub fn cof_component_paths(kind: UnitKind, token: &str, mode: &str, weapon_class: &str, component: &str, armor: &str) -> Vec<String>;
 pub struct CofLayerSprite { pub component: u8, pub sprite: Sprite, pub draw_effect: u8, pub transparent: bool }
-/// Composite one (file direction, frame) with the COF draw order and blend modes.
+/// Composite one (file direction, frame) with the COF draw order and blend modes
+/// (`d2_formats::blend::Blend::for_cof_layer`; this crate depends on d2-formats, not capy-render).
 pub fn compose_cof_frame(cof: &d2_formats::cof::Cof, layers: &[CofLayerSprite], dir: u8, frame: u8, palette: &d2_formats::palette::Palette) -> Result<RgbaFrame>;
 ```

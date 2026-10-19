@@ -10,9 +10,11 @@
 //! 2. The COF is `{base}\{token}\cof\{token}{mode}{class}.cof` (`cof.c:253`).
 //! 3. Every COF layer is a component sprite
 //!    `{base}\{token}\{CC}\{token}{CC}{skin}{mode}{class}.dcc` with the layer's
-//!    own weapon class (`cof.c:322-333`); `.dc6` is tried only when no `.dcc`
-//!    exists. The skin comes from [`ObjectInfo::skins`] (default `LIT`). When
-//!    a COF has several records of one component the last one wins (`cof.c:306`).
+//!    own weapon class (`cof.c:322-333`, [`d2_formats::cof::component_paths`]);
+//!    `.dc6` is tried only when no `.dcc` exists. The skin comes from
+//!    [`ObjectInfo::skins`] (default `LIT`). When a COF has several records
+//!    of one component the last one wins ([`Cof::component_layer`],
+//!    `cof.c:306`).
 //! 4. One user direction (default 0) is mapped through the editor's
 //!    direction tables (`main.c:331-334`) to the file direction, which indexes
 //!    both the sprite and the COF priority table (lead decision, PLAN.md).
@@ -25,11 +27,13 @@
 //! (`cof.c:117-122`, `dc6.c:193-260`); [`FrameLayer::box_origin`] is that
 //! corner, which keeps point-sampled zooms in step with the oracle.
 //!
-//! `capy-sprite::compose_cof_frame` cannot be used here: `capy-sprite`
-//! depends on this crate (for [`Blend`]), and the reference draws each layer
-//! as its own scaled bitmap with separately truncated offsets, which a
-//! pre-composited frame cannot reproduce at zoom. [`ObjectFrame::to_rgba`]
-//! gives the same 1:1 composite `compose_cof_frame` does.
+//! `capy-sprite::compose_cof_frame` is not used here: the reference draws
+//! each layer as its own scaled bitmap with separately truncated offsets,
+//! which a pre-composited frame cannot reproduce at zoom. The rules both
+//! share live in `d2-formats`: the sprite paths and the last-record rule in
+//! [`d2_formats::cof`], the `trans_a`/`trans_b` blend mapping in
+//! [`Blend::for_cof_layer`]. [`ObjectFrame::to_rgba`] gives the same 1:1
+//! composite `compose_cof_frame` does.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -38,7 +42,7 @@ use d2_assets::objects::{ObjectCatalog, ObjectInfo, SpriteBase};
 use d2_assets::{GamePath, Overlay};
 use d2_formats::IndexedImage;
 use d2_formats::animdata::AnimData;
-use d2_formats::cof::Cof;
+use d2_formats::cof::{Cof, cof_path, component_paths, path_token};
 use d2_formats::dc6::Dc6;
 use d2_formats::dcc::Dcc;
 use d2_formats::ds1::{Ds1, Object};
@@ -46,11 +50,6 @@ use d2_formats::palette::Palette;
 
 use crate::compose::Blend;
 use crate::tileset::{TILE_H, TILE_W};
-
-/// Component codes by COF component index.
-const COMPONENT_CODES: [&str; 16] = [
-    "HD", "TR", "LG", "RA", "LA", "RH", "LH", "SH", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8",
-];
 
 /// File direction of user direction `n` for COFs with 8, 16 and 32
 /// directions (`main.c:331-340`); 1 and 4 direction COFs use the user
@@ -328,11 +327,6 @@ pub struct ObjectSprites<'a> {
     assets: Mutex<HashMap<String, AssetResult>>,
 }
 
-fn clean(s: &str) -> String {
-    s.trim_matches(|c: char| c == '\0' || c.is_whitespace())
-        .to_ascii_lowercase()
-}
-
 fn file_direction(cof_dirs: u8, user: u8) -> u8 {
     let user = usize::from(user);
     let lookup = |table: &[u8]| {
@@ -355,23 +349,6 @@ fn base_folder(base: SpriteBase) -> &'static str {
     match base {
         SpriteBase::Objects => "data\\global\\objects",
         SpriteBase::Monsters => "data\\global\\monsters",
-    }
-}
-
-fn blend_for(transparent: bool, draw_effect: u8) -> Blend {
-    // preview.c:2131: blended only when trans_a != 0 and trans_b is 0..=6
-    // except 5.
-    if !transparent {
-        return Blend::Normal;
-    }
-    match draw_effect {
-        0 => Blend::Alpha25,
-        1 => Blend::Alpha50,
-        2 => Blend::Alpha75,
-        3 => Blend::Additive,
-        4 => Blend::Multiply,
-        6 => Blend::Screen,
-        _ => Blend::Normal,
     }
 }
 
@@ -505,24 +482,24 @@ impl<'a> ObjectSprites<'a> {
                 MissingReason::NoSprite
             });
         };
-        let token = clean(token);
+        let token = path_token(token);
         if token.is_empty() {
             return Err(MissingReason::NoSprite);
         }
-        let mode = if clean(&info.mode).is_empty() {
+        let mode = if path_token(&info.mode).is_empty() {
             "nu".to_owned()
         } else {
-            clean(&info.mode)
+            path_token(&info.mode)
         };
-        let class = if clean(&info.weapon_class).is_empty() {
+        let class = if path_token(&info.weapon_class).is_empty() {
             "hth".to_owned()
         } else {
-            clean(&info.weapon_class)
+            path_token(&info.weapon_class)
         };
         let skins: Vec<(String, String)> = info
             .skins
             .iter()
-            .map(|(c, s)| (c.to_ascii_uppercase(), clean(s)))
+            .map(|(c, s)| (c.to_ascii_uppercase(), path_token(s)))
             .collect();
         let key = format!("{base:?}|{token}|{mode}|{class}|{skins:?}|{direction}");
         let asset = {
@@ -565,7 +542,7 @@ impl<'a> ObjectSprites<'a> {
         user_dir: u8,
     ) -> AssetResult {
         let folder = base_folder(base);
-        let cof_path = format!("{folder}\\{token}\\cof\\{token}{mode}{class}.cof");
+        let cof_path = cof_path(folder, token, mode, class);
         let bytes = self
             .read(&cof_path)
             .ok_or_else(|| MissingReason::CofNotFound(cof_path.clone()))?;
@@ -576,12 +553,13 @@ impl<'a> ObjectSprites<'a> {
         let dir = file_direction(cof.directions, user_dir).min(cof.directions - 1);
         let mut layers: Vec<Option<LayerSprite>> = (0..16).map(|_| None).collect();
         // The last record of a component wins (cof.c:306-318).
-        for record in &cof.layers {
-            let idx = usize::from(record.component);
-            if idx >= 16 {
+        for (idx, slot) in (0u8..).zip(layers.iter_mut()) {
+            let Some(record) = cof.component_layer(idx) else {
                 continue;
-            }
-            let code = COMPONENT_CODES[idx];
+            };
+            let Some(code) = record.component_code() else {
+                continue;
+            };
             // obj.txt gives every drawn component a skin; an empty cell makes
             // the reference build a name no file has, so the layer is not
             // drawn (cof.c:322-333). Without a skin list (tables other than
@@ -591,11 +569,16 @@ impl<'a> ObjectSprites<'a> {
                 None if skins.is_empty() => "lit",
                 None => continue,
             };
-            let wclass = clean(&String::from_utf8_lossy(&record.weapon_class));
-            let stem = format!("{token}{}{skin}{mode}{wclass}", code.to_ascii_lowercase());
-            let dir_path = format!("{folder}\\{token}\\{}", code.to_ascii_lowercase());
-            let frames = self.load_component(&dir_path, &stem, &cof, dir);
-            layers[idx] = frames.map(|frames| LayerSprite {
+            let paths = component_paths(
+                folder,
+                token,
+                mode,
+                &record.weapon_class_token(),
+                code,
+                skin,
+            );
+            let frames = self.load_component(&paths, &cof, dir);
+            *slot = frames.map(|frames| LayerSprite {
                 component: record.component,
                 shadow: record.shadow != 0,
                 transparent: record.transparent != 0,
@@ -620,15 +603,15 @@ impl<'a> ObjectSprites<'a> {
         }))
     }
 
-    /// The frames of direction `dir` from `{stem}.dcc`, else `{stem}.dc6`.
+    /// The frames of direction `dir` from the `.dcc` of `paths`, else its
+    /// `.dc6` ([`component_paths`] order).
     fn load_component(
         &self,
-        dir_path: &str,
-        stem: &str,
+        [dcc, dc6]: &[String; 2],
         cof: &Cof,
         dir: u8,
     ) -> Option<Vec<IndexedImage>> {
-        if let Some(bytes) = self.read(&format!("{dir_path}\\{stem}.dcc")) {
+        if let Some(bytes) = self.read(dcc) {
             // No fall back to .dc6 when the .dcc exists but fails (the game
             // does not either, PLAN.md "Format decisions").
             let dcc = Dcc::parse(&bytes).ok()?;
@@ -638,7 +621,7 @@ impl<'a> ObjectSprites<'a> {
                 .nth(usize::from(dir))
                 .map(|d| d.frames);
         }
-        let bytes = self.read(&format!("{dir_path}\\{stem}.dc6"))?;
+        let bytes = self.read(dc6)?;
         let dc6 = Dc6::parse(&bytes).ok()?;
         // dc6.c:175: the direction count must equal the COF's.
         if dc6.directions != u32::from(cof.directions) {
@@ -666,7 +649,7 @@ fn build_frame(asset: &Asset, frame: u8, offset: (i32, i32), order_flag: u8) -> 
             component: layer.component,
             image: Arc::clone(image),
             box_origin: layer.box_origin,
-            blend: blend_for(layer.transparent, layer.draw_effect),
+            blend: Blend::for_cof_layer(layer.transparent, layer.draw_effect),
             shadow: layer
                 .shadow
                 .then_some(if layer.transparent { 28 } else { 10 }),
