@@ -10,6 +10,7 @@ members = [
     "crates/capy-sprite",
     "crates/capy-cli",
     "crates/capy-app",
+    "crates/capy-paint",
 ]
 
 [workspace.package]
@@ -36,6 +37,7 @@ capy-history = { path = "crates/capy-history" }
 capy-render = { path = "crates/capy-render" }
 capy-sprite = { path = "crates/capy-sprite" }
 capy-cli = { path = "crates/capy-cli" }
+capy-paint = { path = "crates/capy-paint" }
 thiserror = "2"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
@@ -53,6 +55,7 @@ image = { version = "0.25", default-features = false, features = ["png", "bmp", 
 blake3 = { version = "1", default-features = false, features = ["pure"] }
 gix = { version = "0.89", default-features = false, features = ["sha1"] }
 png = "0.18"
+gif = "0.14"
 
 # UI stack, pinned together: bevy_egui 0.43.1 and egui_dock 0.21.1 both
 # require egui 0.36.2. `cargo tree -d` showed a single egui with this set.
@@ -81,6 +84,10 @@ opt-level = 2
 
 # Quantizing and re-encoding sprites in the corpus tests.
 [profile.dev.package.capy-sprite]
+opt-level = 2
+
+# Gradient, dithering and proptest sequences over many small frames.
+[profile.dev.package.capy-paint]
 opt-level = 2
 
 [profile.release]
