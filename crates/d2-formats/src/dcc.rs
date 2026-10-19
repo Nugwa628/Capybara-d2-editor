@@ -296,13 +296,30 @@ fn eof(bs: &Bits<'_>, _what: &'static str) -> FormatError {
 /// direction box, length)`. Cells are 4 pixels except a partial first cell
 /// that ends on the direction's 4-pixel grid, and a last cell that absorbs a
 /// trailing 1-pixel sliver (so up to 5 pixels).
+///
+/// Returns an empty list when `|frame_len|` exceeds 2^20 pixels (no DCC box
+/// is wider than 2048) or the coordinates overflow `i64`, rather than
+/// allocating or overflowing on absurd inputs.
 pub fn cell_spans(frame_min: i64, dir_min: i64, frame_len: i64) -> Vec<(i64, i64)> {
+    const MAX_SPAN_LEN: i64 = 1 << 20;
+    let in_range = (-MAX_SPAN_LEN..=MAX_SPAN_LEN).contains(&frame_len)
+        && frame_min
+            .checked_sub(dir_min)
+            .and_then(|rel| rel.checked_add(frame_len.max(0) + 4))
+            .is_some();
+    if !in_range {
+        return Vec::new();
+    }
     axis_cells(frame_min, dir_min, frame_len)
 }
 
 /// Sizes of the cells covering one axis of a frame: `(start relative to the
 /// direction box, length)`. The first cell ends on the 4-pixel grid, and a
 /// final sliver of one pixel is merged into the previous cell.
+///
+/// Callers keep the inputs small (the decoder and encoder pass values inside
+/// a 2048-pixel box, `cell_spans` checks its own), so the arithmetic cannot
+/// overflow and `count` is at most about `frame_len / 4`.
 fn axis_cells(frame_min: i64, dir_min: i64, frame_len: i64) -> Vec<(i64, i64)> {
     let rel = frame_min - dir_min;
     let first = 4 - rel.rem_euclid(4);

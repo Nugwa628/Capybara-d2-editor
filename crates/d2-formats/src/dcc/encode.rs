@@ -404,13 +404,24 @@ impl Dcc {
                 .sum::<usize>();
             blobs.push(encode_direction(&dir.frames, &coded)?);
         }
-        let mut out = vec![0x74, 6, dirs.directions.len() as u8];
+        // from_frames capped the direction count at 32
+        let mut out = vec![
+            0x74,
+            6,
+            u8::try_from(dirs.directions.len()).unwrap_or(u8::MAX),
+        ];
         out.extend_from_slice(&dirs.frames_per_direction.to_le_bytes());
         out.extend_from_slice(&1u32.to_le_bytes());
-        out.extend_from_slice(&(total_dc6 as u32).to_le_bytes());
+        // a size hint the decoders never read; saturate rather than wrap
+        out.extend_from_slice(&u32::try_from(total_dc6).unwrap_or(u32::MAX).to_le_bytes());
         let mut offset = 15 + 4 * blobs.len();
         for b in &blobs {
-            out.extend_from_slice(&(offset as u32).to_le_bytes());
+            let at = u32::try_from(offset).map_err(|_| FormatError::NotRepresentable {
+                format: FORMAT,
+                version: 6,
+                detail: "direction offsets do not fit 32 bits".to_owned(),
+            })?;
+            out.extend_from_slice(&at.to_le_bytes());
             offset += b.len();
         }
         for b in &blobs {

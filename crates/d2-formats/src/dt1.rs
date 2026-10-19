@@ -34,9 +34,10 @@
 //!
 //! # Limits
 //!
-//! The bytes copied into [`Block::data`] across a whole file are capped at
-//! the file length plus 1 MiB, and a rendered tile at 2048x2048 pixels, so
-//! hostile input cannot over-allocate. The six `4.1` files shipped in
+//! The bytes copied into [`Block::data`] across a whole file, plus 20 per
+//! sub-block header read, are capped at the file length plus 1 MiB, and a
+//! rendered tile at 2048x2048 pixels, so hostile input cannot
+//! over-allocate. The six `4.1` files shipped in
 //! `act1\{barracks,catacomb,cathedrl,court,outdoors}` are an unrelated older
 //! layout no tool can read; they fail with [`FormatError::UnsupportedVersion`].
 
@@ -255,12 +256,14 @@ fn parse_tile(bytes: &[u8], at: usize, copied: &mut usize, budget: usize) -> Res
                 format!("{length} bytes at {data_at:#x} run past the end of the file"),
             )
         })?;
-        *copied = copied.saturating_add(length);
+        // headers count too: tiles may point at one shared header array, and
+        // zero-length blocks would otherwise be free to repeat
+        *copied = copied.saturating_add(length + BLOCK_HEADER_LEN);
         if *copied > budget {
             return Err(invalid(
                 "sub-block data",
                 hdr_at + 10,
-                "sub-block data exceeds the file length by more than the allowed slack",
+                "sub-block headers and data exceed the file length by more than the allowed slack",
             ));
         }
         let raw_format = i16_at(hdr, 8).unwrap_or(0);

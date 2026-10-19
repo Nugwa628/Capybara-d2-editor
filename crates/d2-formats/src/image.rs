@@ -31,7 +31,9 @@ impl IndexedImage {
     /// treated specially here; the decoders already give it alpha 0).
     pub fn to_rgba(&self, palette: &crate::palette::Palette) -> Vec<u8> {
         let len = (self.width as usize).saturating_mul(self.height as usize);
-        let mut out = Vec::with_capacity(len.saturating_mul(4));
+        // the fields are public: size the hint by the pixels that exist, so a
+        // caller-built image with a bogus size cannot trip "capacity overflow"
+        let mut out = Vec::with_capacity(len.min(self.pixels.len()).saturating_mul(4));
         for i in 0..len {
             let index = self.pixels.get(i).copied().unwrap_or(0);
             let alpha = self.alpha.get(i).copied().unwrap_or(0);
