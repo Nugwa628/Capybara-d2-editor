@@ -279,7 +279,7 @@ impl Default for PaletteConvert {
             target: TargetChoice::Palette(PaletteChoice::Act(0)),
             settings: ConvertSettings::default(),
             item: 0,
-            zoom: 2,
+            zoom: 3,
             side_by_side: true,
             show_after: true,
             highlight_changed: false,

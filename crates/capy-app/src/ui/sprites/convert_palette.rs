@@ -254,7 +254,7 @@ fn palettes_row(ui: &mut Ui, state: &mut AppState) {
             })
             .response
             .on_hover_text("The palette the file was made for (remembered per file)");
-        ui.label(RichText::new("\u{2192}").strong());
+        ui.label(RichText::new("->").strong());
         ui.label("Target palette");
         egui::ComboBox::from_id_salt("convert_target")
             .selected_text(c.target.label())
@@ -490,7 +490,7 @@ fn plan_table(ui: &mut Ui, state: &mut AppState, plan: &RemapPlan) {
                         .hovered();
                     ui.monospace(format!("{:>3}", e.source));
                 });
-                ui.label(if r.changed { "\u{2192}" } else { "=" });
+                ui.label(if r.changed { "->" } else { "=" });
                 ui.horizontal(|ui| {
                     let resp = swatch(ui, e.target_rgb, 16.0).on_hover_text(format!(
                         "{} (click: override)",
@@ -520,14 +520,14 @@ fn plan_table(ui: &mut Ui, state: &mut AppState, plan: &RemapPlan) {
                 ui.horizontal(|ui| {
                     ui.label(how_label(e.how));
                     if r.outside_allowed {
-                        ui.colored_label(WARN, "\u{26a0}").on_hover_text(
+                        ui.colored_label(WARN, "(!)").on_hover_text(
                             "This override is outside the allowed colours (it is used anyway)",
                         );
                     }
                 });
                 if e.how == MatchKind::Override {
                     if ui
-                        .small_button("\u{2715}")
+                        .small_button("x")
                         .on_hover_text("Clear this override")
                         .clicked()
                     {
@@ -682,11 +682,15 @@ fn preview_rgba(
         let shown = table.map_or(p, |t| t[usize::from(p)]);
         let c = palette.colors[usize::from(shown)];
         let lit = mark.is_none_or(|m| m[usize::from(p)]);
-        let px = if lit {
-            [c[0], c[1], c[2], 255]
-        } else {
-            let g = ((u16::from(c[0]) + u16::from(c[1]) + u16::from(c[2])) / 12) as u8;
-            [g, g, g, 255]
+        // Marked pixels are solid magenta (easy to spot on any tile); the
+        // rest keep their colour, dimmed.
+        let px = match (mark.is_some(), lit) {
+            (false, _) => [c[0], c[1], c[2], 255],
+            (true, true) => [255, 0, 255, 255],
+            (true, false) => {
+                let dim = |v: u8| (u16::from(v) * 2 / 5) as u8;
+                [dim(c[0]), dim(c[1]), dim(c[2]), 255]
+            }
         };
         out[i * 4..i * 4 + 4].copy_from_slice(&px);
     }
@@ -892,7 +896,7 @@ fn convert_and_result(ui: &mut Ui, state: &mut AppState, ready: bool) {
     let label = r.label();
     let saved = r.saved.clone();
     ui.horizontal_wrapped(|ui| {
-        ui.colored_label(GOOD, "\u{2714}");
+        ui.colored_label(GOOD, "Converted:");
         ui.label(&label);
         match &saved {
             Some(p) => ui.weak(format!("saved to {p}")),

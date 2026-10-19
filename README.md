@@ -28,6 +28,10 @@ and keeps everything it writes in a `capybara\` folder next to the exe.
   including batch conversion of whole folders. A palette-locked sprite editor
   with gradient, shading, outline, selections, frames, onion skin and a DCC
   cell check.
+- **Palette tools.** Convert tiles and sprites (DT1, DC6, DCC) to another
+  act's or UI palette with an adjustable colour plan, overrides, before/after
+  preview and batch, and a per-file palette memory that warns before art is
+  saved under the wrong palette.
 - **Tile browser and search.** A background index of every tile and sprite in
   the profile, a Tiles browser with thumbnails, favorites, recents and saved
   searches, and Ctrl+K search with filters such as `type:floor color:green`.
