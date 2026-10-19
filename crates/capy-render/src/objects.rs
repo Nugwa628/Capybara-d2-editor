@@ -16,8 +16,9 @@
 //!    of one component the last one wins ([`Cof::component_layer`],
 //!    `cof.c:306`).
 //! 4. One user direction (default 0) is mapped through the editor's
-//!    direction tables (`main.c:331-334`) to the file direction, which indexes
-//!    both the sprite and the COF priority table (lead decision, PLAN.md).
+//!    direction tables (`main.c:331-334`, [`file_direction`]) to the file
+//!    direction, which indexes both the sprite and the COF priority table
+//!    (lead decision, PLAN.md).
 //! 5. The frame is chosen by [`frame_index`]; layers are listed in COF priority
 //!    order (`preview.c:2095`), each with its blend (`preview.c:2131`) and, for
 //!    layers with `shadow != 0`, its shadow darkness (`preview.c:2235-2259`).
@@ -144,6 +145,10 @@ pub struct ObjectFrame {
     /// Objects.txt `OrderFlag` of the mode: 1 draws behind walls, 0 and 2 in
     /// front; anything else is never drawn (`preview.c:2410,2478`).
     pub order_flag: u8,
+    /// Frames per direction of the object's COF: the animation length that
+    /// [`frame_index`] and forced frames wrap at (at least 1). Layers with
+    /// fewer frames repeat their last one.
+    pub frames_per_direction: u8,
 }
 
 impl ObjectFrame {
@@ -362,8 +367,18 @@ pub(crate) fn shift_palette(frames: &mut [IndexedImage], row: &[u8; 256]) {
     }
 }
 
-fn file_direction(cof_dirs: u8, user: u8) -> u8 {
-    let user = usize::from(user);
+/// The file direction (index into the sprite's and the COF's directions) of
+/// user direction `user_dir` for a COF with `directions` directions, through
+/// the editor's tables (`main.c:331-340`):
+///
+/// * 8, 16, 32: the `dir8` / `dir16` / `dir32` tables (user 0 is file 4); a
+///   user direction past the table uses user direction 0.
+/// * 4: the user direction itself, clamped to 3.
+/// * anything else (1, 0, non-standard counts): 0.
+///
+/// The result is always below `directions` when `directions > 0`.
+pub fn file_direction(directions: u8, user_dir: u8) -> u8 {
+    let (cof_dirs, user) = (directions, usize::from(user_dir));
     let lookup = |table: &[u8]| {
         table
             .get(user)
@@ -731,6 +746,7 @@ fn build_frame(asset: &Asset, frame: u8, offset: (i32, i32), order_flag: u8) -> 
         layers,
         offset,
         order_flag,
+        frames_per_direction: asset.cof.frames_per_direction.max(1),
     }
 }
 

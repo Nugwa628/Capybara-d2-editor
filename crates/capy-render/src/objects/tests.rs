@@ -35,6 +35,7 @@ fn drawing_order_is_tile_then_sub_tile_table_then_index() {
         layers: Vec::new(),
         offset: (0, 0),
         order_flag: 0,
+        frames_per_direction: 1,
     });
     let key = |x, y, index| {
         PlacedObject {
@@ -65,6 +66,21 @@ fn file_direction_uses_the_editor_tables() {
     assert_eq!(file_direction(8, 1), 0);
     assert_eq!(file_direction(16, 0), 4);
     assert_eq!(file_direction(32, 1), 16);
+    // the full tables (main.c:331-340)
+    let row = |n: u8| (0..n).map(|u| file_direction(n, u)).collect::<Vec<_>>();
+    assert_eq!(row(8), DIR8);
+    assert_eq!(row(16), DIR16);
+    assert_eq!(row(32), DIR32);
+    assert_eq!(row(4), [0, 1, 2, 3]);
+    // out of range user directions, and other COF direction counts
+    assert_eq!(file_direction(4, 9), 3);
+    assert_eq!(file_direction(8, 8), 4);
+    assert_eq!(file_direction(1, 5), 0);
+    assert_eq!(file_direction(0, 3), 0);
+    assert_eq!(file_direction(2, 1), 0);
+    for n in [1u8, 4, 8, 16, 32] {
+        assert!((0..=255).all(|u| file_direction(n, u) < n));
+    }
 }
 
 #[test]
@@ -162,6 +178,7 @@ fn an_object_resolves_loads_and_composites() {
     assert_eq!(layer.shadow, Some(10));
     assert_eq!(layer.box_origin, (-2, -6));
     assert_eq!(layer.image.pixels[0], 10, "frame 0 by default");
+    assert_eq!(frame.frames_per_direction, 2, "the COF's frame count");
     // the animation tick advances the frame
     let ticked = ObjectOptions {
         animation_tick: Some(1),
