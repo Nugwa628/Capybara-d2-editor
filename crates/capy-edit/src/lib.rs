@@ -75,8 +75,13 @@
 //!   two objects and a path, or two paths, there. Moves with no path involved,
 //!   a sharer leaving an ambiguous sub-tile and moving a whole ambiguous
 //!   sub-tile together stay allowed, as do path edits and deletes on an
-//!   already ambiguous path (so it can be cleaned up). `paste` and
-//!   `add_object` do not check anchors.
+//!   already ambiguous path (so it can be cleaned up). `add_object` and
+//!   `paste` refuse the same way (`Format(Invalid)`, same wording, nothing
+//!   changes) an object placed on a sub-tile holding an object with a path or
+//!   two paths, or two pasted objects landing on one path; an object may
+//!   still join objects without a path or take over a stray path. The paste
+//!   preview lists each such sub-tile in `warnings`, and the check comes
+//!   before the version check.
 //! - **Restore.** `Patch::replace(label, before, after)` builds a whole-model
 //!   patch for `apply_patch`.
 

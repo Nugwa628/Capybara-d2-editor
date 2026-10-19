@@ -1,6 +1,6 @@
 # Capybara Map Editor — Plan
 
-Status: **P0 and P1 done** (2026-10-19). P2-P6 libraries largely done (editing, history, search, sprites, CLI, object catalog); app UI for P2 in progress, then P6, P3, P4, P5 UI. See CHANGELOG.
+Status: **P0, P1 and P2 done** (2026-10-19). P3-P6 libraries done (search, history, sprites, CLI, objects); UI lane: P6 Sprites mode in progress, then P3 browser, P4 history UI, P5 object/NPC placement, release.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -132,6 +132,11 @@ Status: **P0 and P1 done** (2026-10-19). P2-P6 libraries largely done (editing, 
 - Median XL: 8 maps render with 0 missing tiles; the user checked 5 by eye and confirmed them (2026-10-19).
 - Index: background build with progress bar and cancel; second launch reports up to date with no rebuild (0.01 s); the unit test proves a size/mtime change makes only that profile stale.
 - Zoom 1:1-1:16 on DS1Edit's integer zoom grid, pan, layer toggles (floors, walls, shadow, roofs, special, tag).
+
+### P2 acceptance (2026-10-19)
+- Property tests: undo-all restores, redo-all reproduces, undo∘redo is identity at every step (thousands of random sequences incl. layer moves, paste, resize, version upgrades, objects, NPC paths); `NeedsVersion` is always the least sufficient version.
+- Edited maps load in the oracle and render as written: 22/22 maps (incl. v3/v12/v13/v15) at within_tolerance(16) >= 0.991.
+- App: scripted end-to-end edit (select, Wall 1 → Wall 3, paint, cross-region paste, save) produces a correct file in `capybara\saves\<profile>\`, CHANGED.txt lists it once, and a history snapshot exists.
 
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
@@ -275,9 +280,8 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - Repo-local git identity `ZF <112085691+Nugwa628@users.noreply.github.com>` was set because none existed.
 
 ## Pending small fixes (lead decisions, not yet implemented)
-- `capy-edit`: `paste` and `add_object` should refuse (and `PastePreview` should warn about) placing an object on a sub-tile where it would make an NPC path anchor ambiguous, matching `set_object`/`move_objects`.
-- `capy-render` duplicates COF compositing from `capy-sprite` because `capy-sprite` depends on `capy-render::Blend`; move `Blend` into `d2-formats` and unify later.
-- obj.txt `Colormap`/`Index` palette shifts for unique monsters (applies to layers with `trans_a == 0`, `cof.c:216-242,343-361`) are not rendered yet.
+- `capy-render`: a mod colormap that maps a visible index to 0 makes that pixel transparent here; DS1Edit keeps it opaque. No vanilla row does this. Match DS1Edit later.
+- `capy-render`: DS1Edit re-derives DCC indices with `palette_find_closest` (first duplicate colour wins, `cof.c:149-170`), causing ~3 pixel differences on Coldcrow. Not reproduced; low value.
 
 ## Known gaps
 - `Patch_D2.mpq`: 77 of 209 files (vanilla) and 53 of Median XL's copy remain unnamed after the harvest; every map, tile set and table the game references is named. A COF-derived name pass (objects/monsters) can recover sprite names later.

@@ -13,46 +13,6 @@ fn opts(zoom_div: u32) -> RenderOptions {
 }
 
 #[test]
-fn blend_normal_replaces_the_pixel() {
-    assert_eq!(
-        Blend::Normal.apply([9, 9, 9, 255], [1, 2, 3]),
-        [1, 2, 3, 255]
-    );
-}
-
-#[test]
-fn blend_alpha_tint_scales_colour_and_coverage() {
-    // Measured on the oracle's shadow pixels: out = d * (127/255) + s * (128/255)^2.
-    let out = Blend::Alpha50.apply([161, 146, 105, 255], [11, 10, 11]);
-    assert_eq!(out, [83, 75, 55, 255]);
-    // 25% and 75% quantise the tint to 64/255 and 191/255.
-    let a25 = Blend::Alpha25.apply([200, 200, 200, 255], [255, 0, 0]);
-    assert_eq!(a25, [166, 150, 150, 255]);
-    let a75 = Blend::Alpha75.apply([200, 200, 200, 255], [255, 0, 0]);
-    assert_eq!(a75, [193, 50, 50, 255]);
-    // Over nothing the coverage stays in the alpha channel.
-    let over_void = Blend::Alpha50.apply([0, 0, 0, 0], [200, 100, 0]);
-    assert_eq!(over_void[3], 128);
-}
-
-#[test]
-fn blend_additive_multiply_screen() {
-    assert_eq!(
-        Blend::Additive.apply([200, 10, 0, 255], [100, 20, 30]),
-        [255, 30, 30, 255]
-    );
-    assert_eq!(
-        Blend::Multiply.apply([255, 128, 0, 255], [100, 100, 100]),
-        [100, 50, 0, 255]
-    );
-    // (ONE, INV_SRC_COLOR): s + d * (1 - s).
-    assert_eq!(
-        Blend::Screen.apply([100, 100, 100, 255], [255, 0, 128]),
-        [255, 100, 178, 255]
-    );
-}
-
-#[test]
 fn downscale_takes_the_centre_sample() {
     let mut img = RgbaImage::filled(8, 8, [0, 0, 0, 255]);
     // div 4: output (i, j) = input (4i + 2, 4j + 2).

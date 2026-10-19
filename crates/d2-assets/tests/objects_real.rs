@@ -460,3 +460,32 @@ fn monpreset_route_agrees_with_embedded_obj_txt() {
     assert!(both > 100);
     assert!(agree * 100 >= both * 90, "{disagreements:#?}");
 }
+
+/// Every obj.txt palette shift the vanilla catalog hands out names a
+/// colormap file in the install with room for its row.
+#[test]
+fn vanilla_palette_shifts_resolve_to_colormap_rows() {
+    let Some(f) = vanilla() else { return };
+    let mut found = Vec::new();
+    for act in 0..5u8 {
+        for id in 0..60 {
+            let info = f.catalog.resolve(act, 18, &obj(1, id));
+            let Some(shift) = info.colormap else { continue };
+            let bytes = f
+                .overlay
+                .read_bytes(&GamePath::new(&shift.path))
+                .unwrap()
+                .unwrap_or_else(|| panic!("{} missing", shift.path));
+            assert!(
+                shift.row_in(&bytes).is_some(),
+                "{shift:?}: {} bytes",
+                bytes.len()
+            );
+            found.push((act, id, info.token.unwrap_or_default(), shift.row));
+        }
+    }
+    println!("palette shifts: {found:?}");
+    // Coldcrow (act 1 id 36, RandTransforms Index 4) is in the Cave oracle map.
+    assert!(found.contains(&(0, 36, "CR".to_owned(), 3)), "{found:?}");
+    assert!(found.len() >= 10, "{found:?}");
+}

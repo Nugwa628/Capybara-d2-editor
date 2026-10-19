@@ -5,18 +5,23 @@
 //!
 //! * Layers are drawn in the order of the COF priority table for the given
 //!   (file direction, frame) ([`Cof::draw_order`]); a component with several
-//!   COF records uses the **last** one (the editor's rule); a component the
-//!   caller supplied no sprite for is skipped.
+//!   sprites uses the **last** one, as a COF with several records of one
+//!   component uses its last record ([`Cof::component_layer`]); a component
+//!   the caller supplied no sprite for is skipped.
 //! * The layer's sprite direction is the COF file direction; a layer with
 //!   fewer directions is skipped, a layer with fewer frames shows its last
 //!   frame.
 //! * A layer is blended when [`CofLayerSprite::transparent`] is set and its
-//!   `draw_effect` (COF `trans_b`) is 0 to 4 or 6; other values draw opaque.
-//!   The blend functions are `capy_render::Blend`.
+//!   `draw_effect` (COF `trans_b`) is 0 to 4 or 6; other values draw opaque
+//!   ([`Blend::for_cof_layer`]).
 //! * Shadows are not drawn. The canvas is the union of the drawn frames and
 //!   starts fully transparent.
+//!
+//! The path rules, the last-record rule and the blend mapping live in
+//! `d2-formats` (`d2_formats::cof`, `d2_formats::blend`), shared with the map
+//! renderer (`capy-render`), which draws each layer as its own scaled bitmap.
 
-use capy_render::Blend;
+use d2_formats::blend::Blend;
 use d2_formats::cof::Cof;
 use d2_formats::palette::Palette;
 
@@ -31,19 +36,19 @@ pub enum UnitKind {
 }
 
 impl UnitKind {
-    fn folder(self) -> &'static str {
+    /// The sprite folder, `data\global\{objects|monsters|chars}`.
+    pub fn base_dir(self) -> &'static str {
         match self {
-            UnitKind::Object => "objects",
-            UnitKind::Monster => "monsters",
-            UnitKind::Character => "chars",
+            UnitKind::Object => "data\\global\\objects",
+            UnitKind::Monster => "data\\global\\monsters",
+            UnitKind::Character => "data\\global\\chars",
         }
     }
 }
 
-/// Component codes by COF component index (HD TR LG RA LA RH LH SH S1..S8).
-pub const COMPONENT_CODES: [&str; 16] = [
-    "HD", "TR", "LG", "RA", "LA", "RH", "LH", "SH", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8",
-];
+/// Component codes by COF component index (HD TR LG RA LA RH LH SH S1..S8);
+/// the same constant as `d2_formats::cof::COMPONENT_CODES`.
+pub use d2_formats::cof::COMPONENT_CODES;
 
 /// Candidate paths of one layer's sprite:
 /// `data\global\{objects|monsters|chars}\{token}\{component}\{token}{component}{armor}{mode}{weapon_class}.dcc`
@@ -51,7 +56,8 @@ pub const COMPONENT_CODES: [&str; 16] = [
 /// caller opens the first that resolves. `component` is the two-letter code
 /// (`"TR"`), `armor` the skin/armour token from obj.txt (`"lit"`, may be
 /// empty), `mode` the animation mode (`"nu"`), `weapon_class` the COF
-/// layer's class (`"hth"`; trailing NUL and spaces are ignored).
+/// layer's class (`"hth"`; trailing NUL and spaces are ignored). The rule is
+/// `d2_formats::cof::component_paths`, which the map renderer uses too.
 pub fn cof_component_paths(
     kind: UnitKind,
     token: &str,
@@ -60,20 +66,8 @@ pub fn cof_component_paths(
     component: &str,
     armor: &str,
 ) -> Vec<String> {
-    let clean = |s: &str| {
-        s.trim_matches(|c: char| c == '\0' || c.is_whitespace())
-            .to_ascii_lowercase()
-    };
-    let (token, mode, weapon_class, component, armor) = (
-        clean(token),
-        clean(mode),
-        clean(weapon_class),
-        clean(component),
-        clean(armor),
-    );
-    let stem = format!("{token}{component}{armor}{mode}{weapon_class}");
-    let dir = format!("data\\global\\{}\\{token}\\{component}", kind.folder());
-    vec![format!("{dir}\\{stem}.dcc"), format!("{dir}\\{stem}.dc6")]
+    d2_formats::cof::component_paths(kind.base_dir(), token, mode, weapon_class, component, armor)
+        .into()
 }
 
 /// A COF layer together with its decoded sprite.
@@ -89,18 +83,7 @@ pub struct CofLayerSprite {
 }
 
 fn blend_for(layer: &CofLayerSprite) -> Blend {
-    if !layer.transparent {
-        return Blend::Normal;
-    }
-    match layer.draw_effect {
-        0 => Blend::Alpha25,
-        1 => Blend::Alpha50,
-        2 => Blend::Alpha75,
-        3 => Blend::Additive,
-        4 => Blend::Multiply,
-        6 => Blend::Screen,
-        _ => Blend::Normal,
-    }
+    Blend::for_cof_layer(layer.transparent, layer.draw_effect)
 }
 
 /// Composites one (file direction, frame) of a COF; see the module docs.

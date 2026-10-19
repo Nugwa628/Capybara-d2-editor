@@ -16,7 +16,12 @@
 //! permutation of the layers' components. It is indexed by the **file
 //! direction**, the same index as the sprite frames (see PLAN.md, "Format
 //! decisions"). Duplicate component ids exist in a few boss COFs; every
-//! record is kept in order, so the caller decides which duplicate wins.
+//! record is kept in order, and [`Cof::component_layer`] gives the one that
+//! counts (the last).
+//!
+//! [`cof_path`] and [`component_paths`] are the file names of an animation
+//! and of its layers' sprites, shared by the map renderer and the sprite
+//! tools.
 //!
 //! # Leniency
 //!
@@ -36,6 +41,57 @@ const HEADER_LEN: usize = 28;
 const LAYER_LEN: usize = 9;
 /// Zero-filled bytes tolerated past the end of a short file.
 const MAX_MISSING: usize = 4096;
+
+/// Component codes by COF component index (HD TR LG RA LA RH LH SH S1..S8).
+pub const COMPONENT_CODES: [&str; 16] = [
+    "HD", "TR", "LG", "RA", "LA", "RH", "LH", "SH", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8",
+];
+
+/// A name part as it appears in sprite paths: trailing/leading NULs and
+/// whitespace removed, lower case (`"HTH\0"` -> `"hth"`, `"LIT"` -> `"lit"`).
+pub fn path_token(s: &str) -> String {
+    s.trim_matches(|c: char| c == '\0' || c.is_whitespace())
+        .to_ascii_lowercase()
+}
+
+/// The COF of an animation: `{base}\{token}\cof\{token}{mode}{class}.cof`
+/// (`cof.c:253`), every part through [`path_token`]. `base` is the sprite
+/// folder, e.g. `data\global\monsters`, used as given.
+pub fn cof_path(base: &str, token: &str, mode: &str, weapon_class: &str) -> String {
+    let token = path_token(token);
+    format!(
+        "{base}\\{token}\\cof\\{token}{}{}.cof",
+        path_token(mode),
+        path_token(weapon_class)
+    )
+}
+
+/// The candidate sprite files of one COF layer, `.dcc` first, then `.dc6`
+/// (`cof.c:322-333`):
+/// `{base}\{token}\{component}\{token}{component}{armor}{mode}{weapon_class}.dcc`,
+/// every part through [`path_token`]. `component` is the two-letter code
+/// (`"TR"`), `armor` the skin/armour token (`"lit"`, may be empty),
+/// `weapon_class` the layer's own class ([`CofLayer::weapon_class_token`]).
+/// The game, and the editors, open the `.dc6` only when no `.dcc` exists.
+pub fn component_paths(
+    base: &str,
+    token: &str,
+    mode: &str,
+    weapon_class: &str,
+    component: &str,
+    armor: &str,
+) -> [String; 2] {
+    let (token, mode, weapon_class, component, armor) = (
+        path_token(token),
+        path_token(mode),
+        path_token(weapon_class),
+        path_token(component),
+        path_token(armor),
+    );
+    let stem = format!("{token}{component}{armor}{mode}{weapon_class}");
+    let dir = format!("{base}\\{token}\\{component}");
+    [format!("{dir}\\{stem}.dcc"), format!("{dir}\\{stem}.dc6")]
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CofLayer {
@@ -66,6 +122,18 @@ pub struct Cof {
     /// Bytes the key-frame and priority tables needed past the end of the
     /// file, read as zero (0 for every well-formed file).
     pub missing_bytes: usize,
+}
+
+impl CofLayer {
+    /// The two-letter code of [`CofLayer::component`] (`None` above 15).
+    pub fn component_code(&self) -> Option<&'static str> {
+        COMPONENT_CODES.get(usize::from(self.component)).copied()
+    }
+
+    /// The weapon class as a path part (`HTH\0` -> `"hth"`), see [`path_token`].
+    pub fn weapon_class_token(&self) -> String {
+        path_token(&String::from_utf8_lossy(&self.weapon_class))
+    }
 }
 
 impl Cof {
@@ -121,6 +189,13 @@ impl Cof {
             layer_order,
             missing_bytes: missing,
         })
+    }
+
+    /// The record that describes `component`. When a COF lists a component
+    /// more than once the **last** record wins, as in the editors
+    /// (`cof.c:306-318`) and the game; `None` when no record has it.
+    pub fn component_layer(&self, component: u8) -> Option<&CofLayer> {
+        self.layers.iter().rev().find(|l| l.component == component)
     }
 
     /// The layers (as component indices) of `(dir, frame)` in drawing order,

@@ -1797,7 +1797,6 @@ dependencies = [
 name = "capy-sprite"
 version = "0.1.0"
 dependencies = [
- "capy-render",
  "d2-formats",
  "image",
  "proptest",

@@ -120,6 +120,46 @@ fn duplicate_components_are_kept() {
     let cof = Cof::parse(&build(&layers, 1, 1, &[0], &[1, 1])).unwrap();
     assert_eq!(cof.layers.len(), 2);
     assert_eq!(cof.layers[1].weapon_class, *b"STF\0");
+    // the last record of a component is the one that counts
+    assert_eq!(cof.component_layer(1).unwrap().weapon_class, *b"STF\0");
+    assert!(cof.component_layer(0).is_none());
+}
+
+#[test]
+fn layer_names_and_sprite_paths() {
+    let layer = CofLayer {
+        component: 1,
+        shadow: 0,
+        selectable: 0,
+        transparent: 0,
+        draw_effect: 0,
+        weapon_class: *b"1HS ",
+    };
+    assert_eq!(layer.component_code(), Some("TR"));
+    assert_eq!(layer.weapon_class_token(), "1hs");
+    let bad = CofLayer {
+        component: 16,
+        ..layer.clone()
+    };
+    assert_eq!(bad.component_code(), None);
+    assert_eq!(path_token(" HTH\0\0"), "hth");
+
+    assert_eq!(
+        cof_path(r"data\global\monsters", "BA", "NU", "HTH\0"),
+        r"data\global\monsters\ba\cof\banuhth.cof"
+    );
+    assert_eq!(
+        component_paths(r"data\global\objects", "TO", "on", "hth\0", "TR", "LIT"),
+        [
+            r"data\global\objects\to\tr\totrlitonhth.dcc".to_owned(),
+            r"data\global\objects\to\tr\totrlitonhth.dc6".to_owned(),
+        ]
+    );
+    // an empty armour token leaves a gap-free name
+    assert_eq!(
+        component_paths("x", "ab", "nu", "hth", "s1", "")[0],
+        r"x\ab\s1\abs1nuhth.dcc"
+    );
 }
 
 proptest! {

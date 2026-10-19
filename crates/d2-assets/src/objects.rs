@@ -97,6 +97,34 @@ pub enum SpriteBase {
     Monsters,
 }
 
+/// A palette shift for one unique or special monster, from the `Colormap`
+/// and `Index` columns of DS1Edit's obj.txt (`cof.c:216-242`).
+///
+/// The file is a run of 256-byte rows (`Data\Global\Monsters\RandTransforms.dat`
+/// has 30, a monster's own `COF\Palshift.dat` 8). Each row maps a palette
+/// index to another one; it applies to the COF layers with `trans_a == 0`
+/// only, before the palette lookup (`cof.c:343-361`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PaletteShift {
+    /// The colormap file exactly as obj.txt names it, e.g.
+    /// `Data\Global\Monsters\CR\COF\Palshift.dat` (an archive path).
+    pub path: String,
+    /// The 0-based row: obj.txt `Index` minus one. (`Index` 0 or empty means
+    /// no palette shift, so it never appears here.)
+    pub row: u32,
+}
+
+impl PaletteShift {
+    /// The 256-byte row of this shift in the colormap file `bytes`; `None`
+    /// when the file is too short for it (the reference then draws the
+    /// monster without a shift, `cof.c:236-241`).
+    pub fn row_in<'a>(&self, bytes: &'a [u8]) -> Option<&'a [u8; 256]> {
+        let start = usize::try_from(self.row).ok()?.checked_mul(256)?;
+        let end = start.checked_add(256)?;
+        bytes.get(start..end)?.try_into().ok()
+    }
+}
+
 /// Everything known about one DS1 object.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObjectInfo {
@@ -121,10 +149,13 @@ pub struct ObjectInfo {
     pub parts: Vec<String>,
     /// Per-component skin/armor token for DCC file names, e.g. `("TR", "LIT")`,
     /// from DS1Edit's obj.txt. Empty, or a component missing here, means `LIT`.
+    /// Type 1 objects resolved through MonPreset take them from the obj.txt
+    /// row `(act, 1, id)` when it draws the same token (DS1 v5+).
     pub skins: Vec<(String, String)>,
     /// Default facing from DS1Edit's obj.txt `Direction` column (e.g. rogues
     /// 7, chickens 6), which the reference uses as the user direction. None
-    /// when no obj.txt row applies; renderers then use direction 0.
+    /// when no obj.txt row applies; renderers then use direction 0. Type 1
+    /// objects get it like `skins`.
     pub direction: Option<u8>,
     /// SizeX/SizeY.
     pub size: (i32, i32),
@@ -136,6 +167,12 @@ pub struct ObjectInfo {
     pub frame_count: Option<u32>,
     /// FrameDelta of the mode (animation speed, 256 = 1 frame per tick).
     pub frame_delta: Option<u32>,
+    /// Palette shift of a unique or special monster, from DS1Edit's obj.txt
+    /// `Colormap`/`Index` (row `(act, type, id)`). Set only when that row
+    /// draws the same token as this object, so a mod whose presets differ
+    /// from vanilla's does not inherit vanilla's colours. Renderers apply it
+    /// to layers with `trans_a == 0` (`cof.c:343-361`).
+    pub colormap: Option<PaletteShift>,
     /// `"objpreset"`, `"obj.txt"`, `"monpreset"` or `"unresolved"`.
     pub source: &'static str,
 }
@@ -165,6 +202,7 @@ impl ObjectInfo {
             draw_effect: None,
             frame_count: None,
             frame_delta: None,
+            colormap: None,
             source,
         }
     }
@@ -266,6 +304,8 @@ struct EditRow {
     objects_id: Option<u32>,
     /// All of Base, Token, Mode and Class were given (what DS1Edit needs).
     visual: Option<EditVisual>,
+    /// `Colormap` and a non-zero `Index`.
+    colormap: Option<PaletteShift>,
 }
 
 #[derive(Clone, Debug)]
@@ -588,6 +628,16 @@ fn parse_edit_table(bytes: &[u8]) -> EditTable {
             }
             _ => None,
         };
+        // cof.c:218-226: both cells set and Index non-zero.
+        let colormap = match (trimmed(row, "Colormap"), num(row, "Index")) {
+            (path, index) if !path.is_empty() && index > 0 => {
+                u32::try_from(index - 1).ok().map(|row| PaletteShift {
+                    path: path.to_owned(),
+                    row,
+                })
+            }
+            _ => None,
+        };
         let index = out.rows.len();
         out.by_key.entry((act, kind, id)).or_insert(index);
         if kind == 2
@@ -603,6 +653,7 @@ fn parse_edit_table(bytes: &[u8]) -> EditTable {
                 .to_owned(),
             objects_id,
             visual,
+            colormap,
         });
     }
     out
@@ -792,11 +843,47 @@ impl ObjectCatalog {
     /// pre-v5/pre-v6 id rules from docs/specs/ds1.md.
     pub fn resolve(&self, act: u8, ds1_version: i32, object: &Object) -> ObjectInfo {
         let act = usize::from(act).min(ACTS - 1);
-        match object.kind {
+        let mut info = match object.kind {
             1 => self.resolve_monster(act, ds1_version, object.id),
             2 => self.resolve_object(act, ds1_version, object.id),
-            kind => ObjectInfo::unresolved(kind, object.id),
+            kind => return ObjectInfo::unresolved(kind, object.id),
+        };
+        if let Some((row, visual)) = self.matching_edit_row(act, ds1_version, &info) {
+            info.colormap.clone_from(&row.colormap);
+            if info.ds1_kind == 1 && info.skins.is_empty() {
+                info.skins.clone_from(&visual.skins);
+            }
+            if info.ds1_kind == 1 && info.direction.is_none() {
+                info.direction = visual.direction;
+            }
         }
+        info
+    }
+
+    /// DS1Edit's obj.txt row `(act, type, id)` and its visual, when that row
+    /// draws the same token as `info` (type 1 needs DS1 v5+, where ids are
+    /// presets as in obj.txt).
+    fn matching_edit_row(
+        &self,
+        act: usize,
+        ds1_version: i32,
+        info: &ObjectInfo,
+    ) -> Option<(&EditRow, &EditVisual)> {
+        if info.ds1_kind == 1 && ds1_version < 5 {
+            return None;
+        }
+        let act = i32::try_from(act).ok()? + 1;
+        let row = self
+            .edit
+            .by_key
+            .get(&(act, info.ds1_kind, info.ds1_id))
+            .and_then(|i| self.edit.rows.get(*i))?;
+        let token = info.token.as_deref()?;
+        let visual = row
+            .visual
+            .as_ref()
+            .filter(|v| v.token.eq_ignore_ascii_case(token))?;
+        Some((row, visual))
     }
 
     /// Every placeable (kind, id) for an act, for the object picker.

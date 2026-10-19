@@ -1988,3 +1988,132 @@ fn an_already_ambiguous_anchor_can_be_moved_edited_and_cleaned_up() {
     assert!(doc.ds1().npc_paths.is_empty());
     assert_roundtrips(doc.ds1());
 }
+
+/// A clipboard of `objects` (sub-tiles relative to the clip origin) and
+/// `cells`, from a map of act 1 like `path_map`.
+fn object_clip(objects: Vec<Object>, cells: Vec<(LayerRef, u32, u32, CellValue)>) -> Clipboard {
+    Clipboard {
+        width: 4,
+        height: 4,
+        cells,
+        objects,
+        source: ClipSource {
+            game_path: None,
+            act: 0,
+            lvl_type: None,
+            version: 18,
+        },
+    }
+}
+
+#[test]
+fn add_object_refuses_ambiguous_path_anchors() {
+    // objects 0 (1,1), 1 (2,2) with a path, 2 (3,3); a stray path on (9,9)
+    // and two stray paths on (8,8)
+    let mut original = path_map(18);
+    for (x, y) in [(9, 9), (8, 8), (8, 8)] {
+        original.npc_paths.push(NpcPath {
+            x,
+            y,
+            points: vec![pt(1, 1, 1)],
+        });
+    }
+    let mut doc = Document::new(original.clone());
+
+    assert_invalid(
+        doc.add_object(obj(9, 2, 2)).map(|_| ()),
+        "object 3 would share sub-tile (2, 2) with object 1 that has an NPC path; \
+         NPC paths are keyed by sub-tile, so the path would be ambiguous",
+    );
+    assert_invalid(
+        doc.add_object(obj(9, 8, 8)).map(|_| ()),
+        "object 3 would leave 2 NPC paths anchored on sub-tile (8, 8)",
+    );
+    assert_eq!(doc.ds1(), &original);
+    assert!(!doc.can_undo());
+    assert_eq!(doc.revision(), 0);
+
+    // no path involved: an object may join another
+    assert_eq!(doc.add_object(obj(9, 1, 1)).unwrap(), 3);
+    assert!(doc.undo());
+    // a stray path with no object: the new object takes it over
+    assert_eq!(doc.add_object(obj(9, 9, 9)).unwrap(), 3);
+    assert_eq!(doc.path_of(3).map(|p| (p.x, p.y)), Some((9, 9)));
+    // ... after which nothing more may join it
+    assert_invalid(
+        doc.add_object(obj(10, 9, 9)).map(|_| ()),
+        "object 4 would share sub-tile (9, 9) with object 3 that has an NPC path",
+    );
+    assert!(doc.undo());
+    assert_eq!(doc.ds1(), &original);
+}
+
+#[test]
+fn paste_refuses_and_previews_ambiguous_path_anchors() {
+    // objects 0 (1,1), 1 (2,2) with a path, 2 (3,3); a stray path on (9,9)
+    let mut original = path_map(14);
+    original.npc_paths.push(NpcPath {
+        x: 9,
+        y: 9,
+        points: vec![pt(1, 1, 1)],
+    });
+    let mut doc = Document::new(original.clone());
+
+    // new objects 3..=6: onto the pathed object, a free sub-tile, and two
+    // onto the stray path
+    let clip = object_clip(
+        vec![obj(20, 2, 2), obj(21, 4, 4), obj(22, 9, 9), obj(23, 9, 9)],
+        vec![(LayerRef::Floor(0), 0, 0, cv(1, 1))],
+    );
+    let expected = [
+        "object 3 would share sub-tile (2, 2) with object 1 that has an NPC path; \
+         NPC paths are keyed by sub-tile, so the path would be ambiguous",
+        "objects 5 and 6 would share sub-tile (9, 9), where an NPC path is anchored; \
+         NPC paths are keyed by sub-tile, so the path would be ambiguous",
+    ];
+    for mode in [
+        PasteMode::Overwrite,
+        PasteMode::SkipOccupied,
+        PasteMode::OnlyIntoEmptyLayers,
+    ] {
+        let preview = doc.preview_paste(&clip, (0, 0), mode);
+        assert_eq!(preview.warnings, expected, "{mode:?}");
+        assert_eq!(preview.writes, 1);
+        assert_invalid(doc.paste(&clip, (0, 0), mode).map(|_| ()), expected[0]);
+        assert_eq!(doc.ds1(), &original);
+        assert!(!doc.can_undo());
+    }
+
+    // offsets count: the same clip one cell to the right misses (2,2) and (9,9)
+    let shifted = doc.preview_paste(&clip, (1, 0), PasteMode::Overwrite);
+    assert!(shifted.warnings.is_empty(), "{:?}", shifted.warnings);
+
+    // the anchor is checked before the version: a 2nd floor needs v16
+    let with_floor = object_clip(
+        vec![obj(20, 2, 2)],
+        vec![(LayerRef::Floor(1), 0, 0, cv(1, 1))],
+    );
+    let preview = doc.preview_paste(&with_floor, (0, 0), PasteMode::Overwrite);
+    assert_eq!(preview.needs_version, Some(16));
+    assert_eq!(preview.warnings, expected[..1]);
+    assert_invalid(
+        doc.paste(&with_floor, (0, 0), PasteMode::Overwrite)
+            .map(|_| ()),
+        "with object 1 that has an NPC path",
+    );
+
+    // allowed: joining an object without a path, one object taking over the
+    // stray path
+    let fine = object_clip(vec![obj(20, 1, 1), obj(22, 9, 9)], Vec::new());
+    let preview = doc.preview_paste(&fine, (0, 0), PasteMode::Overwrite);
+    assert!(preview.warnings.is_empty(), "{:?}", preview.warnings);
+    assert_eq!(
+        doc.paste(&fine, (0, 0), PasteMode::Overwrite).unwrap(),
+        preview
+    );
+    assert_eq!(doc.ds1().objects.len(), 5);
+    assert_eq!(doc.path_of(4).map(|p| (p.x, p.y)), Some((9, 9)));
+    assert_roundtrips(doc.ds1());
+    assert!(doc.undo());
+    assert_eq!(doc.ds1(), &original);
+}
