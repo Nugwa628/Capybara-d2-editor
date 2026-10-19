@@ -12,6 +12,9 @@ use std::sync::atomic::AtomicBool;
 
 use d2_assets::{GamePath, LayerId, Overlay};
 use d2_formats::FormatError;
+use d2_formats::cof::Cof;
+use d2_formats::dc6::Dc6;
+use d2_formats::dcc::Dcc;
 use d2_formats::dt1::{Dt1, TileKey};
 use d2_formats::palette::{Palette, act_palette_path};
 use image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
@@ -20,7 +23,9 @@ use image::{ExtendedColorType, GrayImage, ImageEncoder, RgbaImage};
 use image_hasher::{HashAlg, HasherConfig};
 
 use crate::error::Result;
-use crate::naming::{class_name, color_name, descriptor, generated_tile_name, texture_class};
+use crate::naming::{
+    class_name, color_name, descriptor, generated_tile_name, luma as luma_of, texture_class,
+};
 use crate::par::par_map;
 
 /// Longest side of a stored thumbnail.
@@ -44,7 +49,8 @@ pub(crate) struct Dt1Input {
     pub layer: LayerId,
     /// `Name` of the lowest-id LvlType that loads it, or a path-derived place.
     pub place: String,
-    /// 0-based act used to pick the palette.
+    /// 0-based act whose palette renders the tiles (the Level `Pal` rule of
+    /// the first map that loads this DT1; see `build.rs`).
     pub act: Option<u8>,
 }
 
@@ -214,6 +220,152 @@ fn process_dt1(overlay: &Overlay, input: &Dt1Input, palettes: &[Palette]) -> Til
             .push(format!("{name}: {bad_render} tiles could not be rendered"));
     }
     batch
+}
+
+// ---------------------------------------------------------------- sprites
+
+/// What the index records about a DC6, DCC or COF file.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SpriteRecord {
+    /// Union box over every direction and frame (DC6, DCC).
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub directions: Option<u32>,
+    /// Frames per direction.
+    pub frames: Option<u32>,
+    /// COF only.
+    pub layers: Option<u32>,
+    /// PNG of frame 0 of direction 0 (DC6, DCC).
+    pub thumb: Option<Vec<u8>>,
+    pub warning: Option<String>,
+}
+
+/// Units and most sprites use the Act 1 palette.
+pub(crate) fn sprite_palette(overlay: &Overlay) -> Palette {
+    load_palettes(overlay)
+        .into_iter()
+        .next()
+        .unwrap_or_else(gray_palette)
+}
+
+fn union_box(boxes: impl Iterator<Item = (i64, i64, i64, i64)>) -> Option<(u32, u32)> {
+    let (mut x0, mut y0, mut x1, mut y1) = (i64::MAX, i64::MAX, i64::MIN, i64::MIN);
+    let mut any = false;
+    for (bx0, by0, bx1, by1) in boxes {
+        any = true;
+        x0 = x0.min(bx0);
+        y0 = y0.min(by0);
+        x1 = x1.max(bx1);
+        y1 = y1.max(by1);
+    }
+    any.then(|| {
+        (
+            u32::try_from(x1 - x0).unwrap_or(u32::MAX),
+            u32::try_from(y1 - y0).unwrap_or(u32::MAX),
+        )
+    })
+}
+
+fn thumb_of(image: &d2_formats::IndexedImage, palette: &Palette) -> Option<Vec<u8>> {
+    if image.width == 0 || image.height == 0 {
+        return None;
+    }
+    thumbnail_png(&image.to_rgba(palette), image.width, image.height)
+}
+
+/// Decode one sprite file for the index. A file that does not parse is
+/// reported through `warning` and leaves the other fields empty.
+pub(crate) fn process_sprite(
+    overlay: &Overlay,
+    path: &GamePath,
+    layer: LayerId,
+    ext: &str,
+    palette: &Palette,
+) -> SpriteRecord {
+    let name = path.as_str();
+    let bytes = match overlay.read_from(layer, path) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => {
+            return SpriteRecord {
+                warning: Some(format!("{name}: file vanished while indexing")),
+                ..SpriteRecord::default()
+            };
+        }
+        Err(e) => {
+            return SpriteRecord {
+                warning: Some(format!("{name}: {e}")),
+                ..SpriteRecord::default()
+            };
+        }
+    };
+    let failed = |e: FormatError| SpriteRecord {
+        warning: Some(format!("{name}: {e}")),
+        ..SpriteRecord::default()
+    };
+    match ext {
+        "dc6" => match Dc6::parse(&bytes) {
+            Ok(dc6) => {
+                let size = union_box(dc6.frames.iter().map(|f| {
+                    let (x, bottom) = (i64::from(f.offset_x), i64::from(f.offset_y));
+                    (
+                        x,
+                        bottom - i64::from(f.height) + 1,
+                        x + i64::from(f.width),
+                        bottom + 1,
+                    )
+                }));
+                let thumb = dc6
+                    .frame(0, 0)
+                    .and_then(|f| f.render().ok())
+                    .and_then(|img| thumb_of(&img, palette));
+                SpriteRecord {
+                    width: size.map(|s| s.0),
+                    height: size.map(|s| s.1),
+                    directions: Some(dc6.directions),
+                    frames: Some(dc6.frames_per_direction),
+                    thumb,
+                    ..SpriteRecord::default()
+                }
+            }
+            Err(e) => failed(e),
+        },
+        "dcc" => match Dcc::parse(&bytes) {
+            Ok(dcc) => {
+                let size = union_box(dcc.directions.iter().map(|d| {
+                    let b = d.bbox;
+                    (
+                        i64::from(b.x),
+                        i64::from(b.y),
+                        i64::from(b.x) + i64::from(b.width),
+                        i64::from(b.y) + i64::from(b.height),
+                    )
+                }));
+                let thumb = dcc
+                    .directions
+                    .first()
+                    .and_then(|d| d.frames.first())
+                    .and_then(|img| thumb_of(img, palette));
+                SpriteRecord {
+                    width: size.map(|s| s.0),
+                    height: size.map(|s| s.1),
+                    directions: u32::try_from(dcc.directions.len()).ok(),
+                    frames: Some(dcc.frames_per_direction),
+                    thumb,
+                    ..SpriteRecord::default()
+                }
+            }
+            Err(e) => failed(e),
+        },
+        _ => match Cof::parse(&bytes) {
+            Ok(cof) => SpriteRecord {
+                directions: Some(u32::from(cof.directions)),
+                frames: Some(u32::from(cof.frames_per_direction)),
+                layers: u32::try_from(cof.layers.len()).ok(),
+                ..SpriteRecord::default()
+            },
+            Err(e) => failed(e),
+        },
+    }
 }
 
 /// The real pipeline: parse each DT1, render every tile with its act palette,
@@ -464,7 +616,7 @@ pub(crate) fn record_from_rgba(origin: &TileOrigin<'_>, rgba: &[u8], w: u32, h: 
         None => (None, None, None, 1.0),
     };
     let desc = match (&color, &texture) {
-        (Some(c), Some(t)) => descriptor(c, t),
+        (Some(c), Some(t)) => descriptor(c, t, stats.map_or(0.0, |s| luma_of(s.mean_rgb))),
         _ => "empty".to_owned(),
     };
     let hashes = stats.and_then(|s| phash_pair(rgba, w, h, s.mean_rgb));

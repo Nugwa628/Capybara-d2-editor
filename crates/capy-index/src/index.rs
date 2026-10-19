@@ -85,6 +85,9 @@ pub struct Hit {
 pub struct Index {
     pub(crate) path: PathBuf,
     pub(crate) conn: Connection,
+    /// The map catalog of the last build or refresh (per profile id), so
+    /// `refresh_saves` does not have to read every tileset again.
+    pub(crate) catalog: Option<(String, d2_assets::MapCatalog)>,
 }
 
 /// Columns of [`AssetRow`], aliased `a`.
@@ -230,7 +233,11 @@ impl Index {
                 }
             }
         };
-        Ok(Index { path, conn })
+        Ok(Index {
+            path,
+            conn,
+            catalog: None,
+        })
     }
 
     pub(crate) fn sql(&self, e: rusqlite::Error) -> IndexError {
@@ -364,9 +371,14 @@ impl Index {
 }
 
 /// One line per layer: `path|size|modified|entries`, after a generator line.
+/// The profile's saves layer is left out: saving a map must not make the
+/// index stale (`refresh_saves` picks saved maps up).
 pub(crate) fn fingerprint_text(overlay: &Overlay) -> Result<String> {
     let mut text = format!("generator {GENERATOR_VERSION}\n");
-    for fp in overlay.fingerprints()? {
+    for (layer, fp) in overlay.layers().iter().zip(overlay.fingerprints()?) {
+        if crate::build::src_tag(layer.name()) == "saves" {
+            continue;
+        }
         text.push_str(&format!(
             "{}|{}|{}|{}\n",
             fp.path.display(),

@@ -322,7 +322,7 @@ fn build_report_counts_and_rows() {
         (ds1.width, ds1.height, ds1.act),
         (Some(8), Some(8), Some(0))
     );
-    assert_eq!(ds1.gen_name, "Act1 Town Towne1 · DS1");
+    assert_eq!(ds1.gen_name, "Act1 Town Towne1 · DS1 · Town");
     assert_eq!(b.idx.asset("test", "nothing").unwrap(), None);
 
     // Tiles: names use the LvlType name as the place.
@@ -576,6 +576,19 @@ fn free_text_ranks_and_fuzzes() {
     assert_eq!(top("shadow").len(), 2);
     // Fuzzy: skipped letters still match.
     assert!(!top("shdw").is_empty());
+    // Every word must match: "shire floor" ranks tiles named with both first.
+    let both = b
+        .idx
+        .search("test", &parse_query("shire floor").unwrap(), &b.user, 4)
+        .unwrap();
+    assert!(both.len() >= 2);
+    for hit in &both[..2] {
+        let name = hit.asset.gen_name.to_lowercase();
+        assert!(name.contains("shire") && name.contains("floor"), "{name}");
+    }
+    assert!(both[0].score >= both[1].score);
+    // A word that matches nothing (not even fuzzily) rules the asset out.
+    assert!(top("shire floor zzzzqq").is_empty());
     // The path is searched too.
     assert!(top("whimsy shire ds1")[0].ends_with("shire.ds1"));
     // Text combines with filters.
@@ -660,7 +673,8 @@ fn similar_and_mirrored() {
     let not_mirrored = names(&b, "type:tile mirrored:no", 50);
     assert_eq!(not_mirrored.len(), 6);
 
-    // Similar: nearest first, never itself; identical copy in the other DT1 is first.
+    // Similar: the tile itself first, then nearest first; the identical copy
+    // in the other DT1 comes right after it.
     let hits = b
         .idx
         .search(
@@ -671,11 +685,13 @@ fn similar_and_mirrored() {
         )
         .unwrap();
     assert!(!hits.is_empty());
-    assert!(hits.iter().all(|h| h.asset.key != left));
+    assert_eq!(hits[0].asset.key, left);
+    assert_eq!(hits[0].score, 1.0);
     assert_eq!(
-        hits[0].asset.key,
+        hits[1].asset.key,
         "data\\global\\tiles\\mxl\\zone\\whimsy\\shire.dt1#1/3/0/0"
     );
+    assert!(hits[1].score >= hits[hits.len() - 1].score);
     assert!(hits[0].score >= hits[hits.len() - 1].score);
     assert!(hits.iter().all(|h| h.score >= 1.0 - 10.0 / 64.0 - 1e-6));
     assert!(names(&b, "similar:no-such-key", 10).is_empty());
@@ -765,15 +781,257 @@ fn status_is_per_profile_and_survives_reopen() {
         idx.status("pa", &a.overlay()).unwrap(),
         IndexStatus::UpToDate
     );
+    // Saving a map into the saves layer never makes the profile stale ...
     write(
         &a.root.join("pa").join("saves"),
         "data\\global\\x.txt",
         b"hi",
     );
+    assert_eq!(
+        idx.status("pa", &a.overlay()).unwrap(),
+        IndexStatus::UpToDate
+    );
+    // ... but a new file in any other layer does.
+    write(&a.root.join("pa").join("mod"), "data\\global\\y.txt", b"hi");
     assert!(matches!(
         idx.status("pa", &a.overlay()).unwrap(),
         IndexStatus::Stale { .. }
     ));
+}
+
+fn towne1_cells(idx: &Index, tile: i64) -> Option<u32> {
+    idx.used_in(tile)
+        .unwrap()
+        .into_iter()
+        .find(|(p, _)| p == TOWNE1)
+        .map(|(_, n)| n)
+}
+
+const TOWNE1: &str = "data\\global\\tiles\\act1\\town\\towne1.ds1";
+
+#[test]
+fn saving_keeps_the_index_fresh_and_refresh_saves_picks_the_map_up() {
+    let mut b = built();
+    let overlay = b.fx.overlay();
+    let profile = b.fx.profile();
+    let floor_tile = b
+        .idx
+        .asset("test", "data\\global\\tiles\\act1\\town\\floor.dt1#0/5/2/0")
+        .unwrap()
+        .unwrap();
+    let before = b.idx.asset("test", TOWNE1).unwrap().unwrap();
+    assert_eq!(before.src_tag, "base");
+    assert_eq!(towne1_cells(&b.idx, floor_tile.id), Some(3));
+
+    // Nothing to do yet.
+    let nothing = b.idx.refresh_saves(&profile, &overlay).unwrap();
+    assert_eq!((nothing.files, nothing.assets), (0, 0));
+
+    // Save an edited towne1 into the saves layer.
+    write(
+        &b.fx.root.join("test").join("saves"),
+        TOWNE1,
+        &ds1_bytes(&[(0, 0, 5, 2), (7, 7, 9, 0)], &[]),
+    );
+    assert_eq!(
+        b.idx.status("test", &overlay).unwrap(),
+        IndexStatus::UpToDate
+    );
+    assert_eq!(
+        b.idx.asset("test", TOWNE1).unwrap().unwrap().src_tag,
+        "base"
+    );
+
+    let report = b.idx.refresh_saves(&profile, &overlay).unwrap();
+    assert_eq!((report.files, report.assets), (1, 1), "{report:?}");
+    let after = b.idx.asset("test", TOWNE1).unwrap().unwrap();
+    assert_eq!(after.id, before.id, "the row is updated, not replaced");
+    assert_eq!(
+        (after.src.as_str(), after.src_tag.as_str()),
+        ("saves\\test", "saves")
+    );
+    assert_eq!(
+        b.idx.status("test", &overlay).unwrap(),
+        IndexStatus::UpToDate
+    );
+    assert_eq!(b.idx.count("test", None).unwrap(), 14, "no duplicates");
+    assert_eq!(names(&b, "src:saves", 10), vec![TOWNE1.to_owned()]);
+    // used_in follows the new cells: one use of 0/5/2, none of the wall key.
+    assert_eq!(towne1_cells(&b.idx, floor_tile.id), Some(1));
+    let wall = b
+        .idx
+        .asset("test", "data\\global\\tiles\\act1\\town\\floor.dt1#1/3/0/0")
+        .unwrap()
+        .unwrap();
+    assert!(
+        b.idx
+            .used_in(wall.id)
+            .unwrap()
+            .iter()
+            .all(|(p, _)| p != TOWNE1),
+        "the wall tile is no longer used by towne1"
+    );
+    let files_size: i64 = b
+        .idx
+        .conn
+        .query_row(
+            "SELECT size FROM files WHERE profile = 'test' AND path = ?1",
+            [TOWNE1],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        files_size,
+        ds1_bytes(&[(0, 0, 5, 2), (7, 7, 9, 0)], &[]).len() as i64
+    );
+    // The FTS row follows too, and the other maps are untouched.
+    let fts: i64 = b
+        .idx
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM assets_fts WHERE assets_fts MATCH 'gen_name:towne1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(fts, 1);
+
+    // Removing the saved map reverts the row to the game's version.
+    std::fs::remove_file(GamePath::new(TOWNE1).to_native(&b.fx.root.join("test").join("saves")))
+        .unwrap();
+    let report = b.idx.refresh_saves(&profile, &overlay).unwrap();
+    assert_eq!(report.assets, 1);
+    let reverted = b.idx.asset("test", TOWNE1).unwrap().unwrap();
+    assert_eq!(
+        (reverted.src.as_str(), reverted.src_tag.as_str()),
+        ("d2data.mpq", "base")
+    );
+    assert_eq!(towne1_cells(&b.idx, floor_tile.id), Some(3));
+
+    // A new map saved under a new name becomes an asset.
+    let fresh = "data\\global\\tiles\\mxl\\mine\\new.ds1";
+    write(
+        &b.fx.root.join("test").join("saves"),
+        fresh,
+        &ds1_bytes(&[(1, 1, 5, 2)], &[]),
+    );
+    b.idx.refresh_saves(&profile, &overlay).unwrap();
+    assert_eq!(
+        b.idx.asset("test", fresh).unwrap().unwrap().src_tag,
+        "saves"
+    );
+    assert_eq!(b.idx.count("test", Some(AssetKind::Ds1)).unwrap(), 3);
+    // ... and disappears again when the file does.
+    std::fs::remove_file(GamePath::new(fresh).to_native(&b.fx.root.join("test").join("saves")))
+        .unwrap();
+    b.idx.refresh_saves(&profile, &overlay).unwrap();
+    assert_eq!(b.idx.asset("test", fresh).unwrap(), None);
+    assert_eq!(b.idx.count("test", Some(AssetKind::Ds1)).unwrap(), 2);
+
+    // An unbuilt profile cannot be refreshed.
+    let mut other = Index::open(tempfile::tempdir().unwrap().path()).unwrap();
+    assert!(other.refresh_saves(&profile, &overlay).is_err());
+}
+
+fn dc6_bytes() -> Vec<u8> {
+    // 2 directions x 1 frame, each frame 4x2 at (-2, 1), plain pixel rows.
+    let mut out = Vec::new();
+    for v in [6u32, 1, 0, 0xEEEE_EEEE, 2, 1] {
+        out.extend(v.to_le_bytes());
+    }
+    let frame_len = 32 + 12 + 3;
+    out.extend(((24 + 8) as u32).to_le_bytes());
+    out.extend(((24 + 8 + frame_len) as u32).to_le_bytes());
+    for _ in 0..2 {
+        for v in [0i32, 4, 2, -2, 1, 0, 0] {
+            out.extend(v.to_le_bytes());
+        }
+        out.extend(12u32.to_le_bytes());
+        out.extend([4, 1, 2, 3, 4, 0x80, 4, 5, 6, 7, 8, 0x80, 0, 0, 0]);
+    }
+    out
+}
+
+fn cof_bytes() -> Vec<u8> {
+    // 2 layers, 3 frames, 4 directions.
+    let mut out = vec![0u8; 28];
+    out[0] = 2;
+    out[1] = 3;
+    out[2] = 4;
+    out.extend([0u8; 18]);
+    out.extend(vec![0u8; 3 + 4 * 3 * 2]);
+    out
+}
+
+#[test]
+fn sprites_get_sizes_counts_and_thumbnails() {
+    let fx = Fx::new("spr");
+    let modl = fx.root.join("spr").join("mod");
+    write(&modl, "data\\global\\items\\inv\\sword.dc6", &dc6_bytes());
+    write(&modl, "data\\global\\monsters\\zz\\zz.cof", &cof_bytes());
+    write(&modl, "data\\global\\items\\inv\\broken.dc6", b"nope");
+    write(&modl, "data\\global\\monsters\\zz\\a1.dcc", b"nope");
+    let cache = tempfile::tempdir().unwrap();
+    let mut idx = Index::open(cache.path()).unwrap();
+    let mut phases = Vec::new();
+    let report = idx
+        .build_with(
+            &fx.profile(),
+            &fx.overlay(),
+            &mut |p| phases.push(p.phase),
+            &AtomicBool::new(false),
+            fake_run,
+        )
+        .unwrap();
+    assert!(phases.contains(&BuildPhase::Sprites));
+    assert_eq!(idx.count("spr", Some(AssetKind::Dc6)).unwrap(), 2);
+    assert_eq!(idx.count("spr", Some(AssetKind::Cof)).unwrap(), 1);
+    assert_eq!(idx.count("spr", Some(AssetKind::Dcc)).unwrap(), 1);
+    assert!(
+        report.warnings.iter().any(|w| w.contains("broken.dc6")),
+        "{:?}",
+        report.warnings
+    );
+    assert!(
+        report.warnings.iter().any(|w| w.contains("a1.dcc")),
+        "{:?}",
+        report.warnings
+    );
+
+    let dc6 = idx
+        .asset("spr", "data\\global\\items\\inv\\sword.dc6")
+        .unwrap()
+        .unwrap();
+    assert_eq!((dc6.width, dc6.height), (Some(4), Some(2)));
+    assert_eq!(
+        (dc6.rarity, dc6.variant),
+        (Some(2), Some(1)),
+        "2 directions, 1 frame"
+    );
+    assert_eq!(dc6.gen_name, "Items Inv Sword · DC6");
+    assert_eq!(dc6.src_tag, "mod");
+    let thumb = idx.thumbnail(dc6.id).unwrap().unwrap();
+    let png = image::load_from_memory(&thumb).unwrap();
+    assert_eq!((png.width(), png.height()), (4, 2));
+
+    let cof = idx
+        .asset("spr", "data\\global\\monsters\\zz\\zz.cof")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (cof.rarity, cof.variant),
+        (Some(4), Some(3)),
+        "4 directions, 3 frames"
+    );
+    assert_eq!(cof.class.as_deref(), Some("2 layers"));
+    assert_eq!(idx.thumbnail(cof.id).unwrap(), None);
+
+    // The unreadable ones are still assets, just without details.
+    let broken = idx
+        .asset("spr", "data\\global\\items\\inv\\broken.dc6")
+        .unwrap()
+        .unwrap();
+    assert_eq!((broken.width, broken.rarity), (None, None));
 }
 
 #[test]

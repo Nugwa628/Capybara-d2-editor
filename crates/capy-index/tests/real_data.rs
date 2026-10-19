@@ -151,6 +151,35 @@ fn median_xl_index() {
         *seen.entry(descriptor).or_insert(0u32) += 1;
     }
     println!("  descriptors: {seen:?}");
+    let mut colors = std::collections::BTreeMap::new();
+    let mut textures = std::collections::BTreeMap::new();
+    for h in search(&b, "mxl", "type:tile", 100_000) {
+        *colors
+            .entry(h.asset.color.clone().unwrap_or_default())
+            .or_insert(0u32) += 1;
+        *textures
+            .entry(h.asset.texture.clone().unwrap_or_default())
+            .or_insert(0u32) += 1;
+    }
+    println!("  colours: {colors:?}");
+    println!("  textures: {textures:?}");
+    for kind in ["dc6", "dcc", "cof"] {
+        let all = search(&b, "mxl", &format!("type:{kind}"), 1_000_000);
+        let sized = all.iter().filter(|h| h.asset.width.is_some()).count();
+        let counted = all.iter().filter(|h| h.asset.rarity.is_some()).count();
+        let thumbs = all
+            .iter()
+            .filter(|h| b.idx.thumbnail(h.asset.id).unwrap().is_some())
+            .count();
+        println!(
+            "  {kind}: {} assets, {sized} with a size, {counted} with counts, {thumbs} with a thumbnail",
+            all.len()
+        );
+        assert!(counted * 100 >= all.len() * 95, "{kind}: counts missing");
+        if kind != "cof" {
+            assert!(thumbs * 100 >= all.len() * 90, "{kind}: thumbnails missing");
+        }
+    }
     println!(
         "  mirrored tiles: {}",
         search(&b, "mxl", "mirrored:yes", 100_000).len()
@@ -163,7 +192,10 @@ fn median_xl_index() {
     assert_eq!(&thumb[..4], b"\x89PNG");
     assert_eq!(b.idx.asset("mxl", &tile.key).unwrap().unwrap(), tile);
     let similar = search(&b, "mxl", &format!("similar:{}", tile.key), 10);
-    assert!(similar.iter().all(|h| h.asset.key != tile.key));
+    assert_eq!(
+        similar[0].asset.key, tile.key,
+        "the tile itself comes first"
+    );
 
     // Second launch: a new Index on the same cache dir is up to date.
     let cache = b.idx.db_path().parent().unwrap().to_path_buf();

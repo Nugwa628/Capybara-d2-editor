@@ -5,10 +5,11 @@
 //! path slightly discounted). Filters are exact. Without free text, results
 //! come in path and tile-key order, or nearest first for `similar:`.
 
-use nucleo::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 use nucleo::{Config, Matcher, Utf32Str};
 use rusqlite::params_from_iter;
 use rusqlite::types::Value;
+use std::cell::RefCell;
 
 use crate::error::Result;
 use crate::index::{ASSET_COLS, Hit, Index, asset_from_row};
@@ -21,8 +22,9 @@ pub const SIMILAR_MAX_DISTANCE: i64 = 10;
 struct Sql {
     clauses: Vec<String>,
     params: Vec<Value>,
-    /// Set by the first `similar:` filter: the SQL expression for the distance.
-    similar_key: Option<String>,
+    /// Set by the first `similar:` filter: the SQL expressions for the
+    /// distance and for "is the reference asset itself".
+    similar_key: Option<(String, String)>,
 }
 
 impl Sql {
@@ -87,9 +89,9 @@ fn clause(f: &Filter, profile: &str, user: &UserDb, sql: &mut Sql) -> Result<Str
                 "hamming(a.phash, (SELECT s.phash FROM assets s WHERE s.profile = ?1 AND s.key = {p}))"
             );
             if sql.similar_key.is_none() {
-                sql.similar_key = Some(distance.clone());
+                sql.similar_key = Some((distance.clone(), format!("a.key = {p}")));
             }
-            format!("({distance} <= {SIMILAR_MAX_DISTANCE} AND a.key <> {p})")
+            format!("{distance} <= {SIMILAR_MAX_DISTANCE}")
         }
         Filter::UsedIn(text) => {
             let p = sql.bind(text.to_ascii_lowercase());
@@ -113,6 +115,111 @@ fn clause(f: &Filter, profile: &str, user: &UserDb, sql: &mut Sql) -> Result<Str
             format!("NOT COALESCE(({inner}), 0)")
         }
     })
+}
+
+/// Bonuses added to the nucleo score of a token, per field and match kind.
+/// Alias beats generated name beats path beats plain fuzzy.
+const ALIAS_PREFIX: f32 = 600.0;
+const ALIAS_SUBSTRING: f32 = 500.0;
+const NAME_PREFIX: f32 = 400.0;
+const NAME_SUBSTRING: f32 = 300.0;
+const PATH_SEGMENT: f32 = 150.0;
+const PATH_SUBSTRING: f32 = 60.0;
+/// A fuzzy-only path match counts for less than the same name match.
+const PATH_FUZZY_WEIGHT: f32 = 0.6;
+
+fn word_prefix(haystack_lower: &str, token: &str) -> bool {
+    haystack_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| w.starts_with(token))
+}
+
+fn segment_prefix(path_lower: &str, token: &str) -> bool {
+    path_lower
+        .split(['\\', '/', '.', '#'])
+        .any(|s| s.starts_with(token))
+}
+
+/// Scores free text against an asset: whitespace-separated tokens, every one
+/// of which must match (AND). A token's score is the best over alias, name
+/// and path of its fuzzy score plus a tier bonus; the asset's score is the sum.
+struct Ranker {
+    tokens: Vec<(Atom, String)>,
+    scratch: RefCell<(Matcher, Vec<char>, Vec<char>)>,
+}
+
+impl Ranker {
+    fn new(text: &str) -> Ranker {
+        let tokens = text
+            .split_whitespace()
+            .map(|t| {
+                (
+                    Atom::new(
+                        t,
+                        CaseMatching::Smart,
+                        Normalization::Smart,
+                        AtomKind::Fuzzy,
+                        false,
+                    ),
+                    t.to_lowercase(),
+                )
+            })
+            .collect();
+        Ranker {
+            tokens,
+            scratch: RefCell::new((Matcher::new(Config::DEFAULT), Vec::new(), Vec::new())),
+        }
+    }
+
+    fn score(&self, alias: Option<&str>, name: &str, path: &str) -> Option<f32> {
+        let mut guard = self.scratch.borrow_mut();
+        let (matcher, buf, _) = &mut *guard;
+        let name_lower = name.to_lowercase();
+        let path_lower = path.to_lowercase();
+        let alias_lower = alias.map(str::to_lowercase);
+        let mut total = 0.0f32;
+        for (atom, token) in &self.tokens {
+            let mut fuzzy = |hay: &str| -> Option<f32> {
+                atom.score(Utf32Str::new(hay, buf), matcher).map(f32::from)
+            };
+            let mut best: Option<f32> = None;
+            let mut offer = |s: Option<f32>| {
+                if let Some(s) = s
+                    && best.is_none_or(|b| s > b)
+                {
+                    best = Some(s);
+                }
+            };
+            if let (Some(alias), Some(lower)) = (alias, alias_lower.as_deref()) {
+                let bonus = if word_prefix(lower, token) {
+                    ALIAS_PREFIX
+                } else if lower.contains(token.as_str()) {
+                    ALIAS_SUBSTRING
+                } else {
+                    0.0
+                };
+                offer(fuzzy(alias).map(|f| f + bonus));
+            }
+            let bonus = if word_prefix(&name_lower, token) {
+                NAME_PREFIX
+            } else if name_lower.contains(token.as_str()) {
+                NAME_SUBSTRING
+            } else {
+                0.0
+            };
+            offer(fuzzy(name).map(|f| f + bonus));
+            let bonus = if segment_prefix(&path_lower, token) {
+                PATH_SEGMENT
+            } else if path_lower.contains(token.as_str()) {
+                PATH_SUBSTRING
+            } else {
+                0.0
+            };
+            offer(fuzzy(path).map(|f| f * PATH_FUZZY_WEIGHT + bonus));
+            total += best?;
+        }
+        Some(total)
+    }
 }
 
 impl Index {
@@ -146,13 +253,14 @@ impl Index {
 
         if text.is_empty() {
             let order = match &sql.similar_key {
-                Some(distance) => format!("{distance}, a.path, a.id"),
+                // The reference asset itself first, then nearest first.
+                Some((distance, itself)) => format!("{itself} DESC, {distance}, a.path, a.id"),
                 None => "a.path, a.orientation, a.main, a.sub, a.variant, a.id".to_owned(),
             };
             let score = sql
                 .similar_key
                 .as_ref()
-                .map_or_else(|| "0.0".to_owned(), |d| format!("(1.0 - {d} / 64.0)"));
+                .map_or_else(|| "0.0".to_owned(), |(d, _)| format!("(1.0 - {d} / 64.0)"));
             let limit = i64::try_from(limit).unwrap_or(i64::MAX);
             let statement = format!(
                 "SELECT {ASSET_COLS}, {score} FROM assets a WHERE {where_clause} ORDER BY {order} LIMIT {limit}"
@@ -193,28 +301,12 @@ impl Index {
             })
             .map_err(|e| self.sql(e))?;
 
-        let pattern = Pattern::parse(text, CaseMatching::Smart, Normalization::Smart);
-        let mut matcher = Matcher::new(Config::DEFAULT);
-        let mut buf: Vec<char> = Vec::new();
+        let ranker = Ranker::new(text);
         let mut scored: Vec<(f32, String, i64)> = Vec::new();
         for row in rows {
             let (id, key, gen_name, path) = row.map_err(|e| self.sql(e))?;
-            let mut best: Option<f32> = None;
-            let mut consider = |hay: &str, weight: f32| {
-                if let Some(s) = pattern.score(Utf32Str::new(hay, &mut buf), &mut matcher) {
-                    #[allow(clippy::cast_precision_loss)]
-                    let s = s as f32 * weight;
-                    if best.is_none_or(|b| s > b) {
-                        best = Some(s);
-                    }
-                }
-            };
-            if let Some(alias) = aliases.get(&key) {
-                consider(alias, 1.1);
-            }
-            consider(&gen_name, 1.0);
-            consider(&path, 0.8);
-            if let Some(score) = best {
+            let alias = aliases.get(&key).map(String::as_str);
+            if let Some(score) = ranker.score(alias, &gen_name, &path) {
                 scored.push((score, gen_name, id));
             }
         }

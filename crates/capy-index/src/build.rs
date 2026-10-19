@@ -1,24 +1,27 @@
 //! `Index::build`: list the profile's files, decode what the index needs,
 //! write everything in one transaction (cancelling leaves the old rows).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use d2_assets::tables::load_excel;
-use d2_assets::{GamePath, GameVersion, KnownNames, LayerId, Overlay, Profile};
+use d2_assets::{GamePath, GameVersion, KnownNames, LayerId, MapCatalog, Overlay, Profile};
 use d2_formats::ds1::Ds1;
 use d2_formats::excel::ExcelTableKind;
-use d2_formats::tables::{self, Level, LvlPrest, LvlType};
+use d2_formats::tables::{self, LvlType};
 use d2_formats::txt::TxtTable;
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 
 use crate::error::{IndexError, Result};
 use crate::index::{BuildPhase, BuildProgress, BuildReport, Index, fingerprint_text};
 use crate::naming::{generated_file_name, place_from_path};
 use crate::par::par_map;
 use crate::query::AssetKind;
-use crate::tiles::{self, Ds1Usage, Dt1Input, TileBatch, TileCtx, TileRecord, TileRun, UsedInRow};
+use crate::tiles::{
+    self, Ds1Usage, Dt1Input, TileBatch, TileCtx, TileKeys, TileRecord, TileRun, UsedInRow,
+    resolve_used_in,
+};
 
 /// File extensions that get a row in `files`.
 const FILE_KINDS: &[&str] = &[
@@ -136,18 +139,14 @@ impl<'a> Reporter<'a> {
 
 // ----------------------------------------------------------------- tables
 
-/// LvlTypes, LvlPrest and Levels, with the lookups the index needs.
+/// LvlTypes with the DT1 lookups the index needs (place names, acts, links).
+/// Which DT1s a *map* loads is `MapCatalog`'s job.
 #[derive(Default)]
 struct LevelTables {
     lvl_types: Vec<LvlType>,
-    prests: Vec<LvlPrest>,
-    levels: Vec<Level>,
     lvl_type_by_id: HashMap<u32, usize>,
-    level_by_id: HashMap<u32, usize>,
     /// DT1 path to `(lvltype id, slot)`, lowest lvltype first.
     dt1_links: HashMap<GamePath, Vec<(u32, u32)>>,
-    /// DS1 path to the first LvlPrest listing it.
-    prest_of_ds1: HashMap<GamePath, usize>,
 }
 
 fn load_table<T>(
@@ -173,6 +172,9 @@ fn load_table<T>(
     }
 }
 
+/// LvlTypes id whose tilesets are Act 4 art although the row says Act 5.
+const LVL_TYPE_ACT4_PALETTE: u32 = 35;
+
 impl LevelTables {
     fn load(overlay: &Overlay, version: GameVersion, warnings: &mut Vec<String>) -> LevelTables {
         let lvl_types = load_table(
@@ -182,32 +184,14 @@ impl LevelTables {
             tables::lvl_types,
             warnings,
         );
-        let prests = load_table(
-            overlay,
-            ExcelTableKind::LvlPrest,
-            version,
-            tables::lvl_prests,
-            warnings,
-        );
-        let levels = load_table(
-            overlay,
-            ExcelTableKind::Levels,
-            version,
-            tables::levels,
-            warnings,
-        );
-        LevelTables::new(lvl_types, prests, levels)
+        LevelTables::new(lvl_types)
     }
 
-    fn new(mut lvl_types: Vec<LvlType>, prests: Vec<LvlPrest>, levels: Vec<Level>) -> LevelTables {
+    fn new(mut lvl_types: Vec<LvlType>) -> LevelTables {
         lvl_types.sort_by_key(|l| (l.id, l.row));
         let mut lvl_type_by_id = HashMap::new();
         for (i, lt) in lvl_types.iter().enumerate() {
             lvl_type_by_id.entry(lt.id).or_insert(i);
-        }
-        let mut level_by_id = HashMap::new();
-        for (i, l) in levels.iter().enumerate() {
-            level_by_id.entry(l.id).or_insert(i);
         }
         let mut dt1_links: HashMap<GamePath, Vec<(u32, u32)>> = HashMap::new();
         for lt in &lvl_types {
@@ -220,75 +204,45 @@ impl LevelTables {
                 }
             }
         }
-        let mut prest_of_ds1 = HashMap::new();
-        for (i, p) in prests.iter().enumerate() {
-            for file in p.files.iter().flatten() {
-                if let Some(path) = GamePath::from_tile_ref(file) {
-                    prest_of_ds1.entry(path).or_insert(i);
-                }
-            }
-        }
         LevelTables {
             lvl_types,
-            prests,
-            levels,
             lvl_type_by_id,
-            level_by_id,
             dt1_links,
-            prest_of_ds1,
         }
     }
 
-    fn lvl_type(&self, id: u32) -> Option<&LvlType> {
-        self.lvl_type_by_id.get(&id).map(|&i| &self.lvl_types[i])
+    fn lowest_lvl_type(&self, path: &GamePath) -> Option<&LvlType> {
+        let (id, _) = self.dt1_links.get(path)?.first()?;
+        self.lvl_type_by_id.get(id).map(|&i| &self.lvl_types[i])
     }
 
     /// Place name and act of a DT1 from the lowest-id LvlType that loads it.
-    /// The name is the first non-empty one among all LvlTypes loading it.
     fn dt1_context(&self, path: &GamePath) -> (Option<String>, Option<u8>) {
-        let Some(links) = self.dt1_links.get(path) else {
-            return (None, None);
-        };
-        let act = links
-            .first()
-            .and_then(|(id, _)| self.lvl_type(*id))
-            .map(|lt| lt.act);
-        // "the lowest-id LvlType whose File slots load this DT1": its Name.
-        let name = links
-            .first()
-            .and_then(|(id, _)| self.lvl_type(*id))
-            .map(|lt| lt.name.trim().to_owned())
-            .filter(|n| !n.is_empty());
-        (name, act)
+        match self.lowest_lvl_type(path) {
+            Some(lt) => (
+                Some(lt.name.trim().to_owned()).filter(|n| !n.is_empty()),
+                Some(lt.act),
+            ),
+            None => (None, None),
+        }
     }
 
-    /// DT1 load order and act of a DS1 through its LvlPrest, if listed.
-    ///
-    /// TODO(presets): `d2_assets::presets::MapCatalog` replaces this.
-    fn ds1_context(&self, path: &GamePath) -> (Vec<GamePath>, Option<u8>) {
-        let Some(&i) = self.prest_of_ds1.get(path) else {
-            return (Vec::new(), None);
-        };
-        let prest = &self.prests[i];
-        let level = u32::try_from(prest.level_id)
-            .ok()
-            .and_then(|id| self.level_by_id.get(&id))
-            .map(|&i| &self.levels[i]);
-        let dt1s = level
-            .and_then(|l| self.lvl_type(l.level_type))
-            .map(|lt| {
-                prest
-                    .dt1_files(lt)
-                    .filter_map(GamePath::from_tile_ref)
-                    .collect()
-            })
-            .unwrap_or_default();
-        (dt1s, level.map(|l| l.act))
+    /// Palette act from the lowest-id LvlType that loads the DT1 (the
+    /// reference rule for LvlTypes 35), for DT1s no map uses.
+    fn dt1_palette_act(&self, path: &GamePath) -> Option<u8> {
+        self.lowest_lvl_type(path).map(|lt| {
+            if lt.id == LVL_TYPE_ACT4_PALETTE {
+                3
+            } else {
+                lt.act.min(4)
+            }
+        })
     }
 }
 
 // ------------------------------------------------------------------ files
 
+#[derive(Clone)]
 struct Entry {
     path: GamePath,
     ext: &'static str,
@@ -305,7 +259,10 @@ struct FileInfo {
 struct Ds1Info {
     width: u32,
     height: u32,
-    act: Option<u8>,
+    act: u8,
+    level_name: Option<String>,
+    lvl_type: Option<u32>,
+    palette_act: u8,
     usage: Ds1Usage,
 }
 
@@ -353,7 +310,7 @@ fn ds1_keys(ds1: &Ds1) -> Vec<((u8, u8, u8), u32)> {
     keys
 }
 
-fn process_entry(overlay: &Overlay, entry: &Entry, level_tables: &LevelTables) -> Processed {
+fn process_entry(overlay: &Overlay, entry: &Entry, catalog: &MapCatalog) -> Processed {
     let name = entry.path.as_str();
     let bytes = match overlay.read_from(entry.layer, &entry.path) {
         Ok(Some(bytes)) => bytes,
@@ -385,24 +342,27 @@ fn process_entry(overlay: &Overlay, entry: &Entry, level_tables: &LevelTables) -
     }
     match Ds1::parse_with_report(&bytes) {
         Ok((ds1, _report)) => {
-            let (mut dt1_order, level_act) = level_tables.ds1_context(&entry.path);
-            if dt1_order.is_empty() {
-                // No LvlPrest lists this map: use the tilesets it names itself.
-                dt1_order = ds1
-                    .tileset_refs()
-                    .filter_map(|raw| GamePath::from_tile_ref(&String::from_utf8_lossy(raw)))
-                    .filter(|p| p.extension() == Some("dt1"))
-                    .collect();
-            }
-            let act = act_from_path(name)
-                .or(level_act)
-                .or_else(|| (ds1.version >= 8).then(|| ds1.effective_act()));
+            let header_act = ds1.effective_act();
+            let (act, palette_act, level_name, lvl_type, dt1_order) =
+                match catalog.best(&entry.path) {
+                    Some(info) => (
+                        info.act,
+                        info.palette_act,
+                        info.level_name,
+                        info.lvl_type,
+                        info.dt1_files,
+                    ),
+                    None => (header_act, header_act, None, None, Vec::new()),
+                };
             Processed {
                 file: Some(file),
                 ds1: Some(Ds1Info {
                     width: ds1.width,
                     height: ds1.height,
                     act,
+                    level_name,
+                    lvl_type,
+                    palette_act,
                     usage: Ds1Usage {
                         path: name.to_owned(),
                         dt1_order,
@@ -429,15 +389,61 @@ struct NewAsset {
     act: Option<u8>,
     width: Option<u32>,
     height: Option<u32>,
+    /// Sprites: frames per direction.
+    variant: Option<u32>,
+    /// Sprites: number of directions.
+    rarity: Option<i32>,
+    /// COF: `"<n> layers"`.
+    class: Option<String>,
     gen_name: String,
     src: String,
     src_tag: &'static str,
+    thumb: Option<Vec<u8>>,
+}
+
+impl NewAsset {
+    fn file(entry: &Entry, kind: AssetKind) -> NewAsset {
+        let path = entry.path.as_str().to_owned();
+        NewAsset {
+            key: path.clone(),
+            kind,
+            gen_name: generated_file_name(&path, kind),
+            path,
+            act: None,
+            width: None,
+            height: None,
+            variant: None,
+            rarity: None,
+            class: None,
+            src: entry.source.clone(),
+            src_tag: entry.src_tag,
+            thumb: None,
+        }
+    }
+
+    /// A DS1 asset; `info` is `None` when the file did not parse.
+    fn ds1(entry: &Entry, info: Option<&Ds1Info>) -> NewAsset {
+        let mut asset = NewAsset::file(entry, AssetKind::Ds1);
+        match info {
+            Some(info) => {
+                asset.act = Some(info.act);
+                asset.width = Some(info.width);
+                asset.height = Some(info.height);
+                if let Some(level) = &info.level_name {
+                    asset.gen_name = format!("{} · {level}", asset.gen_name);
+                }
+            }
+            None => asset.act = act_from_path(entry.path.as_str()),
+        }
+        asset
+    }
 }
 
 fn insert_asset(tx: &Transaction<'_>, profile: &str, a: &NewAsset) -> rusqlite::Result<i64> {
     let mut stmt = tx.prepare_cached(
-        "INSERT INTO assets(profile, key, kind, path, act, width, height, gen_name, src, src_tag)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO assets(profile, key, kind, path, act, width, height, variant, rarity, class,
+                            gen_name, src, src_tag, thumb)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
     )?;
     stmt.execute(params![
         profile,
@@ -447,11 +453,37 @@ fn insert_asset(tx: &Transaction<'_>, profile: &str, a: &NewAsset) -> rusqlite::
         a.act,
         a.width,
         a.height,
+        a.variant,
+        a.rarity,
+        a.class,
         a.gen_name,
         a.src,
-        a.src_tag
+        a.src_tag,
+        a.thumb
     ])?;
     Ok(tx.last_insert_rowid())
+}
+
+fn insert_file_row(
+    tx: &Transaction<'_>,
+    profile: &str,
+    entry: &Entry,
+    info: &FileInfo,
+) -> rusqlite::Result<()> {
+    let mut stmt = tx.prepare_cached(
+        "INSERT OR REPLACE INTO files(profile, path, kind, layer, source, size, hash)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?;
+    stmt.execute(params![
+        profile,
+        entry.path.as_str(),
+        entry.ext,
+        i64::try_from(entry.layer.0).unwrap_or(0),
+        entry.source,
+        i64::try_from(info.size).unwrap_or(i64::MAX),
+        info.hash.as_slice()
+    ])?;
+    Ok(())
 }
 
 struct TileOwner<'a> {
@@ -509,6 +541,34 @@ fn push_warning(warnings: &mut Vec<String>, overflow: &mut usize, text: String) 
     }
 }
 
+/// Sprite files per parallel batch.
+const SPRITE_CHUNK: usize = 256;
+
+fn list_entries(overlay: &Overlay, known: &KnownNames) -> Vec<Entry> {
+    let layers = overlay.layers();
+    let mut entries = Vec::new();
+    for path in known.iter() {
+        let Some(ext) = path
+            .extension()
+            .and_then(|e| FILE_KINDS.iter().copied().find(|k| *k == e))
+        else {
+            continue;
+        };
+        let Some(layer) = overlay.resolve(path) else {
+            continue;
+        };
+        let source = layers[layer.0].name().to_owned();
+        entries.push(Entry {
+            path: path.clone(),
+            ext,
+            layer,
+            src_tag: src_tag(&source),
+            source,
+        });
+    }
+    entries
+}
+
 impl Index {
     /// Full rebuild of one profile (its old rows are replaced atomically).
     ///
@@ -553,32 +613,20 @@ impl Index {
             push_warning(&mut warnings, &mut overflow, w);
         }
         rep.check()?;
-        let layers = overlay.layers();
-        let mut entries: Vec<Entry> = Vec::new();
-        for path in known.iter() {
-            let Some(ext) = path
-                .extension()
-                .and_then(|e| FILE_KINDS.iter().copied().find(|k| *k == e))
-            else {
-                continue;
-            };
-            let Some(layer) = overlay.resolve(path) else {
-                continue;
-            };
-            let source = layers[layer.0].name().to_owned();
-            entries.push(Entry {
-                path: path.clone(),
-                ext,
-                layer,
-                src_tag: src_tag(&source),
-                source,
-            });
-        }
+        let entries = list_entries(overlay, &known);
 
         // ---- Tables
         rep.begin(BuildPhase::Tables, 3, "LvlTypes, LvlPrest, Levels")?;
         let mut table_warnings = Vec::new();
         let level_tables = LevelTables::load(overlay, profile.game_version, &mut table_warnings);
+        let ds1_paths: Vec<GamePath> = entries
+            .iter()
+            .filter(|e| e.ext == "ds1")
+            .map(|e| e.path.clone())
+            .collect();
+        let (catalog, catalog_warnings) =
+            MapCatalog::build(overlay, profile.game_version, &ds1_paths)?;
+        table_warnings.extend(catalog_warnings);
         for w in table_warnings {
             push_warning(&mut warnings, &mut overflow, w);
         }
@@ -591,7 +639,7 @@ impl Index {
         let other_results = par_map(
             &others,
             cancel,
-            |e| process_entry(overlay, e, &level_tables),
+            |e| process_entry(overlay, e, &catalog),
             |d| rep.tick(d as u64, total, "hashing files"),
         )?;
 
@@ -602,9 +650,26 @@ impl Index {
         let map_results = par_map(
             &maps,
             cancel,
-            |e| process_entry(overlay, e, &level_tables),
+            |e| process_entry(overlay, e, &catalog),
             |d| rep.tick(d as u64, total, "reading maps"),
         )?;
+
+        // The palette of a DT1 is the one of the lowest-id LvlType among the
+        // maps that load it (MapCatalog applies the Level `Pal` rule).
+        let mut dt1_palette: HashMap<GamePath, (u32, u8)> = HashMap::new();
+        for info in map_results.iter().filter_map(|r| r.ds1.as_ref()) {
+            let Some(lvl_type) = info.lvl_type else {
+                continue;
+            };
+            for dt1 in &info.usage.dt1_order {
+                let slot = dt1_palette
+                    .entry(dt1.clone())
+                    .or_insert((lvl_type, info.palette_act));
+                if lvl_type < slot.0 {
+                    *slot = (lvl_type, info.palette_act);
+                }
+            }
+        }
 
         // ---- Assemble rows in memory.
         let mut file_rows: Vec<(&Entry, FileInfo)> = Vec::new();
@@ -623,46 +688,22 @@ impl Index {
                 push_warning(&mut warnings, &mut overflow, w);
             }
             let path = entry.path.as_str().to_owned();
-            let kind = match entry.ext {
-                "ds1" => Some(AssetKind::Ds1),
-                "dt1" => Some(AssetKind::Dt1),
-                "dc6" => Some(AssetKind::Dc6),
-                "dcc" => Some(AssetKind::Dcc),
-                "cof" => Some(AssetKind::Cof),
-                _ => None,
-            };
             if let Some(info) = result.file {
                 file_rows.push((entry, info));
             } else {
                 continue;
             }
-            let Some(kind) = kind else { continue };
-            let mut asset = NewAsset {
-                key: path.clone(),
-                kind,
-                path: path.clone(),
-                act: None,
-                width: None,
-                height: None,
-                gen_name: generated_file_name(&path, kind),
-                src: entry.source.clone(),
-                src_tag: entry.src_tag,
-            };
-            match kind {
-                AssetKind::Ds1 => {
+            match entry.ext {
+                "ds1" => {
+                    assets.push(NewAsset::ds1(entry, result.ds1.as_ref()));
                     if let Some(info) = result.ds1 {
-                        asset.act = info.act;
-                        asset.width = Some(info.width);
-                        asset.height = Some(info.height);
                         ds1_usages.push(info.usage);
-                    } else {
-                        asset.act = act_from_path(&path);
                     }
                 }
-                AssetKind::Dt1 => {
+                "dt1" => {
                     let (name, lvl_act) = level_tables.dt1_context(&entry.path);
-                    let act = lvl_act.or_else(|| act_from_path(&path));
-                    asset.act = act;
+                    let mut asset = NewAsset::file(entry, AssetKind::Dt1);
+                    asset.act = lvl_act.or_else(|| act_from_path(&path));
                     if let Some(links) = level_tables.dt1_links.get(&entry.path) {
                         dt1_links.push((path.clone(), links.clone()));
                     }
@@ -670,14 +711,23 @@ impl Index {
                         path: entry.path.clone(),
                         layer: entry.layer,
                         place: name.unwrap_or_else(|| place_from_path(&path)),
-                        act,
+                        act: dt1_palette
+                            .get(&entry.path)
+                            .map(|p| p.1)
+                            .or_else(|| level_tables.dt1_palette_act(&entry.path))
+                            .or(asset.act),
                     });
+                    assets.push(asset);
                 }
                 _ => {}
             }
-            assets.push(asset);
         }
         assets.sort_by(|a, b| a.key.cmp(&b.key));
+        let sprite_entries: Vec<&Entry> = file_rows
+            .iter()
+            .map(|(e, _)| *e)
+            .filter(|e| matches!(e.ext, "dc6" | "dcc" | "cof"))
+            .collect();
 
         // ---- Writing
         rep.begin(BuildPhase::Writing, 0, "writing index")?;
@@ -696,22 +746,7 @@ impl Index {
 
         let mut counter = 0u64;
         for (entry, info) in &file_rows {
-            tx.prepare_cached(
-                "INSERT OR REPLACE INTO files(profile, path, kind, layer, source, size, hash)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            )
-            .and_then(|mut s| {
-                s.execute(params![
-                    profile_id,
-                    entry.path.as_str(),
-                    entry.ext,
-                    i64::try_from(entry.layer.0).unwrap_or(0),
-                    entry.source,
-                    i64::try_from(info.size).unwrap_or(i64::MAX),
-                    info.hash.as_slice()
-                ])
-            })
-            .map_err(sq)?;
+            insert_file_row(&tx, profile_id, entry, info).map_err(sq)?;
             counter += 1;
             if counter.is_multiple_of(512) {
                 rep.tick(counter, file_rows.len() as u64, "files")?;
@@ -790,6 +825,40 @@ impl Index {
         report.tiles = tile_count;
         report.assets += tile_count;
 
+        // ---- Sprites: size, counts and a thumbnail of the first frame.
+        let sprite_total = sprite_entries.len() as u64;
+        rep.begin(BuildPhase::Sprites, sprite_total, "")?;
+        let palette = tiles::sprite_palette(overlay);
+        let mut sprites_done = 0u64;
+        for chunk in sprite_entries.chunks(SPRITE_CHUNK) {
+            let results = par_map(
+                chunk,
+                cancel,
+                |e| tiles::process_sprite(overlay, &e.path, e.layer, e.ext, &palette),
+                |d| rep.tick(sprites_done + d as u64, sprite_total, "sprites"),
+            )?;
+            sprites_done += chunk.len() as u64;
+            for (entry, sprite) in chunk.iter().zip(results) {
+                if let Some(w) = sprite.warning {
+                    push_warning(&mut warnings, &mut overflow, w);
+                }
+                let kind = match entry.ext {
+                    "dc6" => AssetKind::Dc6,
+                    "dcc" => AssetKind::Dcc,
+                    _ => AssetKind::Cof,
+                };
+                let mut asset = NewAsset::file(entry, kind);
+                asset.width = sprite.width;
+                asset.height = sprite.height;
+                asset.rarity = sprite.directions.and_then(|d| i32::try_from(d).ok());
+                asset.variant = sprite.frames;
+                asset.class = sprite.layers.map(|n| format!("{n} layers"));
+                asset.thumb = sprite.thumb;
+                insert_asset(&tx, profile_id, &asset).map_err(sq)?;
+                report.assets += 1;
+            }
+        }
+
         rep.begin(BuildPhase::Writing, used_in.len() as u64, "used-in links")?;
         {
             let mut stmt = tx
@@ -818,6 +887,7 @@ impl Index {
         .map_err(sq)?;
         rep.check()?;
         tx.commit().map_err(sq)?;
+        self.catalog = Some((profile_id.to_owned(), catalog));
 
         if overflow > 0 {
             warnings.push(format!("... and {overflow} more warnings"));
@@ -826,6 +896,226 @@ impl Index {
         report.millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         Ok(report)
     }
+
+    /// Cheap incremental update after maps were saved: re-reads only the
+    /// saves layer's DS1 files (and any DS1 that was served from the saves
+    /// layer before and no longer is) and updates their ds1 assets,
+    /// `src`/`src_tag`, `files` row and `used_in` rows. The rest of the
+    /// profile is untouched; the profile must have been built.
+    pub fn refresh_saves(&mut self, profile: &Profile, overlay: &Overlay) -> Result<BuildReport> {
+        let started = Instant::now();
+        let profile_id = profile.id.as_str();
+        let db_path = self.path.clone();
+        let sq = |e: rusqlite::Error| IndexError::sql(&db_path, e);
+        let built: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT built_unix_ms FROM profiles WHERE id = ?1",
+                [profile_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sq)?;
+        if built.is_none() {
+            return Err(IndexError::Other(format!(
+                "profile {profile_id} has no index yet; build it first"
+            )));
+        }
+
+        // DS1s to look at: those in the saves layer(s), plus those the index
+        // still attributes to the saves layer (deleted or reverted since).
+        let mut paths: BTreeSet<GamePath> = BTreeSet::new();
+        for layer in overlay.layers() {
+            if src_tag(layer.name()) == "saves" {
+                for p in layer.list()? {
+                    if p.extension() == Some("ds1") {
+                        paths.insert(p);
+                    }
+                }
+            }
+        }
+        {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT path FROM assets WHERE profile = ?1 AND kind = 'ds1' AND src_tag = 'saves'",
+                )
+                .map_err(sq)?;
+            let rows = stmt
+                .query_map([profile_id], |r| r.get::<_, String>(0))
+                .map_err(sq)?;
+            for row in rows {
+                paths.insert(GamePath::new(&row.map_err(sq)?));
+            }
+        }
+        let mut report = BuildReport::default();
+        if paths.is_empty() {
+            return Ok(report);
+        }
+
+        let catalog = match self.catalog.take() {
+            Some((id, c)) if id == profile_id => c,
+            _ => MapCatalog::build(overlay, profile.game_version, &[])?.0,
+        };
+        let layers = overlay.layers();
+        let entries: Vec<(GamePath, Option<Entry>)> = paths
+            .into_iter()
+            .map(|path| {
+                let entry = overlay.resolve(&path).map(|layer| {
+                    let source = layers[layer.0].name().to_owned();
+                    Entry {
+                        path: path.clone(),
+                        ext: "ds1",
+                        layer,
+                        src_tag: src_tag(&source),
+                        source,
+                    }
+                });
+                (path, entry)
+            })
+            .collect();
+        let never = AtomicBool::new(false);
+        let processed = par_map(
+            &entries,
+            &never,
+            |(_, entry)| entry.as_ref().map(|e| process_entry(overlay, e, &catalog)),
+            |_| Ok(()),
+        )?;
+
+        let tx = self.conn.transaction().map_err(sq)?;
+        for ((path, entry), result) in entries.iter().zip(processed) {
+            let key = path.as_str();
+            // Forget the old row's FTS entry and used_in links first.
+            tx.execute(
+                "INSERT INTO assets_fts(assets_fts, rowid, gen_name, path, class, color, texture)
+                 SELECT 'delete', id, gen_name, path, class, color, texture FROM assets
+                 WHERE profile = ?1 AND key = ?2",
+                params![profile_id, key],
+            )
+            .map_err(sq)?;
+            tx.execute(
+                "DELETE FROM used_in WHERE ds1_path = ?1
+                   AND asset_id IN (SELECT id FROM assets WHERE profile = ?2)",
+                params![key, profile_id],
+            )
+            .map_err(sq)?;
+            let (Some(entry), Some(result)) = (entry, result) else {
+                // Gone from every layer.
+                tx.execute(
+                    "DELETE FROM assets WHERE profile = ?1 AND key = ?2",
+                    params![profile_id, key],
+                )
+                .map_err(sq)?;
+                tx.execute(
+                    "DELETE FROM files WHERE profile = ?1 AND path = ?2",
+                    params![profile_id, key],
+                )
+                .map_err(sq)?;
+                report.assets += 1;
+                continue;
+            };
+            if let Some(w) = result.warning {
+                report.warnings.push(w);
+            }
+            let Some(file) = result.file else {
+                continue;
+            };
+            insert_file_row(&tx, profile_id, entry, &file).map_err(sq)?;
+            report.files += 1;
+            let asset = NewAsset::ds1(entry, result.ds1.as_ref());
+            let existing: Option<i64> = tx
+                .query_row(
+                    "SELECT id FROM assets WHERE profile = ?1 AND key = ?2",
+                    params![profile_id, key],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(sq)?;
+            let id = match existing {
+                Some(id) => {
+                    tx.execute(
+                        "UPDATE assets SET act = ?2, width = ?3, height = ?4, gen_name = ?5,
+                                           src = ?6, src_tag = ?7 WHERE id = ?1",
+                        params![
+                            id,
+                            asset.act,
+                            asset.width,
+                            asset.height,
+                            asset.gen_name,
+                            asset.src,
+                            asset.src_tag
+                        ],
+                    )
+                    .map_err(sq)?;
+                    id
+                }
+                None => insert_asset(&tx, profile_id, &asset).map_err(sq)?,
+            };
+            tx.execute(
+                "INSERT INTO assets_fts(rowid, gen_name, path, class, color, texture)
+                 SELECT id, gen_name, path, class, color, texture FROM assets WHERE id = ?1",
+                [id],
+            )
+            .map_err(sq)?;
+            report.assets += 1;
+            if let Some(info) = result.ds1 {
+                relink_used_in(&tx, profile_id, &info.usage).map_err(sq)?;
+            }
+        }
+        tx.commit().map_err(sq)?;
+        self.catalog = Some((profile_id.to_owned(), catalog));
+        report.millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        Ok(report)
+    }
+}
+
+/// Recompute the `used_in` rows of one DS1 from the tiles already indexed.
+fn relink_used_in(tx: &Transaction<'_>, profile: &str, usage: &Ds1Usage) -> rusqlite::Result<()> {
+    let mut by_dt1: TileKeys = HashMap::new();
+    let mut ids: HashMap<String, i64> = HashMap::new();
+    let mut load = |dt1: Option<&GamePath>| -> rusqlite::Result<()> {
+        let mut stmt = tx.prepare_cached(
+            "SELECT id, key, path, orientation, main, sub FROM assets
+             WHERE profile = ?1 AND kind = 'tile' AND (?2 IS NULL OR path = ?2)",
+        )?;
+        let rows = stmt.query_map(params![profile, dt1.map(GamePath::as_str)], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, u8>(3)?,
+                r.get::<_, u8>(4)?,
+                r.get::<_, u8>(5)?,
+            ))
+        })?;
+        for row in rows {
+            let (id, key, path, o, m, s) = row?;
+            by_dt1
+                .entry(GamePath::new(&path))
+                .or_default()
+                .entry((o, m, s))
+                .or_default()
+                .push(key.clone());
+            ids.insert(key, id);
+        }
+        Ok(())
+    };
+    if usage.dt1_order.is_empty() {
+        load(None)?;
+    } else {
+        for dt1 in &usage.dt1_order {
+            load(Some(dt1))?;
+        }
+    }
+    let rows = resolve_used_in(std::slice::from_ref(usage), &by_dt1);
+    let mut stmt =
+        tx.prepare_cached("INSERT INTO used_in(asset_id, ds1_path, cells) VALUES(?1, ?2, ?3)")?;
+    for row in rows {
+        if let Some(&id) = ids.get(&row.tile_key) {
+            stmt.execute(params![id, row.ds1, row.cells])?;
+        }
+    }
+    Ok(())
 }
 
 /// A SQL string literal (profile ids are `[a-z0-9_-]+`, but be safe).

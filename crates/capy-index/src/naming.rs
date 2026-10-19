@@ -31,9 +31,16 @@ const COLORS: [(&str, [u8; 3]); 16] = [
 ];
 
 /// Edge density (mean Sobel magnitude) below which a tile is `flat`.
-pub const FLAT_BELOW: f32 = 12.0;
+pub const FLAT_BELOW: f32 = 20.0;
 /// Edge density below which a tile is `noisy`; at or above it is `edgy`.
-pub const NOISY_BELOW: f32 = 40.0;
+pub const NOISY_BELOW: f32 = 60.0;
+/// Mean opaque luma (0..=255) below which a tile is simply `dark`.
+pub const DARK_BELOW: f32 = 25.0;
+
+/// Rec. 601 luma of an RGB colour.
+pub fn luma(rgb: [u8; 3]) -> f32 {
+    0.299 * f32::from(rgb[0]) + 0.587 * f32::from(rgb[1]) + 0.114 * f32::from(rgb[2])
+}
 
 /// Nearest palette colour (squared RGB distance; ties go to the earlier
 /// palette entry) to the mean opaque colour of a tile.
@@ -55,7 +62,7 @@ pub fn color_name(rgb: [u8; 3]) -> &'static str {
     best
 }
 
-/// `flat` below 12, `noisy` below 40, `edgy` otherwise. NaN counts as flat.
+/// `flat` below 20, `noisy` below 60, `edgy` otherwise. NaN counts as flat.
 pub fn texture_class(edge_density: f32) -> &'static str {
     if edge_density.is_nan() || edge_density < FLAT_BELOW {
         "flat"
@@ -82,13 +89,16 @@ pub fn class_name(orientation: u8) -> &'static str {
     }
 }
 
-/// The descriptor part of a tile name: a colour, plus the texture when the
-/// tile is not flat. A few colour and texture pairs read better as a word:
-/// green+noisy is `grass`, brown+noisy `dirt`, grey+edgy `stone`, blue+flat
-/// `water`, and black (any texture) is `dark`.
-pub fn descriptor(color: &str, texture: &str) -> String {
+/// The descriptor part of a tile name. A tile whose mean opaque `luma` is
+/// below [`DARK_BELOW`] is `dark`, whatever its colour name. Otherwise it is
+/// the colour, plus the texture when the tile is not flat; a few pairs read
+/// better as a word: green+noisy is `grass`, brown+noisy `dirt`, grey+edgy
+/// `stone`, blue+flat `water`.
+pub fn descriptor(color: &str, texture: &str, luma: f32) -> String {
+    if luma < DARK_BELOW {
+        return "dark".to_owned();
+    }
     match (color, texture) {
-        ("black", _) => "dark".to_owned(),
         ("green", "noisy") => "grass".to_owned(),
         ("brown", "noisy") => "dirt".to_owned(),
         ("grey", "edgy") => "stone".to_owned(),
@@ -258,27 +268,34 @@ mod tests {
     #[test]
     fn texture_thresholds() {
         assert_eq!(texture_class(0.0), "flat");
-        assert_eq!(texture_class(11.99), "flat");
-        assert_eq!(texture_class(12.0), "noisy");
-        assert_eq!(texture_class(39.99), "noisy");
-        assert_eq!(texture_class(40.0), "edgy");
+        assert_eq!(texture_class(19.99), "flat");
+        assert_eq!(texture_class(20.0), "noisy");
+        assert_eq!(texture_class(59.99), "noisy");
+        assert_eq!(texture_class(60.0), "edgy");
         assert_eq!(texture_class(500.0), "edgy");
         assert_eq!(texture_class(f32::NAN), "flat");
     }
 
     #[test]
     fn descriptors() {
-        assert_eq!(descriptor("green", "noisy"), "grass");
-        assert_eq!(descriptor("brown", "noisy"), "dirt");
-        assert_eq!(descriptor("grey", "edgy"), "stone");
-        assert_eq!(descriptor("blue", "flat"), "water");
-        assert_eq!(descriptor("black", "flat"), "dark");
-        assert_eq!(descriptor("black", "edgy"), "dark");
-        assert_eq!(descriptor("red", "flat"), "red");
-        assert_eq!(descriptor("red", "noisy"), "red noisy");
-        assert_eq!(descriptor("green", "flat"), "green");
-        assert_eq!(descriptor("green", "edgy"), "green edgy");
-        assert_eq!(descriptor("grey", "noisy"), "grey noisy");
+        let mid = 80.0;
+        assert_eq!(descriptor("green", "noisy", mid), "grass");
+        assert_eq!(descriptor("brown", "noisy", mid), "dirt");
+        assert_eq!(descriptor("grey", "edgy", mid), "stone");
+        assert_eq!(descriptor("blue", "flat", mid), "water");
+        assert_eq!(descriptor("red", "flat", mid), "red");
+        assert_eq!(descriptor("red", "noisy", mid), "red noisy");
+        assert_eq!(descriptor("green", "flat", mid), "green");
+        assert_eq!(descriptor("green", "edgy", mid), "green edgy");
+        assert_eq!(descriptor("grey", "noisy", mid), "grey noisy");
+        // Black is a colour name like any other once the tile is not dark.
+        assert_eq!(descriptor("black", "flat", 30.0), "black");
+        // Dark wins over every colour and texture.
+        assert_eq!(descriptor("black", "flat", 24.9), "dark");
+        assert_eq!(descriptor("green", "noisy", 10.0), "dark");
+        assert_eq!(descriptor("brown", "edgy", 0.0), "dark");
+        assert_eq!(descriptor("brown", "edgy", 25.0), "brown edgy");
+        assert!((luma([255, 255, 255]) - 255.0).abs() < 0.01);
     }
 
     #[test]
