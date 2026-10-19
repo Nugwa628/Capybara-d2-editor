@@ -120,6 +120,10 @@ const USER_COLUMNS: &[(&str, &[&str])] = &[
         "saved_searches",
         &["id", "name", "query", "position", "pinned"],
     ),
+    (
+        "sprite_palettes",
+        &["profile", "key", "palette", "updated_unix_ms"],
+    ),
     ("meta", &["key", "value"]),
 ];
 
@@ -234,6 +238,12 @@ fn exercise_user(user: &UserDb) {
     if let Some(s) = searches.first() {
         let _ = user.delete_search(s.id);
     }
+    for key in [r"data\global\ui\a.dc6", "data/global/ui/new.dc6", "", "\\"] {
+        let _ = user.sprite_palette("test", key);
+        let _ = user.folder_palette("test", key);
+    }
+    let _ = user.set_sprite_palette("test", r"data\global\ui\b.dc6", Some("act2"));
+    let _ = user.set_sprite_palette("test", r"data\global\ui\a.dc6", None);
 }
 
 /// A built index plus a user.db with some rows of every kind, both copied
@@ -290,6 +300,10 @@ fn setup() -> Setup {
         user.record_use("test", "k2").unwrap();
         user.save_search("s", "type:floor act:1").unwrap();
         user.save_search("t", "grass").unwrap();
+        user.set_sprite_palette("test", r"data\global\ui\a.dc6", Some("act1"))
+            .unwrap();
+        user.set_sprite_palette("test", r"data\global\ui\c.dc6", Some("units"))
+            .unwrap();
         let raw = rusqlite::Connection::open(cache.path().join("u").join("user.db")).unwrap();
         raw.execute("VACUUM INTO ?1", [pristine_user.to_str().unwrap()])
             .unwrap();

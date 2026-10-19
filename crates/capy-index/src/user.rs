@@ -1,4 +1,5 @@
-//! `user.db`: aliases, tags, notes, favorites, recents and saved searches.
+//! `user.db`: aliases, tags, notes, favorites, recents, saved searches and
+//! the palette each sprite or tile file was last used with.
 //!
 //! Rows are keyed by profile id plus the stable asset key, so they survive a
 //! rebuild of the index. The file is never dropped: schema changes are
@@ -19,7 +20,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::{IndexError, Result};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 /// Recents beyond this many per profile are forgotten.
 const MAX_RECENTS: i64 = 1000;
 
@@ -37,6 +38,13 @@ CREATE TABLE IF NOT EXISTS saved_searches(id INTEGER PRIMARY KEY, name TEXT NOT 
   position INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS tags_by_tag ON tags(profile, tag COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS recents_by_time ON recents(profile, last_used_unix_ms);
+";
+
+/// Schema 2 (P7): the palette remembered per sprite/tile file.
+const SCHEMA_V2: &str = "
+CREATE TABLE IF NOT EXISTS sprite_palettes(profile TEXT NOT NULL, key TEXT NOT NULL, palette TEXT NOT NULL,
+  updated_unix_ms INTEGER NOT NULL, PRIMARY KEY(profile, key));
+CREATE INDEX IF NOT EXISTS sprite_palettes_by_time ON sprite_palettes(profile, updated_unix_ms);
 ";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -145,7 +153,12 @@ impl UserDb {
                 .execute_batch(SCHEMA_V1)
                 .map_err(|e| self.sql(e))?;
         }
-        // Forward-only migrations go here: `if version < 2 { ... }`.
+        if version < 2 {
+            self.conn
+                .execute_batch(SCHEMA_V2)
+                .map_err(|e| self.sql(e))?;
+        }
+        // Further forward-only migrations go here: `if version < 3 { ... }`.
         self.conn
             .execute(
                 "INSERT INTO meta(key, value) VALUES('schema_version', ?1)
@@ -769,6 +782,86 @@ impl UserDb {
             .map(drop)
             .map_err(|e| self.sql(e))
     }
+
+    // -------------------------------------------------------- sprite palettes
+
+    /// The palette label remembered for a sprite or tile file.
+    pub fn sprite_palette(&self, profile: &str, key: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT palette FROM sprite_palettes WHERE profile = ?1 AND key = ?2",
+                params![profile, palette_key(key)],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| self.sql(e))
+    }
+
+    /// Remember `palette` (trimmed) for a file; `None` or a blank label
+    /// forgets the entry. Every write is strictly newer than all earlier
+    /// writes of the same profile, so "most recent" is deterministic.
+    pub fn set_sprite_palette(
+        &self,
+        profile: &str,
+        key: &str,
+        palette: Option<&str>,
+    ) -> Result<()> {
+        let key = palette_key(key);
+        let Some(palette) = palette.map(str::trim).filter(|p| !p.is_empty()) else {
+            return self
+                .conn
+                .execute(
+                    "DELETE FROM sprite_palettes WHERE profile = ?1 AND key = ?2",
+                    params![profile, key],
+                )
+                .map(drop)
+                .map_err(|e| self.sql(e));
+        };
+        self.txn(|c| {
+            let newest: i64 = c.query_row(
+                "SELECT COALESCE(MAX(updated_unix_ms), 0) FROM sprite_palettes WHERE profile = ?1",
+                [profile],
+                |r| r.get(0),
+            )?;
+            let stamp = now_ms().max(newest.saturating_add(1));
+            c.execute(
+                "INSERT INTO sprite_palettes(profile, key, palette, updated_unix_ms)
+                 VALUES(?1, ?2, ?3, ?4)
+                 ON CONFLICT(profile, key) DO UPDATE SET palette = excluded.palette,
+                                                         updated_unix_ms = excluded.updated_unix_ms",
+                params![profile, key, palette, stamp],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The most recently remembered palette of any file in the same folder
+    /// as `key` (its parent, case-insensitive; `\` and `/` are the same
+    /// separator), for a "used in this folder" hint when the file itself has
+    /// none. The file's own entry counts too; files in subfolders do not.
+    pub fn folder_palette(&self, profile: &str, key: &str) -> Result<Option<String>> {
+        let key = palette_key(key);
+        // the parent with its trailing separator; "" for a bare file name
+        let prefix = key.rfind('\\').map_or("", |i| &key[..=i]);
+        let len = i64::try_from(prefix.chars().count()).unwrap_or(i64::MAX);
+        self.conn
+            .query_row(
+                "SELECT palette FROM sprite_palettes
+                 WHERE profile = ?1 AND substr(key, 1, ?2) = ?3
+                   AND instr(substr(key, ?2 + 1), '\\') = 0
+                 ORDER BY updated_unix_ms DESC, key LIMIT 1",
+                params![profile, len, prefix],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| self.sql(e))
+    }
+}
+
+/// The stored form of a sprite palette key: lower case with `\` separators,
+/// so `Data/Global/UI/x.DC6` and `data\global\ui\x.dc6` are one file.
+fn palette_key(key: &str) -> String {
+    key.replace('/', "\\").to_lowercase()
 }
 
 #[cfg(test)]
@@ -789,10 +882,10 @@ mod tests {
     #[test]
     fn schema_version_row() {
         let (dir, db) = open();
-        assert_eq!(db.schema_version().unwrap(), 1);
+        assert_eq!(db.schema_version().unwrap(), 2);
         drop(db);
         let db = reopen(&dir);
-        assert_eq!(db.schema_version().unwrap(), 1);
+        assert_eq!(db.schema_version().unwrap(), 2);
     }
 
     #[test]
@@ -1142,5 +1235,231 @@ mod tests {
             ]
         );
         assert_eq!(db.save_search("New", "q").unwrap().position, 3);
+    }
+
+    #[test]
+    fn sprite_palettes_per_file() {
+        let (dir, db) = open();
+        let key = r"data\global\tiles\act5\town\floor.dt1";
+        assert_eq!(db.sprite_palette("p", key).unwrap(), None);
+        db.set_sprite_palette("p", key, Some(" act5 ")).unwrap();
+        assert_eq!(
+            db.sprite_palette("p", key).unwrap().as_deref(),
+            Some("act5")
+        );
+        // case and separators do not matter
+        for alias in [
+            r"DATA\Global\Tiles\Act5\Town\FLOOR.DT1",
+            "data/global/tiles/act5/town/floor.dt1",
+        ] {
+            assert_eq!(
+                db.sprite_palette("p", alias).unwrap().as_deref(),
+                Some("act5")
+            );
+        }
+        // overwriting through another spelling replaces the one entry
+        db.set_sprite_palette("p", "Data/Global/Tiles/Act5/Town/Floor.dt1", Some("act1"))
+            .unwrap();
+        assert_eq!(
+            db.sprite_palette("p", key).unwrap().as_deref(),
+            Some("act1")
+        );
+        let rows: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM sprite_palettes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
+        // profiles are separate
+        assert_eq!(db.sprite_palette("q", key).unwrap(), None);
+        // kept across reopening
+        drop(db);
+        let db = reopen(&dir);
+        assert_eq!(
+            db.sprite_palette("p", key).unwrap().as_deref(),
+            Some("act1")
+        );
+        // None and blank forget
+        db.set_sprite_palette("p", key, None).unwrap();
+        assert_eq!(db.sprite_palette("p", key).unwrap(), None);
+        db.set_sprite_palette("p", key, Some("units")).unwrap();
+        db.set_sprite_palette("p", &key.to_uppercase(), Some("  "))
+            .unwrap();
+        assert_eq!(db.sprite_palette("p", key).unwrap(), None);
+        // forgetting an unknown key is fine
+        db.set_sprite_palette("p", "nothing.dc6", None).unwrap();
+    }
+
+    #[test]
+    fn folder_palette_is_the_newest_in_the_same_folder() {
+        let (_dir, db) = open();
+        let ui = r"data\global\ui\panel\";
+        assert_eq!(db.folder_palette("p", &format!("{ui}a.dc6")).unwrap(), None);
+        db.set_sprite_palette("p", &format!("{ui}a.dc6"), Some("act1"))
+            .unwrap();
+        db.set_sprite_palette("p", &format!("{ui}b.dc6"), Some("units"))
+            .unwrap();
+        // a subfolder, a parent folder, a sibling folder sharing a prefix and
+        // another profile are all newer but do not count
+        db.set_sprite_palette("p", &format!("{ui}sub\\c.dc6"), Some("loading"))
+            .unwrap();
+        db.set_sprite_palette("p", r"data\global\ui\d.dc6", Some("menu0"))
+            .unwrap();
+        db.set_sprite_palette("p", r"data\global\ui\panelx\e.dc6", Some("menu1"))
+            .unwrap();
+        db.set_sprite_palette("q", &format!("{ui}f.dc6"), Some("act4"))
+            .unwrap();
+        for probe in [
+            format!("{ui}new.dc6"),
+            "DATA/GLOBAL/UI/PANEL/New.DC6".to_owned(),
+            format!("{ui}a.dc6"),
+        ] {
+            assert_eq!(
+                db.folder_palette("p", &probe).unwrap().as_deref(),
+                Some("units"),
+                "{probe}"
+            );
+        }
+        // re-saving a file makes it the newest
+        db.set_sprite_palette("p", &format!("{ui}a.dc6"), Some("act2"))
+            .unwrap();
+        assert_eq!(
+            db.folder_palette("p", &format!("{ui}z.dc6"))
+                .unwrap()
+                .as_deref(),
+            Some("act2")
+        );
+        assert_eq!(
+            db.folder_palette("p", &format!("{ui}sub/x.dc6"))
+                .unwrap()
+                .as_deref(),
+            Some("loading")
+        );
+        assert_eq!(
+            db.folder_palette("p", r"data\global\ui\x.dc6")
+                .unwrap()
+                .as_deref(),
+            Some("menu0")
+        );
+        assert_eq!(
+            db.folder_palette("q", &format!("{ui}x.dc6"))
+                .unwrap()
+                .as_deref(),
+            Some("act4")
+        );
+        assert_eq!(db.folder_palette("p", r"data\other\x.dc6").unwrap(), None);
+        // loose files: drive paths with either separator, and bare names
+        db.set_sprite_palette("p", r"C:\Mods\Art\Ring.dc6", Some("grey"))
+            .unwrap();
+        assert_eq!(
+            db.folder_palette("p", "c:/mods/art/amulet.DC6")
+                .unwrap()
+                .as_deref(),
+            Some("grey")
+        );
+        assert_eq!(db.folder_palette("p", "bare.dc6").unwrap(), None);
+        db.set_sprite_palette("p", "Bare.dc6", Some("act3"))
+            .unwrap();
+        assert_eq!(
+            db.folder_palette("p", "other.dc6").unwrap().as_deref(),
+            Some("act3")
+        );
+        // non-ASCII names
+        db.set_sprite_palette("p", r"C:\Mods\Ärt\x.dc6", Some("act5"))
+            .unwrap();
+        assert_eq!(
+            db.folder_palette("p", r"c:\mods\ärt\y.dc6")
+                .unwrap()
+                .as_deref(),
+            Some("act5")
+        );
+        assert_eq!(
+            db.sprite_palette("p", r"c:\mods\ärt\X.DC6")
+                .unwrap()
+                .as_deref(),
+            Some("act5")
+        );
+    }
+
+    #[test]
+    fn schema_1_database_is_migrated_and_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("capybara").join("user.db");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        {
+            // exactly what a 1.0.0 editor wrote
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA_V1).unwrap();
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES('schema_version', '1')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aliases(profile, key, alias) VALUES('p', 'k', 'Kept')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO recents(profile, key, last_used_unix_ms, uses) VALUES('p', 'k', 5, 3)",
+                [],
+            )
+            .unwrap();
+            let has: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name = 'sprite_palettes'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(has, 0);
+        }
+        let db = UserDb::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 2);
+        assert_eq!(db.alias("p", "k").unwrap().as_deref(), Some("Kept"));
+        assert_eq!(db.use_count("p", "k").unwrap(), 3);
+        assert_eq!(db.sprite_palette("p", "a.dc6").unwrap(), None);
+        db.set_sprite_palette("p", "a.dc6", Some("act1")).unwrap();
+        drop(db);
+        let db = UserDb::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 2);
+        assert_eq!(
+            db.sprite_palette("p", "A.DC6").unwrap().as_deref(),
+            Some("act1")
+        );
+        assert_eq!(db.alias("p", "k").unwrap().as_deref(), Some("Kept"));
+    }
+
+    #[test]
+    fn sprite_palette_survives_odd_keys() {
+        let (_dir, db) = open();
+        for key in [
+            "",
+            "\\",
+            "/",
+            "a\\",
+            "\\\\x",
+            "%",
+            "_",
+            "a%b\\c_d.dc6",
+            "x'y.dc6",
+        ] {
+            db.set_sprite_palette("p", key, Some("act1")).unwrap();
+            assert_eq!(
+                db.sprite_palette("p", key).unwrap().as_deref(),
+                Some("act1"),
+                "{key:?}"
+            );
+            assert_eq!(
+                db.folder_palette("p", key).unwrap().as_deref(),
+                Some("act1"),
+                "{key:?}"
+            );
+        }
+        // LIKE wildcards in the folder name are literal
+        assert_eq!(
+            db.folder_palette("p", "a%b\\other.dc6").unwrap().as_deref(),
+            Some("act1")
+        );
+        assert_eq!(db.folder_palette("p", "aXb\\other.dc6").unwrap(), None);
     }
 }
