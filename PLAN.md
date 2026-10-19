@@ -1,6 +1,6 @@
 # Capybara's D2 Editor (formerly Capybara Map Editor) — Plan
 
-Status: **Release 1.0.0 published** (2026-10-19, github.com/Nugwa628/Capybara-d2-editor). **P7 palette tools done on main** (not yet released). Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC.
+Status: **Release 1.1.0 published** (2026-10-20, github.com/Nugwa628/Capybara-d2-editor): 1.0.0 plus P7 palette tools. Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC. Waiting on the user's DC6 examples to refine palette memory.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
