@@ -1,10 +1,9 @@
-# Capybara Map Editor user guide
+# Capybara's D2 Editor user guide
 
 This guide is for Diablo II map modders. It covers editing `.ds1` maps, saving
 them for packing, and working with DC6/DCC sprites. The command line is
-covered in [cli.md](cli.md).
-
-Features marked **planned** are not in the program yet.
+covered in [cli.md](cli.md); it works before the editor's window has ever
+been opened, because it writes the default profiles itself.
 
 - [Getting started](#getting-started)
 - [The window](#the-window)
@@ -24,14 +23,23 @@ Features marked **planned** are not in the program yet.
 
 ## Getting started
 
+### System requirements
+
+- Windows 10 or 11, 64-bit.
+- A graphics card whose driver supports Vulkan or DirectX 12 (any card and
+  driver from the last several years). Without one the editor cannot open its
+  window; it says so in a message box and in `capybara\crash.log`.
+- A Diablo II install (classic 1.13c/1.14d, or a mod such as Median XL). The
+  editor only reads it.
+
 ### The portable `capybara\` folder
 
-The editor is one file, `CapybaraMapEditor.exe`. Everything it writes goes
+The editor is one file, `CapybarasD2Editor.exe`. Everything it writes goes
 into a folder called `capybara\` next to the exe. It never writes to your
 game install.
 
 ```
-CapybaraMapEditor.exe
+CapybarasD2Editor.exe
 capybara\
   config.toml          settings, recent maps, your tile-set overrides
   layout.json          panel layout of the Map Editor
@@ -40,6 +48,7 @@ capybara\
   saves\<profile>\     your edited files, at their game paths, plus CHANGED.txt
   history\<profile>\   snapshots of saves, autosaves and checkpoints (index.json and objects\)
   cache\               asset index (index.db) and file-name lists
+  crash.log            written only if the editor crashes (see Troubleshooting)
 ```
 
 - `cache\` is safe to delete. The editor rebuilds it in the background.
@@ -47,7 +56,20 @@ capybara\
 - To move your whole setup, copy or zip the exe together with `capybara\`.
 
 The folder must be writable. If the editor can't create or write to it, it
-shows an error window and stops (see [Troubleshooting](#troubleshooting)).
+shows an error message and stops (see [Troubleshooting](#troubleshooting)).
+
+### The loading screen
+
+While the editor opens its game data, it shows Diablo II's own door-opening
+loading animation, taken from the start profile's game files, with a capybara
+standing in the door and "Capybara's D2 Editor" on the plate. It stays until
+the profile's map list is ready (at least one pass of the animation), then
+fades out. Click or press **Esc** to skip it. Any question the editor asks at
+start-up (for example **Add game install**) closes it first, so nothing hides
+behind it. Without game files it shows the capybara and the name on a dark
+background.
+
+Turn it off in **File > Settings... > Start-up > Show loading screen**.
 
 ### Game profiles
 
@@ -59,7 +81,7 @@ On the first run, the editor writes a profile for each install it finds:
 | Profile id | Name | Where it looks | Game version |
 |---|---|---|---|
 | `vanilla` | Diablo II 1.14d | `C:\Program Files (x86)\Diablo II`, then the install path Diablo II's installer left in the Windows registry | 1.14d |
-| `mxl` | Median XL | `C:\games\median-xl` | 1.13c |
+| `mxl` | Median XL | a Median XL folder the editor recognises (it has no fixed install location, so use **Add game install...** if none is found) | 1.13c |
 
 The registry is only read, never written. It is checked under
 `HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Blizzard Entertainment\Diablo II` and
@@ -849,6 +871,7 @@ example to see what changed between two milestones.
 |---|---|
 | Map view | **Gamma** of the map view and the object preview (0.5 to 3.0, default 1.30). The map is redrawn live as you drag. **Reset** goes back to 1.30. |
 | Layers visible when a map opens | Floors, Walls, Shadow, Tag, Objects. **Apply to the open map** applies them to the active map now. |
+| Start-up | **Show loading screen**: the door animation while the editor loads (default on). |
 | Selection | Whether selection tools start on the **Active layer** or **All visible layers**. Changing it also changes the current choice. |
 | Autosave | The interval in minutes; 0 is off. |
 | History retention | How many saves/autosaves to keep per map, and an optional age limit in days (0 = none). **Prune now**. |
@@ -1168,9 +1191,9 @@ for DCC sprites):
 
 If you save or export as DCC while cells are over the limit, the encoder
 reduces them on its own. It keeps transparency first, then the most frequent
-colours, and moves the other pixels to the nearest kept colour. Check and fix
-the cells yourself first if you want control over the result. A warning
-before this automatic reduction is **planned**.
+colours, and moves the other pixels to the nearest kept colour. Before writing, the
+editor asks: **Reduce and save**, **Open the cell check** to fix the cells
+yourself first, or **Cancel**.
 
 ---
 
@@ -1275,15 +1298,26 @@ From the command line, `index status` and `index build` do the same (see
 
 ## Troubleshooting
 
-### "Capybara Map Editor cannot use its data folder"
+### "Capybara's D2 Editor cannot use its data folder"
 
 The editor couldn't create or write to `capybara\` next to the exe. The
-window names the folder and the Windows error. Nothing was written anywhere
+message names the folder and the Windows error. Nothing was written anywhere
 else. Fix it in one of two ways:
 
 - move the exe to a folder you can write to (not `C:\Program Files\`), or
 - set the environment variable `CAPY_HOME` to a writable folder, which is
   then used instead of `capybara\`.
+
+### The editor stopped with an error message
+
+If the editor stops unexpectedly it shows a message box titled
+"Capybara's D2 Editor" and appends the details (time, version, the error,
+where it happened and a backtrace) to `capybara\crash.log`. Please include
+that file when you report the problem.
+
+**"Unable to find a GPU"** means no graphics driver with Vulkan or DirectX 12
+support was found: install the latest driver for your graphics card. Remote
+desktop sessions and some virtual machines have no such driver.
 
 ### No profiles, or a profile won't open
 
@@ -1450,6 +1484,7 @@ settings change.
 | `browser_thumb` | Thumbnail size of the Tiles browser in points. |
 | `animate_objects` | **View > Animate objects** (default `true`). |
 | `object_markers` | **View > Object markers** (default `false`). |
+| `show_loading_screen` | **Settings > Show loading screen** (default `true`). |
 | `[layer_visibility]` | `floor`, `wall`, `shadow`, `tag`, `objects`: which layer kinds start visible when a map opens. `tag` is `false` by default. |
 | `last_profile` | The profile opened at start-up. |
 | `mode` | `"map"` or `"sprites"`: the mode shown at start-up. |
@@ -1465,11 +1500,14 @@ settings change.
 | `CAPY_PROFILE` | Open this profile id at start-up instead of the last one. |
 | `CAPY_OPEN_MAP` | Open this map (a game path) once the profile is ready. |
 | `CAPY_NO_INDEX` | Set to `1` to skip building the asset index. |
+| `CAPY_NO_CRASH_DIALOG` | Set to `1` to write `crash.log` without showing the crash message box. |
 
 The editor also has hooks used by its automated tests, such as
 `CAPY_SCRIPT`, which runs a file of editing commands and then exits (it has
 history commands too: `autosave-now`, `checkpoint`, `history-select`,
 `restore`, `milestone`, `prune`, `setting`, ..., and object commands:
 `place-object`, `select-object`, `path-add`, `path-move`, `path-action`,
-`path-delete`, `animate`, `object-frame-tick`, `import-ini`, ...), and
-`CAPY_SCREENSHOT`. They are meant for development and may change.
+`path-delete`, `animate`, `object-frame-tick`, `import-ini`, ..., and
+loading-screen commands: `splash`, `splash-save`, `splash-wait-closed`),
+`CAPY_SCREENSHOT` and `CAPY_DEBUG_PANIC`. Runs driven by these hooks start
+without the loading screen. They are meant for development and may change.

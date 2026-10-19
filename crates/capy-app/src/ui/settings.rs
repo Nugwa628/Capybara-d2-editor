@@ -101,6 +101,17 @@ fn body(ui: &mut egui::Ui, state: &mut AppState) {
         state.set_scope_default(scope);
     }
 
+    section(ui, "Start-up");
+    if ui
+        .checkbox(&mut state.config.show_loading_screen, "Show loading screen")
+        .on_hover_text(
+            "The door animation while the editor loads its game data (click or Esc skips it)",
+        )
+        .changed()
+    {
+        state.config_dirty = true;
+    }
+
     section(ui, "Autosave");
     let mut minutes = state.config.autosave_minutes;
     ui.horizontal(|ui| {

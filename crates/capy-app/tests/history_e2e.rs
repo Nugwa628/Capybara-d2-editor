@@ -39,7 +39,7 @@ fn run_script(home: &Path, script: &str) -> (Option<i32>, String) {
     let file = home.join("script.txt");
     std::fs::create_dir_all(home).unwrap();
     std::fs::write(&file, script).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_CapybaraMapEditor"))
+    let out = Command::new(env!("CARGO_BIN_EXE_CapybarasD2Editor"))
         .env("CAPY_HOME", home.join("capybara"))
         .env("CAPY_PROFILE", "vanilla")
         .env("CAPY_NO_INDEX", "1")

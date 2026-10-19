@@ -54,11 +54,11 @@ use crate::doc::{LayerKey, MapDoc, RenderState};
 use crate::state::AppState;
 
 /// World x of the map meshes relative to iso space. `capy-render` places a
-/// cell's bitmap at `(x - y) * 80`, where the cell's diamond spans
-/// `[0, 160)`; iso space (the overlays, `crate::iso`) puts the diamond's top
-/// corner at `(x - y) * 80`. Shifting the meshes by half a cell lines the
-/// two up.
-pub const WORLD_SHIFT_X: f32 = -80.0;
+/// cell's bitmap (left edge) at `(x - y) * 80`, its diamond's top corner
+/// `CELL_DIAMOND_TOP_X` (80) right of that; iso space (the overlays,
+/// `crate::iso`) puts the diamond's top corner at `(x - y) * 80`. Shifting
+/// the meshes left by that offset lines the two up.
+pub const WORLD_SHIFT_X: f32 = -(capy_render::CELL_DIAMOND_TOP_X as f32);
 
 /// CPU-side mesh data for one placeholder layer. World space: y up, so iso y
 /// is negated.

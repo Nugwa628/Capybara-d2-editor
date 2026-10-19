@@ -91,9 +91,9 @@ impl Worker {
                     user_db,
                     open: None,
                 };
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = crate::crash::catch(|| {
                     serve(&mut db, &requests, &answers);
-                }));
+                });
             })
             .map_err(|e| format!("cannot start the search thread: {e}"))?;
         Ok(Worker {

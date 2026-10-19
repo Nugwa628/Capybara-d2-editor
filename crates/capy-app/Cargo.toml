@@ -5,9 +5,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+description = "Capybara's D2 Editor: a Diablo II map and sprite editor"
+build = "build.rs"
 
 [[bin]]
-name = "CapybaraMapEditor"
+name = "CapybarasD2Editor"
 path = "src/main.rs"
 
 [features]
@@ -47,11 +49,16 @@ bevy = { workspace = true, features = [
     "multi_threaded",
 ] }
 bevy_egui.workspace = true
+winit.workspace = true
 egui_dock = { workspace = true, features = ["serde"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
-windows-registry.workspace = true
+
+# The exe icon and version resource (see build.rs). Only Windows hosts can
+# compile resources; elsewhere the build script does nothing.
+[target.'cfg(windows)'.build-dependencies]
+winresource.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -25,11 +25,12 @@ use crate::doc::RenderState;
 use crate::edit::ops::EditOp;
 use crate::edit::paste::PasteSession;
 use crate::edit::script::GradientSpec;
-use crate::edit::script::{Cmd, Line, parse_script};
+use crate::edit::script::{Cmd, Line, SplashArg, parse_script};
 use crate::edit::state::MoveDialog;
 use crate::history;
 use crate::index_task::IndexState;
 use crate::iso::ZOOM_STEPS;
+use crate::splash::{Pin, Splash};
 use crate::sprites::convert::Layout;
 use crate::sprites::dialog::Purpose;
 use crate::sprites::editor::{EditorState, GradientMode, Mods, PaintTool};
@@ -78,6 +79,11 @@ pub struct ScriptRunner {
 }
 
 impl ScriptRunner {
+    /// A script is (or was) running.
+    pub fn active(&self) -> bool {
+        self.active
+    }
+
     /// Reads `CAPY_SCRIPT`. An unreadable or unparsable script is kept as a
     /// problem and reported (exit code 1) when the app starts running it.
     pub fn from_env() -> ScriptRunner {
@@ -141,6 +147,7 @@ pub fn run_script(
     mut commands: Commands,
     mut runner: ResMut<ScriptRunner>,
     mut state: ResMut<AppState>,
+    mut splash: ResMut<Splash>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if !runner.active || runner.done {
@@ -191,7 +198,11 @@ pub fn run_script(
     }
 
     while let Some((line, cmd)) = runner.cmds.pop_front() {
-        let result = step(&mut state, &cmd, &mut runner.awaiting_autosave);
+        let waited = runner.retry_since.map(|t| t.elapsed());
+        let result = match splash_step(&mut splash, &state, &cmd, waited) {
+            Some(result) => result,
+            None => step(&mut state, &cmd, &mut runner.awaiting_autosave),
+        };
         if !matches!(result, Step::Retry) {
             runner.retry_since = None;
         }
@@ -227,6 +238,83 @@ pub fn run_script(
     if !runner.keep_open {
         exit.write(AppExit::Success);
     }
+}
+
+/// The loading-screen commands (`splash ...`).
+fn splash_step(
+    splash: &mut Splash,
+    state: &AppState,
+    cmd: &Cmd,
+    waited: Option<std::time::Duration>,
+) -> Option<Step> {
+    let build = |splash: &mut Splash| {
+        let profile = state.session.as_ref().map(|s| s.profile.clone());
+        splash.start_build(profile, state.paths.saves.clone());
+    };
+    Some(match cmd {
+        Cmd::Splash(SplashArg::Off) => {
+            splash.close();
+            Step::Next
+        }
+        Cmd::Splash(SplashArg::Plain) => {
+            build(splash);
+            splash.pin(Pin::Plain);
+            Step::Next
+        }
+        Cmd::Splash(SplashArg::Auto) => {
+            build(splash);
+            splash.restart();
+            Step::Next
+        }
+        Cmd::Splash(SplashArg::Frame(n)) => {
+            build(splash);
+            match splash.built() {
+                None => Step::Retry,
+                Some(Err(e)) => Step::Fail(format!("splash {n}: no door frames: {e}")),
+                Some(Ok(count)) if *n >= count => {
+                    Step::Fail(format!("splash {n}: the door has {count} frames"))
+                }
+                Some(Ok(_)) => {
+                    splash.pin(Pin::Frame(*n));
+                    Step::Next
+                }
+            }
+        }
+        Cmd::SplashWaitClosed => {
+            if !splash.active() {
+                Step::Next
+            } else if waited.is_some_and(|w| w.as_secs() >= 30) {
+                Step::Fail("splash-wait-closed: still showing after 30 s".to_owned())
+            } else {
+                Step::Retry
+            }
+        }
+        Cmd::SplashSave { frame, scale, file } => {
+            build(splash);
+            if splash.built().is_none() {
+                return Some(Step::Retry);
+            }
+            match splash.view(*frame, *scale) {
+                Ok(img) => {
+                    if let Some(dir) = file.parent() {
+                        let _ = std::fs::create_dir_all(dir);
+                    }
+                    match image::save_buffer(
+                        file,
+                        &img.data,
+                        img.width as u32,
+                        img.height as u32,
+                        image::ColorType::Rgba8,
+                    ) {
+                        Ok(()) => Step::Next,
+                        Err(e) => Step::Fail(format!("splash-save {}: {e}", file.display())),
+                    }
+                }
+                Err(e) => Step::Fail(format!("splash-save: {e}")),
+            }
+        }
+        _ => return None,
+    })
 }
 
 fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) -> Step {
@@ -486,6 +574,8 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
         | Cmd::Settings(_)
         | Cmd::AddInstall(_)
         | Cmd::CloseDialogs => Step::Next,
+        // Handled by `splash_step`.
+        Cmd::Splash(_) | Cmd::SplashWaitClosed | Cmd::SplashSave { .. } => Step::Next,
         Cmd::PaintBrush { x, y } => {
             let Some(layer) = state.edit.current_layer else {
                 return Step::Fail("paint-brush: there is no brush (use brush-from)".to_owned());

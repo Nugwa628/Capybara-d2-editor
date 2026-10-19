@@ -125,19 +125,17 @@ fn run_job(req: JobRequest, objects: Option<&ObjectSource<'_>>) -> JobResult {
 fn run_guarded(req: JobRequest, objects: Option<&ObjectSource<'_>>) -> JobResult {
     let (doc, ticket, div, tick) = (req.doc, req.ticket, req.div, req.tick);
     let (key, profile) = (req.key.clone(), req.profile.clone());
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_job(req, objects))).unwrap_or_else(
-        |_| JobResult {
-            doc,
-            ticket,
-            div,
-            tick,
-            key,
-            profile,
-            tiles: None,
-            warnings: Vec::new(),
-            outcome: Err("map build panicked".to_owned()),
-        },
-    )
+    crate::crash::catch(|| run_job(req, objects)).unwrap_or_else(|_| JobResult {
+        doc,
+        ticket,
+        div,
+        tick,
+        key,
+        profile,
+        tiles: None,
+        warnings: Vec::new(),
+        outcome: Err("map build panicked".to_owned()),
+    })
 }
 
 fn worker_loop(rx: Receiver<JobRequest>, tx: Sender<JobResult>) {
@@ -158,12 +156,10 @@ fn worker_loop(rx: Receiver<JobRequest>, tx: Sender<JobResult>) {
         };
         // One sprite cache for as long as the jobs share overlay and tables.
         let overlay = req.overlay.clone();
-        let animdata = job::load_animdata(&overlay);
         let sprites = ObjectSprites::new(&overlay, &catalog);
         let source = ObjectSource {
             sprites: &sprites,
             catalog: &catalog,
-            animdata: animdata.as_ref(),
         };
         let mut current = req;
         loop {

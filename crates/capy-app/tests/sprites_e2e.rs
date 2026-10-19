@@ -2,7 +2,7 @@
 //! vanilla DCC by game path, exports its frames, imports them back as a DCC
 //! and saves it to a game path, then outlines and gradients it in the editor
 //! and saves again. The test checks the saved files (frames, CHANGED.txt,
-//! snapshots, palette lock) and that `CapybaraMapEditor.exe render ...` (the
+//! snapshots, palette lock) and that `CapybarasD2Editor.exe render ...` (the
 //! single-exe CLI) writes a PNG and exits 0.
 //!
 //! Needs a window (GPU) and the vanilla install, so it only runs with
@@ -38,7 +38,7 @@ fn gpu_tests_enabled() -> bool {
 }
 
 fn exe() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_CapybaraMapEditor"))
+    Command::new(env!("CARGO_BIN_EXE_CapybarasD2Editor"))
 }
 
 /// Opaque pixels in anchor space: (x, y) -> RGB under `palette`.

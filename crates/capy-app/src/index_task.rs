@@ -218,11 +218,11 @@ pub fn spawn(
     let spawned = std::thread::Builder::new()
         .name(format!("index-{}", profile.id))
         .spawn(move || {
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let outcome = crate::crash::catch(|| {
                 run(&cache_dir, &profile, &overlay, &cancel, &mut |e| {
                     thread_send(e)
                 })
-            }));
+            });
             let result = match outcome {
                 Ok(r) => r,
                 Err(_) => Err("index task panicked".to_owned()),
@@ -247,7 +247,7 @@ pub fn spawn_refresh(
     let spawned = std::thread::Builder::new()
         .name(format!("index-saves-{}", profile.id))
         .spawn(move || {
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let outcome = crate::crash::catch(|| {
                 let mut index = Index::open(&cache_dir).map_err(|e| e.to_string())?;
                 let report = index
                     .refresh_saves(&profile, &overlay)
@@ -256,7 +256,7 @@ pub fn spawn_refresh(
                     "Asset index: saved maps refreshed ({} files, {} ms)",
                     report.files, report.millis
                 ))
-            }));
+            });
             send(outcome.unwrap_or_else(|_| Err("the refresh panicked".to_owned())));
         });
     // A thread that cannot start only means a slightly stale index.

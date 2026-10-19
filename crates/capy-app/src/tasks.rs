@@ -194,9 +194,8 @@ pub fn spawn_open(generation: u64, profile: Profile, paths: Paths, tx: Sender<Ta
     let spawned = std::thread::Builder::new()
         .name(format!("open-profile-{}", profile.id))
         .spawn(move || {
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                open_session(generation, profile, &paths, &thread_tx)
-            }));
+            let outcome =
+                crate::crash::catch(|| open_session(generation, profile, &paths, &thread_tx));
             let result = match outcome {
                 Ok(Ok(data)) => Ok(data),
                 Ok(Err(e)) => Err(format!("{e:#}")),
@@ -226,7 +225,7 @@ pub fn spawn_catalog(
     let spawned = std::thread::Builder::new()
         .name("map-catalog".to_owned())
         .spawn(move || {
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let outcome = crate::crash::catch(|| {
                 let started = Instant::now();
                 MapCatalog::build(&overlay, version, &ds1s)
                     .map(|(mut catalog, warnings)| {
@@ -240,7 +239,7 @@ pub fn spawn_catalog(
                         }
                     })
                     .map_err(|e| e.to_string())
-            }));
+            });
             let result = outcome.unwrap_or_else(|_| Err("catalog task panicked".to_owned()));
             let _ = thread_tx.send(TaskEvent::Catalog { generation, result });
         });

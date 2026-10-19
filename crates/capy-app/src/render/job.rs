@@ -14,8 +14,6 @@ use capy_render::{
 };
 use d2_assets::objects::ObjectCatalog;
 use d2_assets::{GamePath, Overlay};
-use d2_formats::animdata::AnimData;
-use d2_formats::cof::path_token;
 use d2_formats::ds1::Ds1;
 use d2_formats::palette::{Palette, act_palette_path};
 
@@ -83,7 +81,6 @@ pub struct BuildInput {
 pub struct ObjectSource<'a> {
     pub sprites: &'a ObjectSprites<'a>,
     pub catalog: &'a ObjectCatalog,
-    pub animdata: Option<&'a AnimData>,
 }
 
 pub struct BuildOutput {
@@ -124,37 +121,22 @@ fn object_anim(
         .catalog
         .resolve(ds1.effective_act(), ds1.version, object);
     let direction = info.direction.unwrap_or(0);
-    let opts = ObjectOptions::default();
-    let count = first.frames_per_direction.max(1);
-    let mut frames = Vec::with_capacity(usize::from(count));
-    frames.push(Arc::clone(first));
-    for f in 1..count {
-        let frame = src
-            .sprites
-            .frame_of_info(&info, &opts, Some(f), direction)
-            .unwrap_or_else(|_| Arc::clone(first));
-        frames.push(frame);
+    // The delta rule lives in capy-render: FrameDelta, else AnimData, and
+    // 0/none mean 256.
+    match src.sprites.frames_of_info(&info, direction) {
+        Ok((mut frames, delta)) => {
+            for (k, frame) in frames.iter_mut().enumerate() {
+                if k == 0 || frame.layers.is_empty() {
+                    *frame = Arc::clone(first);
+                }
+            }
+            ObjectAnim { frames, delta }
+        }
+        Err(_) => ObjectAnim {
+            frames: vec![Arc::clone(first)],
+            delta: 256,
+        },
     }
-    let animdata_speed = || {
-        let token = path_token(info.token.as_deref()?);
-        let mode = match path_token(&info.mode) {
-            m if m.is_empty() => "nu".to_owned(),
-            m => m,
-        };
-        let class = match path_token(&info.weapon_class) {
-            c if c.is_empty() => "hth".to_owned(),
-            c => c,
-        };
-        src.animdata?
-            .get(&format!("{token}{mode}{class}"))
-            .map(|r| r.speed)
-    };
-    let delta = info
-        .frame_delta
-        .or_else(animdata_speed)
-        .filter(|d| *d != 0)
-        .unwrap_or(256);
-    ObjectAnim { frames, delta }
 }
 
 /// The draw list as scene entries, each object with its whole animation
@@ -294,15 +276,6 @@ pub fn load_palette(overlay: &Overlay, act: u8) -> Result<Palette, String> {
         .map_err(|e| format!("reading {path}: {e}"))?
         .ok_or_else(|| format!("{path} is not in the profile"))?;
     Palette::parse_dat(&bytes).map_err(|e| format!("parsing {path}: {e}"))
-}
-
-/// Loads `animdata.d2` (monster animation speeds); `None` when absent.
-pub fn load_animdata(overlay: &Overlay) -> Option<AnimData> {
-    let bytes = overlay
-        .read_bytes(&GamePath::new("data\\global\\animdata.d2"))
-        .ok()
-        .flatten()?;
-    AnimData::parse(&bytes).ok()
 }
 
 /// Loads the DT1s of a map. Unreadable ones come back as warnings.

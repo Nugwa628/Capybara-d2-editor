@@ -177,7 +177,7 @@ fn gpu_render_matches_the_cpu_compositor() {
         }
         let shot = out_dir.join(format!("{}_gpu.png", entry.name));
         let _ = std::fs::remove_file(&shot);
-        let status = Command::new(env!("CARGO_BIN_EXE_CapybaraMapEditor"))
+        let status = Command::new(env!("CARGO_BIN_EXE_CapybarasD2Editor"))
             .env("CAPY_HOME", home.path().join("capybara"))
             .env("CAPY_PROFILE", "vanilla")
             .env("CAPY_NO_INDEX", "1")
