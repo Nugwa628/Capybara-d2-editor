@@ -510,6 +510,7 @@ impl AppState {
         }
         let title = editor.source.label();
         self.sprites.editor = Some(editor);
+        self.sprites.converter.target = Target::Editor;
         self.sprites.focus = Some(Focus::Editor);
         self.info(format!("Editing {title}"));
     }
