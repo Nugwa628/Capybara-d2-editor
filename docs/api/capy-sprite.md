@@ -39,7 +39,7 @@ pub mod model;    pub use model::{Sprite, SpriteFormat, RgbaFrame};
 pub mod quantize; pub use quantize::{QuantizeOptions, Dither, quantize, to_rgba};
 pub mod image_io; pub use image_io::{import_image, export_png, ImageKind};   // PNG, BMP, GIF, PCX (own PCX reader)
 pub mod ops;      pub use ops::{split_frame, join_frames, trim_borders, center_offset, offset_all, add_direction, remove_directions, remove_frames};
-pub mod transfer; pub use transfer::{ExportMeta, FrameMeta, export_frames, import_frames, export_sheet, import_sheet};
+pub mod transfer; pub use transfer::{ExportMeta, FrameMeta, export_frames, import_frames, import_frames_subset, export_sheet, import_sheet};
 pub mod batch;    pub use batch::{BatchDirection, BatchOptions, BatchReport, batch_convert};
 pub mod cof;      pub use cof::{CofLayerSprite, compose_cof_frame, cof_component_paths, UnitKind};
 
@@ -113,6 +113,16 @@ pub fn export_frames(sprite: &Sprite, format: SpriteFormat, palette: &d2_formats
 /// (`opts.transparent_rgb` treated as None): exported frames already carry
 /// alpha, so opaque black stays opaque. Without it, `opts` apply as given.
 pub fn import_frames(dir: &std::path::Path, palette: &d2_formats::palette::Palette, opts: &QuantizeOptions) -> Result<(Sprite, Option<ExportMeta>)>;
+/// `import_frames` for only `files` (plain file names in `dir`; a folder part is an error).
+/// With sprite.json: every name must be listed there (ASCII case-insensitive; repeats count
+/// once), offsets come from it and colour keying is off, as in import_frames. Unpicked frames
+/// close up: a direction with no picked frame is dropped, the picked frames of a direction come
+/// in frame order without gaps (whatever the order of `files`), so directions may differ in
+/// length (not encodable until re-laid out). The meta is sprite.json with `frames` reduced to
+/// the imported ones, in sprite order, keeping their original `dir`/`frame`; its `directions`/
+/// `frames_per_direction` stay the export's. Without sprite.json: one direction in the given
+/// order, `center_offset` anchors, `opts` as given, meta `None`. Empty `files` is an error.
+pub fn import_frames_subset(dir: &std::path::Path, files: &[String], palette: &d2_formats::palette::Palette, opts: &QuantizeOptions) -> Result<(Sprite, Option<ExportMeta>)>;
 /// One PNG: rows = directions, columns = frames, uniform cells of the union box.
 pub fn export_sheet(sprite: &Sprite, palette: &d2_formats::palette::Palette) -> Result<(Vec<u8>, ExportMeta)>;
 /// With `meta` (from export_sheet), colour keying is off with meta, like import_frames with sprite.json.
