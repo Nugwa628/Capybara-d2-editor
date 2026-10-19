@@ -108,6 +108,8 @@
 //! center-cell 30 25                     # centre the view on a cell
 //! ```
 //!
+//! "Convert to palette" and palette memory: see [`super::script_palette`].
+//!
 //! Loading screen (off during scripts unless one of these shows it):
 //!
 //! ```text
@@ -328,6 +330,8 @@ pub enum Cmd {
         x: u32,
         y: u32,
     },
+    /// "Convert to palette" and palette memory (see `script_palette`).
+    Palette(super::script_palette::PaletteCmd),
 }
 
 /// The kinds `assert-history` accepts.
@@ -492,6 +496,9 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
             Err(format!("{word}: expected {usage}"))
         }
     };
+    if let Some(r) = super::script_palette::parse(&word.to_ascii_lowercase(), &args, rest) {
+        return r.map(|c| Some(Cmd::Palette(c)));
+    }
     let cmd = match word.to_ascii_lowercase().as_str() {
         "open" => {
             if rest.is_empty() {

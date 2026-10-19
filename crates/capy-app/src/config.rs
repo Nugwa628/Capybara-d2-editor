@@ -118,6 +118,8 @@ pub struct Config {
     pub layer_visibility: LayerVisibility,
     pub recent_maps: Vec<RecentMap>,
     pub overrides: Vec<MapOverride>,
+    /// Named "Convert to palette" settings.
+    pub palette_presets: Vec<crate::sprites::convert_palette::settings::PalettePreset>,
 }
 
 impl Default for Config {
@@ -138,6 +140,7 @@ impl Default for Config {
             layer_visibility: LayerVisibility::default(),
             recent_maps: Vec::new(),
             overrides: Vec::new(),
+            palette_presets: Vec::new(),
         }
     }
 }

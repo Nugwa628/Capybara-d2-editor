@@ -10,6 +10,7 @@ use d2_formats::palette::Palette;
 
 use super::SpriteSource;
 use super::cof::CofView;
+use super::dt1view::Dt1View;
 
 /// The game's animation clock: AnimData speed 256 advances one frame per
 /// 25 Hz tick.
@@ -39,6 +40,8 @@ pub struct SingleSprite {
 pub enum Loaded {
     Sprite(SingleSprite),
     Cof(Box<CofView>),
+    /// A tile set: one "direction" whose frames are the tiles.
+    Dt1(Box<Dt1View>),
 }
 
 /// A frame uploaded to the GPU, with where it sits relative to the anchor.
@@ -107,6 +110,7 @@ impl ViewerState {
         match &self.loaded {
             Some(Loaded::Sprite(s)) => s.sprite.directions.len(),
             Some(Loaded::Cof(c)) => c.directions(),
+            Some(Loaded::Dt1(_)) => 1,
             None => 0,
         }
     }
@@ -115,6 +119,7 @@ impl ViewerState {
         match &self.loaded {
             Some(Loaded::Sprite(s)) => s.sprite.frames_per_direction(),
             Some(Loaded::Cof(c)) => c.frames(),
+            Some(Loaded::Dt1(d)) => d.len(),
             None => 0,
         }
     }
@@ -192,6 +197,10 @@ impl ViewerState {
                 Some(Ok(to_rgba(img, palette)))
             }
             Loaded::Cof(c) => Some(c.compose(dir, frame, palette)),
+            Loaded::Dt1(d) => {
+                let img = d.images.get(frame).filter(|_| dir == 0)?;
+                Some(Ok(to_rgba(img, palette)))
+            }
         }
     }
 
@@ -200,6 +209,17 @@ impl ViewerState {
         match self.loaded.as_ref()? {
             Loaded::Sprite(s) => s.sprite.bounds(),
             Loaded::Cof(c) => c.bounds(),
+            // Tiles differ a lot in size: the box of the tile on show.
+            Loaded::Dt1(d) => d.images.get(self.frame).and_then(|img| {
+                (img.width > 0 && img.height > 0).then(|| {
+                    (
+                        img.offset_x,
+                        img.offset_y,
+                        img.offset_x + img.width as i32,
+                        img.offset_y + img.height as i32,
+                    )
+                })
+            }),
         }
     }
 
@@ -207,21 +227,28 @@ impl ViewerState {
     pub fn sprite(&self) -> Option<(&Sprite, SpriteFormat)> {
         match self.loaded.as_ref()? {
             Loaded::Sprite(s) => Some((&s.sprite, s.format)),
-            Loaded::Cof(_) => None,
+            Loaded::Cof(_) | Loaded::Dt1(_) => None,
+        }
+    }
+
+    pub fn dt1(&self) -> Option<&Dt1View> {
+        match self.loaded.as_ref()? {
+            Loaded::Dt1(d) => Some(d),
+            _ => None,
         }
     }
 
     pub fn cof(&self) -> Option<&CofView> {
         match self.loaded.as_ref()? {
             Loaded::Cof(c) => Some(c),
-            Loaded::Sprite(_) => None,
+            _ => None,
         }
     }
 
     pub fn cof_mut(&mut self) -> Option<&mut CofView> {
         match self.loaded.as_mut()? {
             Loaded::Cof(c) => Some(c),
-            Loaded::Sprite(_) => None,
+            _ => None,
         }
     }
 

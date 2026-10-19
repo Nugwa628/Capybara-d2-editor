@@ -14,7 +14,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 !state.sprites.dialogs.is_open(),
                 egui::Button::new("Open file..."),
             )
-            .on_hover_text("A DC6, DCC or COF anywhere on disk (opened read-only)")
+            .on_hover_text("A DC6, DCC, COF or DT1 anywhere on disk (opened read-only)")
             .clicked()
         {
             state.sprite_dialog(Purpose::OpenSprite);
@@ -33,6 +33,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         ui.checkbox(&mut l.show_dc6, "DC6");
         ui.checkbox(&mut l.show_dcc, "DCC");
         ui.checkbox(&mut l.show_cof, "COF");
+        ui.checkbox(&mut l.show_dt1, "DT1");
     });
     state.refresh_sprite_filter();
 

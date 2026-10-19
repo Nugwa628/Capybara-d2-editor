@@ -888,7 +888,7 @@ panels:
 
 | Panel | What it does |
 |---|---|
-| Sprites | Every `.dc6`, `.dcc` and `.cof` in the profile, with a filter and **Open file...**. |
+| Sprites | Every `.dc6`, `.dcc`, `.cof` and `.dt1` in the profile, with a filter and **Open file...**. |
 | Viewer | Plays a sprite or a COF composite. |
 | Editor | Palette-locked pixel editor. |
 | Converter | Save to game path, image import, exports, batch conversion. |
@@ -897,19 +897,23 @@ panels:
 ### The sprite list
 
 Paths are shown without `data\global\`. Use **Filter** (for example
-`monsters\zm`) and the **DC6**, **DCC** and **COF** checkboxes to narrow the
-list, then click a row to open it in the Viewer.
+`monsters\zm`) and the **DC6**, **DCC**, **COF** and **DT1** checkboxes to
+narrow the list, then click a row to open it in the Viewer.
 
-**Open file...** opens a DC6, DCC or COF from anywhere on disk. Such files
-are opened read-only.
+**Open file...** opens a DC6, DCC, COF or DT1 from anywhere on disk. Such
+files are opened read-only.
 
 ### The Viewer
 
 <!-- screenshot: the Viewer showing a monster COF with the layer list on the left -->
 
+- The **palette badge** says which palette is on and whether it is the one
+  remembered for this file (see [Palette memory](#palette-memory)).
 - **Palette** picks the colours: Act 1 to Act 5, any other `pal.dat` in the
   profile (units, menus, and so on), or a built-in grey ramp. The Viewer and
   the Editor share this choice.
+- **Convert to palette...** opens [Converting between
+  palettes](#converting-between-palettes) for the sprite or tile set on show.
 - **gamma** (0.5 to 3.0) changes only what you see. It never changes the
   pixel data.
 - **Zoom** 1x to 16x, or the mouse wheel over the picture. Drag with the left
@@ -940,6 +944,12 @@ the left lists:
 
 Layers are drawn in the COF's own order for each frame. COFs can be viewed
 but not converted or saved.
+
+#### DT1 tile sets
+
+A `.dt1` opens as a list of tiles: **Tile** picks one by index, or type its
+**orientation**, **main** and **sub** to jump to it. Tile sets are read-only;
+the only way to change one is **Convert to palette...**.
 
 ### The Converter
 
@@ -1022,6 +1032,167 @@ transparency. Without one, each frame is anchored at its bottom centre.
 
 The output folder mirrors the input folder's tree, and nothing is ever
 written inside the input folder. The report goes to the Log.
+
+### Converting between palettes
+
+A DC6, DCC or DT1 stores **palette indices**, not colours. The game looks
+each index up in the palette of the place where the art is drawn: the act
+palette for tiles and most in-game art, other palettes for menus and loading
+screens. Act 1 to Act 5 share every colour except **indices 225 to 254**,
+which differ per act. So when you copy act 5 tiles into an act 1 map, every
+pixel that uses one of those 30 indices shows a different colour, and UI art
+drawn under one palette can glitch under another.
+
+**Convert to palette** rewrites the indices so the art looks as close as
+possible to the original under the new palette. Nothing converts
+automatically: you see the plan, adjust it, and press **Convert**.
+
+Open it from:
+
+- the Viewer's **Convert to palette...** button (the sprite or tile set on
+  show);
+- the Converter's **Convert to palette...** button;
+- the Map Editor's Tiles browser: right-click a tile, **Convert tile set to
+  palette...** (opens that tile's DT1 at that tile);
+- the warning shown when you save art into a file of another palette.
+
+<!-- screenshot: the Convert to palette window with the plan table and before/after of an act 5 tile -->
+
+**Input.** The top row shows the file being converted. **From the Viewer**
+takes what the Viewer shows, **Pick a DT1...** lists every `.dt1` in the
+profile (type to filter, for example `act5\lava`), **Open file...** takes a
+DT1, DC6 or DCC from disk.
+
+**Source palette** is the palette the file was made for. It starts as the
+palette remembered for the file (see Palette memory), else the one used in
+its folder, else the act its `tiles\actN\` folder names (`expansion` is Act
+5), else the current one. **Target palette** is where the file is going:
+Act 1 to Act 5, every other palette of the profile (units, loading, menu0 to
+menu4, sky, ...), or **All acts (shared colours only)**.
+
+**All acts (shared colours only)** matches against Act 1's colours but never
+picks an index from 225 to 254, so the result looks the same in every act.
+Use it for UI, item and skill art that must not change colour between acts;
+the window suggests it for files under `ui\` and `items\`.
+
+#### Settings
+
+| Setting | What it does |
+|---|---|
+| Distance | How "closest colour" is measured: **OkLab** (perceptual, the default), **Redmean** or plain **RGB**. |
+| Allowed targets | **All colours**, **Shared act colours** (skip 225-254), or an **Index range**. |
+| Keep exact matches | An index whose colour is identical in both palettes stays as it is (on by default; act 5 to act 1 then only touches the act-specific indices). |
+| brightness, contrast, saturation, hue | Shift the source colours before matching (±0.3, hue ±180°). With **Keep exact matches** on they only affect the colours that are re-matched; the window says so and offers **Turn off keep exact**. |
+| Advanced: lightness weight | Above 1 favours matching lightness over hue (OkLab only). |
+
+**Reset** restores the defaults (overrides stay). **Presets** saves the
+settings and overrides under a name in `config.toml` (`[[palette_presets]]`)
+and loads them back.
+
+#### The plan table
+
+One row per colour the file uses, worst match first:
+
+- the source swatch and index, `->` (or `=` when the index stays), the
+  target swatch and index;
+- the **error**: how far the new colour is from the old one, coloured
+  **fine** (up to 2), **slight**, **visible** (above 5) or **obvious** (above
+  10);
+- how many **pixels** use it, and **how** it was matched: kept, nearest or
+  override.
+
+Hover a row to see its pixels in magenta in the preview. Click a target
+colour to open the **override picker**: the best matches with their errors,
+and the whole target palette (colours outside the allowed set are dimmed but
+can still be picked). An override is marked `(!)` when it uses a colour
+outside the allowed set. **x** clears one override, **Clear all overrides**
+clears them all. Overrides are per source index, so they apply to every file
+of a batch.
+
+<!-- screenshot: the override picker -->
+
+#### Preview, Convert and saving
+
+The preview shows the frame or tile **before** (under the source palette)
+and **after** (under the target palette), side by side or with a
+Before/After toggle, with zoom. Pick the frame by direction and frame, or the
+tile by index or by orientation, main and sub. **Highlight changed pixels**
+and **Highlight worst matches** mark pixels in magenta. Everything updates as
+you change the settings.
+
+**Convert** applies the plan to a copy and opens it in the Viewer as an
+unsaved converted file, under the target palette. The Log and a notification
+give the number of colours changed and the mean and worst error. Then:
+
+- **Save to game path...** writes `capybara\saves\<profile>\<game path>`
+  (pre-filled with the file's own path), adds it to CHANGED.txt and records a
+  snapshot, like any other save;
+- **Save As...** writes the file anywhere you pick (never inside a game
+  install folder).
+
+DT1 and DC6 files are patched in place: only the pixel bytes change, every
+header, table and control byte stays identical. DCC files are decoded,
+remapped and re-encoded. The saved file is remembered with the target
+palette.
+
+#### Example: act 5 tiles in an act 1 map
+
+1. In the Viewer, open (or in the window, **Pick a DT1...**) the act 5 DT1,
+   for example `tiles\expansion\siege\ground.dt1`.
+2. **Convert to palette...**: source **Act 5** (guessed from the path),
+   target **Act 1**.
+3. Look at the plan: only the act-specific colours change. Override any
+   colour you don't like, compare before/after.
+4. **Convert**, then **Save to game path...** (or save it under a new name,
+   for example in your act 1 tile folder, and add it to the map's tile list
+   as usual).
+
+#### Batch
+
+Under **Batch**: **Add files...**, **Add folder...** (with sub-folders), or
+**Game files containing** a text (for example `tiles\act5\lava`) to add
+profile files. Output goes to **Game paths (saves)** (files from disk need a
+`data\` folder in their path) or to a **Folder** you pick. Every file gets
+its own plan from its own colours, with the window's source, target,
+settings and overrides. **Start batch** shows progress and **Cancel**; the
+Log lists each file with its worst error.
+
+### Palette memory
+
+The Sprites tab remembers which palette each sprite or tile file belongs to,
+in `capybara\user.db`, so you don't save art made under the wrong palette.
+
+- A file's palette is remembered when you pick a palette while it is open in
+  the Viewer, Editor or Converter, when you import into it, when you save it,
+  and when you convert it (the target palette).
+- Opening a file with a remembered palette switches to it (the Log says so).
+- When a file has none but other files in its folder do, the folder's
+  palette is **suggested**, never applied silently.
+
+Each of the Viewer, Editor and Converter shows a **palette badge**:
+
+| Badge | Meaning |
+|---|---|
+| green "remembered for this file" | The palette on is the file's. |
+| red "this file was last used with Act 5!" | The palette on is not the file's. **Use Act 5** switches. |
+| blue "used in this folder" | Nothing for the file; its folder uses this palette. |
+| amber "this folder uses Act 1" | Nothing for the file; **Use Act 1** switches. |
+| amber "not remembered" | Nothing known yet (or the sprite has no file). |
+
+Click the badge to pick another palette.
+
+<!-- screenshot: the Viewer with an amber "this folder uses Act 1" badge -->
+
+The save, import and export screens name the palette in use. Saving into a
+game path, or importing an export, whose remembered palette differs from the
+current one asks first: **Use Act 5** (switch, then continue), **Keep Act 1**
+(continue), **Convert to palette...** (for saves) or **Cancel**.
+
+<!-- screenshot: the palette warning before a save -->
+
+Exports (**Frames + sprite.json**) record the palette in `sprite.json` as
+`act1` ... `act5`, `units`, `menu0`, ...; importing such a folder offers to
+switch to it.
 
 ### The Editor
 
@@ -1491,6 +1662,7 @@ settings change.
 | `[window]` | `width` and `height` of the window. |
 | `[[recent_maps]]` | The File > Open recent list. |
 | `[[overrides]]` | Your LvlType/Def choices, per profile and map, including the ones imported from DS1Edit `.ini` files. |
+| `[[palette_presets]]` | Named **Convert to palette** presets: `name` and `[palette_presets.settings]` (`distance`, `allowed`, `keep_exact`, `lightness_weight`, `brightness`, `contrast`, `saturation`, `hue`, `overrides` as `[source, target]` pairs). |
 
 ### Environment variables
 

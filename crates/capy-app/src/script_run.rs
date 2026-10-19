@@ -335,6 +335,9 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
     if let Some(step) = sprite_step(state, cmd) {
         return step;
     }
+    if let Some(step) = palette_step(state, cmd) {
+        return step;
+    }
     if let Some(step) = browser_step(state, cmd) {
         return step;
     }
@@ -576,6 +579,8 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
         | Cmd::CloseDialogs => Step::Next,
         // Handled by `splash_step`.
         Cmd::Splash(_) | Cmd::SplashWaitClosed | Cmd::SplashSave { .. } => Step::Next,
+        // Handled by `palette_step`.
+        Cmd::Palette(_) => Step::Next,
         Cmd::PaintBrush { x, y } => {
             let Some(layer) = state.edit.current_layer else {
                 return Step::Fail("paint-brush: there is no brush (use brush-from)".to_owned());
@@ -787,6 +792,235 @@ fn sprite_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
             }
         }),
         _ => return None,
+    };
+    Some(match result {
+        Ok(()) => Step::Next,
+        Err(e) => Step::Fail(e),
+    })
+}
+
+fn palette_choice(label: &str) -> Result<crate::sprites::palette::PaletteChoice, String> {
+    crate::sprites::palette::PaletteChoice::from_label(label)
+        .ok_or_else(|| format!("{label:?} is not a palette"))
+}
+
+fn convert_setting(state: &mut AppState, key: &str, value: &[String]) -> Result<(), String> {
+    use crate::sprites::convert_palette::settings::{Allowed, Distance, save_preset};
+    let one = || -> Result<&str, String> {
+        match value {
+            [v] => Ok(v.as_str()),
+            _ => Err(format!("convert-setting {key}: expected one value")),
+        }
+    };
+    let f = || -> Result<f32, String> {
+        one()?
+            .parse::<f32>()
+            .map_err(|_| format!("convert-setting {key}: not a number"))
+    };
+    match key {
+        "distance" => {
+            state.sprites.convert.settings.distance =
+                Distance::parse(one()?).ok_or("distance: oklab, redmean or rgb")?;
+        }
+        "targets" => {
+            state.sprites.convert.settings.allowed = match value {
+                [a] if a.eq_ignore_ascii_case("all") => Allowed::All,
+                [a] if a.eq_ignore_ascii_case("shared") => Allowed::Shared,
+                [a, from, to] if a.eq_ignore_ascii_case("range") => Allowed::Range {
+                    from: from.parse().map_err(|_| "range: from 1..255")?,
+                    to: to.parse().map_err(|_| "range: to 1..255")?,
+                },
+                _ => return Err("targets: all, shared or range <from> <to>".to_owned()),
+            };
+        }
+        "keep-exact" => {
+            state.sprites.convert.settings.keep_exact = matches!(
+                one()?.to_ascii_lowercase().as_str(),
+                "on" | "true" | "yes" | "1"
+            );
+        }
+        "lightness" => state.sprites.convert.settings.lightness_weight = f()?,
+        "brightness" => state.sprites.convert.settings.brightness = f()?,
+        "contrast" => state.sprites.convert.settings.contrast = f()?,
+        "saturation" => state.sprites.convert.settings.saturation = f()?,
+        "hue" => state.sprites.convert.settings.hue = f()?,
+        "reset" => state.sprites.convert.settings.reset_keep_overrides(),
+        "preset-save" => {
+            let name = value.join(" ");
+            let settings = state.sprites.convert.settings.clone();
+            if !save_preset(&mut state.config.palette_presets, &name, &settings) {
+                return Err("preset-save: expected a name".to_owned());
+            }
+            state.config_dirty = true;
+        }
+        "preset-load" => state.convert_load_preset(&value.join(" "))?,
+        other => return Err(format!("convert-setting: unknown key {other:?}")),
+    }
+    let s = std::mem::take(&mut state.sprites.convert.settings);
+    state.sprites.convert.settings = s.clamped();
+    Ok(())
+}
+
+/// Runs a "Convert to palette" / palette memory command; `None` for every
+/// other command.
+fn palette_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
+    use crate::edit::script_palette::PaletteCmd as P;
+    use crate::sprites::convert_palette::TargetChoice;
+    let Cmd::Palette(p) = cmd else { return None };
+    let result: Result<(), String> = match p {
+        P::Open(t) => {
+            if t.eq_ignore_ascii_case("viewer") {
+                state.convert_open_viewer()
+            } else if t.to_ascii_lowercase().starts_with("data\\") {
+                state.convert_open_game(&GamePath::new(t))
+            } else {
+                state.convert_open_file(std::path::Path::new(t))
+            }
+        }
+        P::Source(l) => palette_choice(l).map(|c| state.convert_set_source(c)),
+        P::Target(l) => TargetChoice::parse(l)
+            .ok_or_else(|| format!("{l:?} is not a target"))
+            .map(|t| state.sprites.convert.target = t),
+        P::Setting { key, value } => convert_setting(state, key, value),
+        P::Override { source, target } => {
+            match source {
+                None => state.sprites.convert.settings.clear_overrides(),
+                Some(s) => state.sprites.convert.settings.set_override(*s, *target),
+            }
+            Ok(())
+        }
+        P::Item(i) => {
+            let n = state.sprites.convert.item_count();
+            if *i < n {
+                state.sprites.convert.set_item(*i);
+                Ok(())
+            } else {
+                Err(format!("convert-item {i}: the input has {n} items"))
+            }
+        }
+        P::Tile { o, m, s, n } => {
+            match state
+                .sprites
+                .convert
+                .input
+                .as_ref()
+                .and_then(|i| i.find_tile(*o, *m, *s, *n))
+            {
+                Some(i) => {
+                    state.sprites.convert.set_item(i);
+                    Ok(())
+                }
+                None => Err(format!("convert-tile {o} {m} {s}: no such tile")),
+            }
+        }
+        P::Picker(x) => {
+            state.sprites.convert.picker = *x;
+            Ok(())
+        }
+        P::Hover(x) => {
+            state.sprites.convert.script_hover = *x;
+            Ok(())
+        }
+        P::Highlight(h) => {
+            let c = &mut state.sprites.convert;
+            c.highlight_changed = h == "changed";
+            c.highlight_worst = h == "worst";
+            Ok(())
+        }
+        P::Apply => state.convert_apply(),
+        P::SaveGame(path) => {
+            let text = path.clone().unwrap_or_else(|| state.converted_save_text());
+            state.convert_save_game(&text).map(|_| ())
+        }
+        P::SaveAs(f) => state.convert_save_as(f).map(|_| ()),
+        P::Close => {
+            state.sprites.convert.open = false;
+            state.sprites.convert.picker = None;
+            Ok(())
+        }
+        P::BatchAddGame(f) => match state.convert_batch_add_game(f) {
+            0 => Err(format!("convert-batch-add-game {f:?}: no files match")),
+            _ => Ok(()),
+        },
+        P::BatchAddFolder(d) => {
+            let items = crate::sprites::convert_palette::batch::collect_folder(d, true);
+            match state.sprites.convert.batch.add(items) {
+                0 => Err(format!(
+                    "convert-batch-add-folder: nothing in {}",
+                    d.display()
+                )),
+                _ => Ok(()),
+            }
+        }
+        P::BatchOutput(o) => {
+            let b = &mut state.sprites.convert.batch;
+            b.to_saves = o.is_none();
+            b.out_dir.clone_from(o);
+            Ok(())
+        }
+        P::BatchStart => {
+            if state.convert_batch_running() {
+                return Some(Step::Retry);
+            }
+            if std::mem::take(&mut state.sprites.convert.batch.script_started) {
+                return Some(match &state.sprites.convert.batch.outcome {
+                    Some((false, text)) if text.contains(" 0 failed") => Step::Next,
+                    Some((_, text)) => Step::Fail(format!("convert-batch-start: {text}")),
+                    None => Step::Fail("convert-batch-start: no outcome".to_owned()),
+                });
+            }
+            match state.convert_batch_start() {
+                Ok(()) => {
+                    state.sprites.convert.batch.script_started = true;
+                    return Some(Step::Retry);
+                }
+                Err(e) => Err(e),
+            }
+        }
+        P::Pick(l) => palette_choice(l).map(|c| {
+            let key = crate::ui::sprites::panel_key(state, Focus::Viewer);
+            state.pick_palette(c, key.as_deref());
+        }),
+        P::AssertBadge {
+            label,
+            source,
+            panel,
+        } => {
+            let panel = match panel.as_str() {
+                "editor" => Focus::Editor,
+                "converter" => Focus::Converter,
+                _ => Focus::Viewer,
+            };
+            let key = crate::ui::sprites::panel_key(state, panel);
+            let badge = state.palette_badge(key.as_deref());
+            let want = palette_choice(label);
+            match want {
+                Ok(w) if w == badge.current && badge.source.word() == source => Ok(()),
+                Ok(_) => Err(format!(
+                    "assert-palette-badge: the badge says {:?} ({}), expected {label} {source}",
+                    badge.text,
+                    badge.source.word()
+                )),
+                Err(e) => Err(e),
+            }
+        }
+        P::SaveChecked(path) => {
+            let target = script_target(state);
+            state.sprite_write_checked(target, crate::sprites::DccWrite::Game(path.clone()));
+            Ok(())
+        }
+        P::Warning(a) => {
+            if state.sprites.palette_warning.is_none() {
+                Err("palette-warning: no palette question is open".to_owned())
+            } else {
+                state.answer_palette_warning(match a.as_str() {
+                    "use" => crate::sprites::PaletteAnswer::UseRemembered,
+                    "keep" => crate::sprites::PaletteAnswer::KeepCurrent,
+                    _ => crate::sprites::PaletteAnswer::Cancel,
+                });
+                Ok(())
+            }
+        }
     };
     Some(match result {
         Ok(()) => Step::Next,

@@ -46,6 +46,48 @@ impl PaletteChoice {
         }
     }
 
+    /// The palette's folder name, as palette memory and `sprite.json` store
+    /// it: `act1`..`act5`, `units`, `menu0`, ..., or `grey`.
+    pub fn memory_label(&self) -> String {
+        match self {
+            PaletteChoice::Act(a) => format!("act{}", a + 1),
+            PaletteChoice::Game(_) => self.label().to_ascii_lowercase(),
+            PaletteChoice::Grey => "grey".to_owned(),
+        }
+    }
+
+    /// The choice a stored label names. Accepts memory labels (`act5`,
+    /// `units`), display labels (`Act 5`, `Grey (built in)`) and palette
+    /// game paths; `None` for empty text.
+    pub fn from_label(label: &str) -> Option<PaletteChoice> {
+        let t = label.trim().replace('/', "\\").to_ascii_lowercase();
+        if t.is_empty() {
+            return None;
+        }
+        let t = t
+            .strip_prefix("data\\global\\palette\\")
+            .unwrap_or(&t)
+            .trim_end_matches("\\pal.dat")
+            .trim_end_matches("\\pal.pl2")
+            .to_owned();
+        if t.starts_with("grey") || t.starts_with("gray") {
+            return Some(PaletteChoice::Grey);
+        }
+        let compact: String = t.chars().filter(|c| !c.is_whitespace()).collect();
+        if let Some(n) = compact.strip_prefix("act")
+            && let Ok(n) = n.parse::<u8>()
+            && (1..=5).contains(&n)
+        {
+            return Some(PaletteChoice::Act(n - 1));
+        }
+        if compact.contains('\\') || compact.contains(':') || compact.contains("..") {
+            return None;
+        }
+        Some(PaletteChoice::Game(GamePath::new(&format!(
+            "data\\global\\palette\\{compact}\\pal.dat"
+        ))))
+    }
+
     /// File-name friendly label (for exports).
     pub fn slug(&self) -> String {
         self.label()
@@ -137,6 +179,16 @@ impl PaletteStore {
         }
     }
 
+    /// The raw palette of any choice (`None` when it cannot be read).
+    pub fn raw_of(
+        &mut self,
+        choice: &PaletteChoice,
+        overlay: Option<&Overlay>,
+        epoch: u64,
+    ) -> Option<Palette> {
+        self.load(choice, overlay, epoch)
+    }
+
     /// The raw palette of an act (for previews that follow a map's act).
     pub fn act(&mut self, act: u8, overlay: Option<&Overlay>, epoch: u64) -> Palette {
         self.load(&PaletteChoice::Act(act.min(4)), overlay, epoch)
@@ -183,6 +235,41 @@ mod tests {
         assert_eq!(c[0], PaletteChoice::Act(0));
         assert_eq!(c[5].label(), "units");
         assert_eq!(PaletteChoice::Act(4).label(), "Act 5");
+    }
+
+    #[test]
+    fn memory_labels_round_trip() {
+        let units = PaletteChoice::Game(GamePath::new("data\\global\\palette\\units\\pal.dat"));
+        for c in [
+            PaletteChoice::Act(0),
+            PaletteChoice::Act(4),
+            units.clone(),
+            PaletteChoice::Grey,
+        ] {
+            assert_eq!(
+                PaletteChoice::from_label(&c.memory_label()),
+                Some(c.clone())
+            );
+            assert_eq!(PaletteChoice::from_label(&c.label()), Some(c.clone()));
+        }
+        assert_eq!(PaletteChoice::Act(4).memory_label(), "act5");
+        assert_eq!(units.memory_label(), "units");
+        assert_eq!(
+            PaletteChoice::from_label("ACT2"),
+            Some(PaletteChoice::Act(1))
+        );
+        assert_eq!(
+            PaletteChoice::from_label("data\\global\\palette\\act3\\pal.dat"),
+            Some(PaletteChoice::Act(2))
+        );
+        assert_eq!(PaletteChoice::from_label(" "), None);
+        assert_eq!(PaletteChoice::from_label("..\\x"), None);
+        assert_eq!(
+            PaletteChoice::from_label("act9"),
+            Some(PaletteChoice::Game(GamePath::new(
+                "data\\global\\palette\\act9\\pal.dat"
+            )))
+        );
     }
 
     #[test]

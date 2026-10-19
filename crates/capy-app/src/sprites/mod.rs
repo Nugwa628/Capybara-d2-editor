@@ -5,9 +5,12 @@
 
 pub mod cof;
 pub mod convert;
+pub mod convert_palette;
 pub mod dialog;
+pub mod dt1view;
 pub mod editor;
 pub mod palette;
+pub mod palette_memory;
 pub mod preview;
 pub mod viewer;
 
@@ -41,6 +44,12 @@ pub enum SpriteSource {
     /// Made in the Converter from an export whose `sprite.json` names the
     /// game path the sprite came from (the save prompt offers it).
     Reimported { what: String, game: GamePath },
+    /// The unsaved result of "Convert to palette" (its bytes live in
+    /// `SpritesState::convert`), with the game path it came from.
+    Converted {
+        label: String,
+        game: Option<GamePath>,
+    },
 }
 
 impl SpriteSource {
@@ -50,6 +59,20 @@ impl SpriteSource {
             SpriteSource::File(f) => f.display().to_string(),
             SpriteSource::Imported(what) => format!("(imported) {what}"),
             SpriteSource::Reimported { what, game } => format!("(imported) {what}, from {game}"),
+            SpriteSource::Converted { label, .. } => label.clone(),
+        }
+    }
+
+    /// The palette-memory key: the game path or file the sprite belongs to
+    /// (`None` for an import not saved yet).
+    pub fn memory_key(&self) -> Option<String> {
+        match self {
+            SpriteSource::Game(p) | SpriteSource::Reimported { game: p, .. } => {
+                Some(p.as_str().to_owned())
+            }
+            SpriteSource::File(f) => Some(f.display().to_string()),
+            SpriteSource::Converted { game, .. } => game.as_ref().map(|g| g.as_str().to_owned()),
+            SpriteSource::Imported(_) => None,
         }
     }
 
@@ -69,7 +92,9 @@ impl SpriteSource {
     /// from, or where the export it was imported from came from.
     pub fn save_path(&self) -> Option<&GamePath> {
         match self {
-            SpriteSource::Game(p) | SpriteSource::Reimported { game: p, .. } => Some(p),
+            SpriteSource::Game(p)
+            | SpriteSource::Reimported { game: p, .. }
+            | SpriteSource::Converted { game: Some(p), .. } => Some(p),
             _ => None,
         }
     }
@@ -90,7 +115,11 @@ impl SpriteSource {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             SpriteSource::Imported(_) => "sprite".to_owned(),
-            SpriteSource::Reimported { game, .. } => game.file_name().to_owned(),
+            SpriteSource::Reimported { game, .. }
+            | SpriteSource::Converted {
+                game: Some(game), ..
+            } => game.file_name().to_owned(),
+            SpriteSource::Converted { .. } => "converted".to_owned(),
         };
         let stem = name.rsplit_once('.').map_or(name.as_str(), |(s, _)| s);
         if stem.is_empty() {
@@ -140,6 +169,36 @@ pub struct SavePrompt {
     pub target: Target,
     pub text: String,
     pub error: Option<String>,
+    /// Saves the converted file of "Convert to palette" (its bytes as they
+    /// are) instead of encoding `target`'s sprite.
+    pub converted: bool,
+}
+
+/// What waits for the palette warning to be answered.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PendingWrite {
+    Save { target: Target, write: DccWrite },
+    Import,
+    ImportFolder(PathBuf),
+}
+
+/// "This file belongs to another palette" before a save or an import.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaletteWarning {
+    /// The file (game path) the palette is remembered for, or the export.
+    pub key: String,
+    pub remembered: palette::PaletteChoice,
+    pub current: palette::PaletteChoice,
+    pub pending: PendingWrite,
+    /// The palette comes from an export's sprite.json (not user.db).
+    pub from_json: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaletteAnswer {
+    UseRemembered,
+    KeepCurrent,
+    Cancel,
 }
 
 /// A panel of the Sprites mode to bring to the front.
@@ -157,9 +216,10 @@ pub struct SpriteList {
     pub show_dc6: bool,
     pub show_dcc: bool,
     pub show_cof: bool,
+    pub show_dt1: bool,
     /// Indices into `Session::sprites` that pass the filter.
     pub filtered: Vec<usize>,
-    computed_for: Option<(String, [bool; 3], u64)>,
+    computed_for: Option<(String, [bool; 4], u64)>,
 }
 
 pub struct ConverterState {
@@ -196,6 +256,13 @@ pub struct SpritesState {
     pub preview: PreviewState,
     pub dialogs: Dialogs,
     pub save_prompt: Option<SavePrompt>,
+    /// "Convert to palette" (window, plan, result, batch).
+    pub convert: convert_palette::PaletteConvert,
+    /// Palette memory lookups (user.db).
+    pub memory: palette_memory::MemoryCache,
+    /// Asked before saving or importing under another palette than the
+    /// file's.
+    pub palette_warning: Option<PaletteWarning>,
     /// Asked before a DCC write would reduce crowded cells.
     pub dcc_warning: Option<DccWarning>,
     /// Open the editor's "DCC cell check" section on the next frame.
@@ -221,6 +288,7 @@ impl Default for SpritesState {
                 show_dc6: true,
                 show_dcc: true,
                 show_cof: true,
+                show_dt1: true,
                 ..SpriteList::default()
             },
             palette: PaletteStore::default(),
@@ -230,6 +298,9 @@ impl Default for SpritesState {
             preview: PreviewState::default(),
             dialogs: Dialogs::default(),
             save_prompt: None,
+            convert: convert_palette::PaletteConvert::default(),
+            memory: palette_memory::MemoryCache::default(),
+            palette_warning: None,
             dcc_warning: None,
             open_cell_check: false,
             pending_editor: None,
@@ -253,17 +324,19 @@ impl SpritesState {
     pub fn modal_open(&self) -> bool {
         self.save_prompt.is_some()
             || self.dcc_warning.is_some()
+            || self.palette_warning.is_some()
             || self.pending_editor.is_some()
             || self.quit_prompt
     }
 }
 
-/// Names that are sprites (`.dc6`, `.dcc`, `.cof`), sorted.
+/// Names that are sprites or tile sets (`.dc6`, `.dcc`, `.cof`, `.dt1`),
+/// sorted.
 pub fn sprite_list<'a>(names: impl Iterator<Item = &'a GamePath>) -> Vec<GamePath> {
     let mut out: Vec<GamePath> = names
         .filter(|p| {
             p.extension().is_some_and(|e| {
-                ["dc6", "dcc", "cof"]
+                ["dc6", "dcc", "cof", "dt1"]
                     .iter()
                     .any(|x| e.eq_ignore_ascii_case(x))
             })
@@ -285,7 +358,7 @@ pub fn palette_list<'a>(names: impl Iterator<Item = &'a GamePath>) -> Vec<GamePa
 }
 
 /// Case-insensitive substring filter plus the type toggles.
-pub fn filter_sprites(paths: &[GamePath], filter: &str, kinds: [bool; 3]) -> Vec<usize> {
+pub fn filter_sprites(paths: &[GamePath], filter: &str, kinds: [bool; 4]) -> Vec<usize> {
     let needle = filter.trim().to_ascii_lowercase();
     paths
         .iter()
@@ -295,6 +368,7 @@ pub fn filter_sprites(paths: &[GamePath], filter: &str, kinds: [bool; 3]) -> Vec
                 Some("dc6") => kinds[0],
                 Some("dcc") => kinds[1],
                 Some("cof") => kinds[2],
+                Some("dt1") => kinds[3],
                 _ => false,
             };
             kind_ok && (needle.is_empty() || p.as_str().contains(&needle))
@@ -309,6 +383,7 @@ fn format_of_name(name: &str) -> Option<&'static str> {
         "dc6" => Some("dc6"),
         "dcc" => Some("dcc"),
         "cof" => Some("cof"),
+        "dt1" => Some("dt1"),
         _ => None,
     }
 }
@@ -423,16 +498,24 @@ impl AppState {
         match &result {
             Ok(()) => {
                 self.sprites.focus = Some(Focus::Viewer);
+                let key = self
+                    .sprites
+                    .viewer
+                    .source
+                    .as_ref()
+                    .and_then(SpriteSource::memory_key);
+                self.apply_remembered_palette(key.as_deref());
                 let title = self.sprites.viewer.title();
-                let detail = match self.sprites.viewer.cof() {
-                    Some(c) => format!(
+                let detail = match (self.sprites.viewer.cof(), self.sprites.viewer.dt1()) {
+                    (Some(c), _) => format!(
                         "COF {} directions x {} frames, {} layers ({} missing)",
                         c.directions(),
                         c.frames(),
                         c.layers.len(),
                         c.missing()
                     ),
-                    None => format!(
+                    (None, Some(d)) if !d.is_empty() => format!("DT1 with {} tiles", d.len()),
+                    _ => format!(
                         "{} directions x {} frames",
                         self.sprites.viewer.directions(),
                         self.sprites.viewer.frames()
@@ -478,6 +561,16 @@ impl AppState {
                     .set_loaded(Loaded::Cof(Box::new(view)), source, fps, note);
                 Ok(())
             }
+            Some("dt1") => {
+                let view = dt1view::Dt1View::load(bytes)?;
+                self.sprites.viewer.set_loaded(
+                    Loaded::Dt1(Box::new(view)),
+                    source,
+                    viewer::DEFAULT_FPS,
+                    "default".to_owned(),
+                );
+                Ok(())
+            }
             Some(ext) => {
                 let format = SpriteFormat::from_extension(ext).ok_or("unknown format")?;
                 let sprite = Sprite::decode(bytes, format).map_err(|e| e.to_string())?;
@@ -492,7 +585,7 @@ impl AppState {
                 );
                 Ok(())
             }
-            None => Err(format!("{name} is not a .dc6, .dcc or .cof file")),
+            None => Err(format!("{name} is not a .dc6, .dcc, .cof or .dt1 file")),
         }
     }
 
@@ -634,6 +727,87 @@ impl AppState {
         }
     }
 
+    /// The Converter's Import button: asks first when the export's
+    /// sprite.json (or the file it came from) names another palette.
+    pub fn begin_sprite_import(&mut self) -> Result<(), String> {
+        let meta = convert::import_meta(&self.sprites.converter.import);
+        let key = self
+            .sprites
+            .converter
+            .import
+            .files
+            .first()
+            .and_then(|f| f.parent())
+            .map(|d| d.display().to_string())
+            .unwrap_or_default();
+        if self.ask_import_palette(meta.as_ref(), key, PendingWrite::Import) {
+            return Ok(());
+        }
+        self.sprite_import()
+    }
+
+    /// Asks the palette question for an import when `meta` (sprite.json)
+    /// or the file it was exported from names another palette. True when
+    /// the question was asked.
+    fn ask_import_palette(
+        &mut self,
+        meta: Option<&capy_sprite::ExportMeta>,
+        folder: String,
+        pending: PendingWrite,
+    ) -> bool {
+        let current = self.sprites.palette.choice.clone();
+        let from_json = meta.and_then(|m| {
+            palette_memory::mismatch(&current, Some(&m.palette)).map(|p| (folder.clone(), p, true))
+        });
+        let from_db = || {
+            let game = meta
+                .and_then(|m| m.source.as_deref())
+                .and_then(|s| convert::check_game_path(s).ok())
+                .map(|(g, _)| g.as_str().to_owned())?;
+            let remembered = self.remembered_palette(&game);
+            palette_memory::mismatch(&current, remembered.as_deref()).map(|p| (game, p, false))
+        };
+        let Some((key, remembered, from_json)) = from_json.or_else(from_db) else {
+            return false;
+        };
+        self.sprites.palette_warning = Some(PaletteWarning {
+            key,
+            remembered,
+            current,
+            pending,
+            from_json,
+        });
+        true
+    }
+
+    /// The answer to the palette warning.
+    pub fn answer_palette_warning(&mut self, answer: PaletteAnswer) {
+        let Some(w) = self.sprites.palette_warning.take() else {
+            return;
+        };
+        match answer {
+            PaletteAnswer::Cancel => {
+                self.info("Cancelled; nothing was written");
+                return;
+            }
+            PaletteAnswer::UseRemembered => {
+                self.sprites.palette.choice = w.remembered.clone();
+                self.sync_editor_palette();
+                self.info(format!("Palette switched to {}", w.remembered.label()));
+            }
+            PaletteAnswer::KeepCurrent => {}
+        }
+        match w.pending {
+            PendingWrite::Save { target, write } => {
+                self.sprite_write_dcc_checked(target, write);
+            }
+            PendingWrite::Import => {
+                let _ = self.sprite_import();
+            }
+            PendingWrite::ImportFolder(dir) => self.import_folder_now(&dir),
+        }
+    }
+
     /// Imports the Converter's files into a new sprite (Viewer, optionally
     /// the editor too).
     pub fn sprite_import(&mut self) -> Result<(), String> {
@@ -652,6 +826,10 @@ impl AppState {
                 let format = settings.format;
                 let (dirs, frames) = (sprite.directions.len(), sprite.frames_per_direction());
                 let source = SpriteSource::import(what.clone(), meta.as_ref());
+                if let Some(k) = source.memory_key() {
+                    let choice = self.sprites.palette.choice.clone();
+                    self.remember_palette(&k, &choice);
+                }
                 self.sprites.viewer.set_loaded(
                     Loaded::Sprite(SingleSprite {
                         sprite: sprite.clone(),
@@ -681,6 +859,15 @@ impl AppState {
 
     /// Opens the game-path prompt, prefilled from the sprite's source.
     pub fn begin_sprite_save(&mut self, target: Target) {
+        if target == Target::Viewer
+            && matches!(
+                self.sprites.viewer.source,
+                Some(SpriteSource::Converted { .. })
+            )
+        {
+            self.begin_converted_save();
+            return;
+        }
         let Some(data) = self.target_data(target) else {
             self.error("Nothing to save: open or import a DC6/DCC first");
             return;
@@ -698,6 +885,21 @@ impl AppState {
             target,
             text,
             error: None,
+            converted: false,
+        });
+    }
+
+    /// The game-path prompt for the converted file of "Convert to palette".
+    pub fn begin_converted_save(&mut self) {
+        if self.sprites.convert.result.is_none() {
+            self.error("Nothing to save: press Convert first");
+            return;
+        }
+        self.sprites.save_prompt = Some(SavePrompt {
+            target: Target::Viewer,
+            text: self.converted_save_text(),
+            error: None,
+            converted: true,
         });
     }
 
@@ -711,6 +913,28 @@ impl AppState {
     /// Writes `write` now, or asks first when it is a DCC with crowded cells.
     /// Returns `false` when the question was asked instead.
     pub fn sprite_write_checked(&mut self, target: Target, write: DccWrite) -> bool {
+        // A game path remembered with another palette: ask first.
+        if let DccWrite::Game(text) = &write
+            && let Ok((path, _)) = convert::check_game_path(text)
+        {
+            let current = self.sprites.palette.choice.clone();
+            let remembered = self.remembered_palette(path.as_str());
+            if let Some(r) = palette_memory::mismatch(&current, remembered.as_deref()) {
+                self.sprites.palette_warning = Some(PaletteWarning {
+                    key: path.as_str().to_owned(),
+                    remembered: r,
+                    current,
+                    pending: PendingWrite::Save { target, write },
+                    from_json: false,
+                });
+                return false;
+            }
+        }
+        self.sprite_write_dcc_checked(target, write)
+    }
+
+    /// [`AppState::sprite_write_checked`] after the palette question.
+    fn sprite_write_dcc_checked(&mut self, target: Target, write: DccWrite) -> bool {
         let is_dcc = match &write {
             DccWrite::Game(text) => {
                 convert::check_game_path(text).is_ok_and(|(_, f)| f == SpriteFormat::Dcc)
@@ -787,6 +1011,14 @@ impl AppState {
     /// "Save to game path": `capybara\saves\<profile>\<game path>`, CHANGED.txt
     /// and a snapshot.
     pub fn sprite_save_game(&mut self, target: Target, text: &str) -> Result<PathBuf, String> {
+        if target == Target::Viewer
+            && matches!(
+                self.sprites.viewer.source,
+                Some(SpriteSource::Converted { .. })
+            )
+        {
+            return self.convert_save_game(text);
+        }
         let result = (|| {
             let (path, format) = convert::check_game_path(text)?;
             let profile = self
@@ -812,6 +1044,8 @@ impl AppState {
                     report.path.display(),
                     report.changed_total
                 ));
+                let choice = self.sprites.palette.choice.clone();
+                self.remember_palette(path.as_str(), &choice);
                 if target == Target::Editor
                     && let Some(e) = self.sprites.editor.as_mut()
                 {
@@ -861,7 +1095,8 @@ impl AppState {
                             &d.sprite,
                             d.format,
                             &palette,
-                            &palette_name,
+                            // sprite.json records the memory label (`act5`).
+                            &self.sprites.palette.choice.memory_label(),
                             source.as_deref(),
                             path,
                         ),
@@ -954,6 +1189,7 @@ impl AppState {
 
     /// Dialog answers and batch progress; once per frame.
     pub fn poll_sprites(&mut self) {
+        self.poll_convert_batch();
         if let Some(answer) = self.sprites.dialogs.poll()
             && !answer.paths.is_empty()
         {
@@ -1010,27 +1246,47 @@ impl AppState {
             }
             Purpose::ImportFolder => {
                 if let Some(dir) = paths.first() {
-                    let palette = self.sprite_palette();
-                    // With sprite.json the library turns colour keying off.
-                    let opts = self.sprites.converter.import.matching.quantize();
-                    match capy_sprite::import_frames(dir, &palette, &opts) {
-                        Ok((sprite, meta)) => {
-                            let format = meta
-                                .as_ref()
-                                .map_or(self.sprites.converter.import.format, |m| m.format);
-                            let what = dir.display().to_string();
-                            self.sprites.viewer.set_loaded(
-                                Loaded::Sprite(SingleSprite { sprite, format }),
-                                SpriteSource::import(what.clone(), meta.as_ref()),
-                                viewer::DEFAULT_FPS,
-                                "default".to_owned(),
-                            );
-                            self.sprites.focus = Some(Focus::Viewer);
-                            self.info(format!("Imported the frames in {what}"));
-                        }
-                        Err(e) => self.error(format!("Import failed: {e}")),
+                    let meta = std::fs::read(dir.join("sprite.json"))
+                        .ok()
+                        .and_then(|j| serde_json::from_slice::<capy_sprite::ExportMeta>(&j).ok());
+                    let pending = PendingWrite::ImportFolder(dir.clone());
+                    if !self.ask_import_palette(meta.as_ref(), dir.display().to_string(), pending) {
+                        self.import_folder_now(dir);
                     }
                 }
+            }
+            Purpose::ConvertOpenFile => {
+                if let Some(p) = paths.first() {
+                    let _ = self.convert_open_file(p);
+                }
+            }
+            Purpose::ConvertSaveAs => {
+                if let Some(p) = paths.first() {
+                    let _ = self.convert_save_as(p);
+                }
+            }
+            Purpose::ConvertBatchFiles => {
+                let n = self
+                    .sprites
+                    .convert
+                    .batch
+                    .add(convert_palette::batch::files_items(&paths));
+                self.info(format!("Convert batch: added {n} file(s)"));
+            }
+            Purpose::ConvertBatchFolder => {
+                if let Some(dir) = paths.first() {
+                    let recursive = self.sprites.convert.batch.recursive;
+                    let items = convert_palette::batch::collect_folder(dir, recursive);
+                    let n = self.sprites.convert.batch.add(items);
+                    self.info(format!(
+                        "Convert batch: added {n} file(s) from {}",
+                        dir.display()
+                    ));
+                }
+            }
+            Purpose::ConvertBatchOutput => {
+                self.sprites.convert.batch.out_dir = paths.into_iter().next();
+                self.sprites.convert.batch.to_saves = false;
             }
             Purpose::BatchInput => self.sprites.converter.batch.input = paths.into_iter().next(),
             Purpose::BatchOutput => self.sprites.converter.batch.output = paths.into_iter().next(),
@@ -1044,6 +1300,36 @@ impl AppState {
                     let _ = self.sprite_export(export, p, target);
                 }
             }
+        }
+    }
+
+    /// Imports a folder of frames (sprite.json gives offsets) into the
+    /// Viewer.
+    pub fn import_folder_now(&mut self, dir: &Path) {
+        let palette = self.sprite_palette();
+        // With sprite.json the library turns colour keying off.
+        let opts = self.sprites.converter.import.matching.quantize();
+        match capy_sprite::import_frames(dir, &palette, &opts) {
+            Ok((sprite, meta)) => {
+                let format = meta
+                    .as_ref()
+                    .map_or(self.sprites.converter.import.format, |m| m.format);
+                let what = dir.display().to_string();
+                let source = SpriteSource::import(what.clone(), meta.as_ref());
+                if let Some(k) = source.memory_key() {
+                    let choice = self.sprites.palette.choice.clone();
+                    self.remember_palette(&k, &choice);
+                }
+                self.sprites.viewer.set_loaded(
+                    Loaded::Sprite(SingleSprite { sprite, format }),
+                    source,
+                    viewer::DEFAULT_FPS,
+                    "default".to_owned(),
+                );
+                self.sprites.focus = Some(Focus::Viewer);
+                self.info(format!("Imported the frames in {what}"));
+            }
+            Err(e) => self.error(format!("Import failed: {e}")),
         }
     }
 }
@@ -1086,7 +1372,7 @@ impl AppState {
     /// Recomputes the filtered sprite list when the filter or session changed.
     pub fn refresh_sprite_filter(&mut self) {
         let l = &self.sprites.list;
-        let kinds = [l.show_dc6, l.show_dcc, l.show_cof];
+        let kinds = [l.show_dc6, l.show_dcc, l.show_cof, l.show_dt1];
         let key = (l.filter.clone(), kinds, self.session_epoch);
         if l.computed_for.as_ref() == Some(&key) {
             return;
@@ -1113,17 +1399,25 @@ mod tests {
             "data\\global\\monsters\\zm\\tr\\zmtrlitnuhth.dcc",
             "data\\global\\palette\\units\\pal.dat",
             "data\\global\\palette\\act1\\pal.pl2",
+            "data\\global\\tiles\\act1\\town\\floor.dt1",
         ]
         .iter()
         .map(|s| GamePath::new(s))
         .collect();
         let sprites = sprite_list(names.iter());
-        assert_eq!(sprites.len(), 3);
+        assert_eq!(sprites.len(), 4);
         assert_eq!(palette_list(names.iter()).len(), 1);
-        assert_eq!(filter_sprites(&sprites, "ZM", [true; 3]).len(), 2);
-        assert_eq!(filter_sprites(&sprites, "", [true, false, false]).len(), 1);
+        assert_eq!(filter_sprites(&sprites, "ZM", [true; 4]).len(), 2);
         assert_eq!(
-            filter_sprites(&sprites, "zm", [false, false, true]).len(),
+            filter_sprites(&sprites, "", [true, false, false, false]).len(),
+            1
+        );
+        assert_eq!(
+            filter_sprites(&sprites, "zm", [false, false, true, false]).len(),
+            1
+        );
+        assert_eq!(
+            filter_sprites(&sprites, "", [false, false, false, true]).len(),
             1
         );
     }

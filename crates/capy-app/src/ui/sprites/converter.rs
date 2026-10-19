@@ -55,7 +55,8 @@ fn target(ui: &mut Ui, state: &mut AppState) {
         Some(s) => ui.weak(s),
         None => ui.weak("Nothing to convert yet: open or import a DC6/DCC (COFs are viewed only)."),
     };
-    ui.horizontal_wrapped(|ui| palette_controls(ui, state));
+    super::paint_badge_row(ui, state, crate::sprites::Focus::Converter);
+    ui.horizontal_wrapped(|ui| palette_controls(ui, state, crate::sprites::Focus::Converter));
     ui.horizontal(|ui| {
         let ok = state.target_data(target).is_some() && state.session.is_some();
         if ui
@@ -65,6 +66,13 @@ fn target(ui: &mut Ui, state: &mut AppState) {
             .clicked()
         {
             state.begin_sprite_save(target);
+        }
+        if ui
+            .button("Convert to palette...")
+            .on_hover_text("Carry a DC6, DCC or DT1 into another palette (window)")
+            .clicked()
+        {
+            state.sprites.convert.open = true;
         }
     });
 }
@@ -177,9 +185,12 @@ fn import(ui: &mut Ui, state: &mut AppState) {
     );
     let ready = !state.sprites.converter.import.files.is_empty();
     if ui.add_enabled(ready, egui::Button::new("Import")).clicked() {
-        let _ = state.sprite_import();
+        let _ = state.begin_sprite_import();
     }
-    ui.weak("The palette above is the one colours are matched against.");
+    ui.weak(format!(
+        "Colours are matched against the palette above ({}).",
+        state.sprites.palette.choice.label()
+    ));
 }
 
 fn export(ui: &mut Ui, state: &mut AppState) {
@@ -235,7 +246,11 @@ fn export(ui: &mut Ui, state: &mut AppState) {
             }
         }
     });
-    ui.weak("Exports go to the folder you pick; nothing else is written outside capybara\\.");
+    ui.weak(format!(
+        "Exports use the palette {} (sprite.json records it). They go to the folder you pick; \
+         nothing else is written outside capybara\\.",
+        state.sprites.palette.choice.label()
+    ));
 }
 
 fn batch(ui: &mut Ui, state: &mut AppState) {
