@@ -175,3 +175,15 @@ fn onion_composite_layers_current_over_faded_neighbours() {
     let (_, _, rgba) = onion_composite(&cur, Some(&prev), None, &pal, 0.0);
     assert_eq!(rgba[7], 0);
 }
+
+#[test]
+fn absurd_offsets_are_errors_not_panics() {
+    let pal = test_palette();
+    let mut a = image(&["1"]);
+    a.offset_x = i32::MIN;
+    let mut b = image(&["2"]);
+    b.offset_x = i32::MAX;
+    assert!(animated_gif(&[a.clone(), b.clone()], &pal, 1).is_err());
+    let (w, h, rgba) = onion_composite(&a, Some(&b), None, &pal, 0.5);
+    assert_eq!((w, h, rgba.len()), (0, 0, 0));
+}

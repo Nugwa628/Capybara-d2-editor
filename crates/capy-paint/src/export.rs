@@ -91,7 +91,12 @@ fn union_box<'a>(images: impl Iterator<Item = &'a IndexedImage>) -> Option<(i32,
         });
     }
     let (x0, y0, x1, y1) = b?;
-    Some((x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32))
+    Some((
+        i32::try_from(x0).ok()?,
+        i32::try_from(y0).ok()?,
+        u32::try_from(x1 - x0).ok()?,
+        u32::try_from(y1 - y0).ok()?,
+    ))
 }
 
 /// Animated GIF of one direction, `delay_cs` centiseconds per frame, looping
@@ -100,7 +105,9 @@ fn union_box<'a>(images: impl Iterator<Item = &'a IndexedImage>) -> Option<(i32,
 /// frames' boxes) at its offset, and each frame replaces the previous one.
 pub fn animated_gif(frames: &[IndexedImage], palette: &Palette, delay_cs: u16) -> Result<Vec<u8>> {
     let Some((bx, by, w, h)) = union_box(frames.iter()) else {
-        return Err(PaintError::Encode("no frames to encode".into()));
+        return Err(PaintError::Encode(
+            "no frames to encode, or their boxes are too far apart".into(),
+        ));
     };
     let (Ok(cw), Ok(ch)) = (u16::try_from(w), u16::try_from(h)) else {
         return Err(PaintError::Encode(format!(

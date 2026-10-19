@@ -29,7 +29,7 @@ use d2_formats::IndexedImage;
 
 /// Most distinct pixel values (transparent included) a 4x4 cell can hold.
 const MAX_CELL_VALUES: usize = 4;
-const CELL: i32 = 4;
+const CELL: i64 = 4;
 
 /// A cell holding more than 4 distinct pixel values.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,7 +52,7 @@ struct Rect {
 }
 
 /// Bounding box of the opaque pixels in anchor coordinates (end exclusive).
-fn opaque_box(img: &IndexedImage) -> Option<(i32, i32, i32, i32)> {
+fn opaque_box(img: &IndexedImage) -> Option<(i64, i64, i64, i64)> {
     let w = img.width as usize;
     let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0usize, 0usize);
     let mut any = false;
@@ -67,10 +67,10 @@ fn opaque_box(img: &IndexedImage) -> Option<(i32, i32, i32, i32)> {
     }
     any.then(|| {
         (
-            img.offset_x.saturating_add(x0 as i32),
-            img.offset_y.saturating_add(y0 as i32),
-            img.offset_x.saturating_add(x1 as i32 + 1),
-            img.offset_y.saturating_add(y1 as i32 + 1),
+            i64::from(img.offset_x) + x0 as i64,
+            i64::from(img.offset_y) + y0 as i64,
+            i64::from(img.offset_x) + x1 as i64 + 1,
+            i64::from(img.offset_y) + y1 as i64 + 1,
         )
     })
 }
@@ -103,11 +103,13 @@ fn scan(frames: &[Vec<IndexedImage>]) -> Vec<(CellViolation, Rect)> {
             for cy in cy0..=cy1 {
                 for cx in cx0..=cx1 {
                     // Cell clipped to the frame box, then to image coordinates.
+                    // Inside the frame box, so these fit the image (and an i32).
+                    let local = |v: i64, offset: i32| (v - i64::from(offset)) as i32;
                     let r = Rect {
-                        x0: (ox + cx * CELL).max(bx0) - img.offset_x,
-                        y0: (oy + cy * CELL).max(by0) - img.offset_y,
-                        x1: (ox + cx * CELL + CELL).min(bx1) - img.offset_x,
-                        y1: (oy + cy * CELL + CELL).min(by1) - img.offset_y,
+                        x0: local((ox + cx * CELL).max(bx0), img.offset_x),
+                        y0: local((oy + cy * CELL).max(by0), img.offset_y),
+                        x1: local((ox + cx * CELL + CELL).min(bx1), img.offset_x),
+                        y1: local((oy + cy * CELL + CELL).min(by1), img.offset_y),
                     };
                     let mut seen = [false; 256];
                     for y in r.y0..r.y1 {
@@ -120,8 +122,8 @@ fn scan(frames: &[Vec<IndexedImage>]) -> Vec<(CellViolation, Rect)> {
                         out.push((
                             CellViolation {
                                 frame: FrameRef { dir, frame },
-                                cell_x: cx as u32,
-                                cell_y: cy as u32,
+                                cell_x: u32::try_from(cx).unwrap_or(u32::MAX),
+                                cell_y: u32::try_from(cy).unwrap_or(u32::MAX),
                                 colors,
                             },
                             r,
@@ -392,5 +394,22 @@ mod tests {
         }
         // TODO: once `d2_formats::dcc::Dcc::from_frames` is merged, encode the
         // reduced frames with `to_bytes`, `parse` them again and compare.
+    }
+
+    #[test]
+    fn extreme_offsets_do_not_overflow() {
+        let a = img(4, 4, i32::MIN, i32::MIN, &(1..=16).collect::<Vec<u8>>());
+        let b = img(
+            4,
+            4,
+            i32::MAX - 4,
+            i32::MAX - 4,
+            &(1..=16).collect::<Vec<u8>>(),
+        );
+        let frames = vec![vec![a, b]];
+        assert_eq!(dcc_cell_violations(&frames).len(), 2);
+        let mut s = PaintSession::new(frames, palette()).unwrap();
+        assert_eq!(reduce_dcc_cells(&mut s).unwrap(), 2);
+        assert!(dcc_cell_violations(s.frames()).is_empty());
     }
 }
