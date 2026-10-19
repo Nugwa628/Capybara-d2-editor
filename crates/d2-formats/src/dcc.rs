@@ -795,6 +795,11 @@ fn decode_direction(
     })
 }
 
+mod encode;
+#[cfg(test)]
+#[allow(clippy::panic, clippy::unwrap_used)]
+mod encode_tests;
+
 #[cfg(test)]
 #[allow(clippy::panic, clippy::unwrap_used)]
 mod tests;

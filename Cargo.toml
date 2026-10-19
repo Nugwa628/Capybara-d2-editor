@@ -7,6 +7,7 @@ members = [
     "crates/capy-edit",
     "crates/capy-history",
     "crates/capy-render",
+    "crates/capy-sprite",
     "crates/capy-app",
 ]
 
@@ -32,6 +33,7 @@ capy-index = { path = "crates/capy-index" }
 capy-edit = { path = "crates/capy-edit" }
 capy-history = { path = "crates/capy-history" }
 capy-render = { path = "crates/capy-render" }
+capy-sprite = { path = "crates/capy-sprite" }
 thiserror = "2"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
@@ -45,7 +47,7 @@ proptest = "1"
 rusqlite = { version = "0.40", features = ["bundled", "functions"] }
 nucleo = "0.5"
 image_hasher = "3.1"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "gif"] }
 blake3 = { version = "1", default-features = false, features = ["pure"] }
 gix = { version = "0.89", default-features = false, features = ["sha1"] }
 png = "0.18"
@@ -73,6 +75,10 @@ opt-level = 2
 opt-level = 2
 
 [profile.dev.package.capy-render]
+opt-level = 2
+
+# Quantizing and re-encoding sprites in the corpus tests.
+[profile.dev.package.capy-sprite]
 opt-level = 2
 
 [profile.release]
