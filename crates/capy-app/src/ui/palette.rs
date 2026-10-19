@@ -62,6 +62,9 @@ fn rows(state: &mut AppState) -> Vec<(AssetRow, Option<String>)> {
                 _ => None,
             })
             .collect()
+    } else if state.browser.palette.results.parse_error.is_some() {
+        // The answer on screen is for an older query: Enter must not use it.
+        Vec::new()
     } else {
         state
             .browser
@@ -132,6 +135,8 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
             "The asset index is not ready yet.".to_owned()
         } else if state.browser.palette.query.trim().is_empty() {
             format!("Recently used ({n})")
+        } else if state.browser.palette.results.parse_error.is_some() {
+            "Fix the query to search.".to_owned()
         } else if let Some(e) = &state.browser.palette.results.failed {
             format!("Search failed: {e}")
         } else {

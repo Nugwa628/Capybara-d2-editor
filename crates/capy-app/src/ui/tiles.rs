@@ -53,7 +53,9 @@ struct TileEvents {
 }
 
 pub fn show(ui: &mut Ui, state: &mut AppState) {
-    let panel = ui.max_rect();
+    // Wide content (a long hint, say) grows the ui past the panel; the grid
+    // is laid out for what is on screen.
+    let panel = ui.max_rect().intersect(ui.clip_rect());
     resize_with_ctrl_wheel(ui, state, panel);
     query_bar(ui, state);
     scope_bar(ui, state);
@@ -65,7 +67,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     recent_section(ui, state);
     favorites_section(ui, state);
     ui.separator();
-    results_grid(ui, state);
+    results_grid(ui, state, panel);
     enter_uses_selection(ui, state);
 }
 
@@ -140,10 +142,7 @@ fn scope_bar(ui: &mut Ui, state: &mut AppState) {
                 state.browser.scope = scope;
             }
         }
-        ui.weak(format!(
-            "{:.0} px",
-            state.config.browser_thumb
-        ))
+        ui.weak(format!("{:.0}px", state.config.browser_thumb))
         .on_hover_text("Ctrl+mouse wheel over the panel resizes the thumbnails");
     });
     if state.browser.scope == Scope::MapTileSet && !has_map {
@@ -355,22 +354,14 @@ fn grid_tile(
     );
     let outside = state.outside_tile_set(asset);
     paint_badges(ui, thumb, starred, outside, star_rect);
-    let name = display_name(asset, alias);
     let label_rect = Rect::from_min_size(
         Pos2::new(rect.left() + 2.0, thumb.bottom() + 2.0),
         Vec2::new(rect.width() - 4.0, label_h),
     );
-    let font = FontId::proportional(11.0);
-    let galley = ui.painter().layout(
-        short_name(&name),
-        font,
-        if alias.is_some() {
-            Color32::from_rgb(150, 210, 255)
-        } else {
-            Color32::from_gray(200)
-        },
-        label_rect.width(),
-    );
+    let mut job = egui::text::LayoutJob::default();
+    label_job(&mut job, asset, alias, 11.0, false);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(label_rect.width());
+    let galley = ui.painter().layout_job(job);
     ui.painter_at(label_rect)
         .galley(label_rect.min, galley, Color32::WHITE);
     let selected = state.browser.selected.as_deref() == Some(asset.key.as_str());
@@ -405,41 +396,74 @@ fn list_row(
     } else if resp.hovered() {
         ui.painter().rect_filled(rect, 2.0, Color32::from_gray(45));
     }
-    let icon = Rect::from_min_size(rect.min + Vec2::new(18.0, 1.0), Vec2::splat(height - 2.0));
+    let star_edge = (height - 4.0).min(16.0);
+    let star_rect = Rect::from_center_size(
+        Pos2::new(rect.left() + 2.0 + star_edge / 2.0, rect.center().y),
+        Vec2::splat(star_edge),
+    );
+    let icon = Rect::from_min_size(
+        Pos2::new(star_rect.right() + 4.0, rect.top() + 1.0),
+        Vec2::new((height - 2.0) * 2.0, height - 2.0),
+    );
     paint_thumb(ui, state, asset, icon);
-    let star_rect = Rect::from_min_size(rect.min + Vec2::new(1.0, 2.0), Vec2::splat(height - 4.0));
     let starred = state.browser.lists.starred.contains(&asset.key);
     let outside = state.outside_tile_set(asset);
-    paint_badges(
-        ui,
-        Rect::from_min_size(Pos2::new(rect.right() - 18.0, rect.top()), Vec2::splat(16.0)),
-        starred,
-        outside,
-        star_rect,
+    // The warning badge sits at the right end, the text stops before it.
+    let badge = Rect::from_min_size(
+        Pos2::new(rect.right() - 17.0, rect.center().y - 8.0),
+        Vec2::splat(16.0),
     );
-    let name = display_name(asset, alias);
-    ui.painter().text(
-        Pos2::new(icon.right() + 6.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        name,
-        FontId::proportional(12.0),
-        if alias.is_some() {
-            Color32::from_rgb(150, 210, 255)
-        } else {
-            Color32::from_gray(210)
-        },
-    );
+    paint_badges(ui, badge, starred, outside, star_rect);
+    let text_left = icon.right() + 6.0;
+    let text_right = if outside { badge.left() - 4.0 } else { rect.right() - 2.0 };
+    let mut job = egui::text::LayoutJob::default();
+    label_job(&mut job, asset, alias, 12.0, true);
+    job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - text_left).max(10.0));
+    let galley = ui.painter().layout_job(job);
+    let pos = Pos2::new(text_left, rect.center().y - galley.size().y / 2.0);
+    ui.painter().galley(pos, galley, Color32::WHITE);
     events(ui, state, resp, asset, alias, Some(star_rect))
 }
 
-/// The end of a generated name (`... · Floor · grass · 05/02` keeps the
-/// last three parts), which is what tells tiles of one DT1 apart.
-fn short_name(name: &str) -> String {
+/// A generated tile name with the parts that tell tiles of one DT1 apart
+/// first: `Act1 Town · Floor · grass · 05/02` gives
+/// (`05/02 · Floor · grass`, `Act1 Town`). Other names stay whole.
+pub fn short_name(name: &str) -> (String, Option<&str>) {
     let parts: Vec<&str> = name.split(" · ").collect();
-    if parts.len() > 3 {
-        parts[parts.len() - 3..].join(" · ")
-    } else {
-        name.to_owned()
+    match parts.as_slice() {
+        [place, class, descriptor, index] => {
+            (format!("{index} · {class} · {descriptor}"), Some(*place))
+        }
+        _ => (name.to_owned(), None),
+    }
+}
+
+/// The label of a tile: its alias, or its short name (with the place,
+/// dimmed, when `place` is asked for).
+fn label_job(
+    job: &mut egui::text::LayoutJob,
+    asset: &AssetRow,
+    alias: Option<&str>,
+    size: f32,
+    place: bool,
+) {
+    let format = |color: Color32| egui::text::TextFormat {
+        font_id: FontId::proportional(size),
+        color,
+        ..Default::default()
+    };
+    if let Some(a) = alias {
+        job.append(a, 0.0, format(Color32::from_rgb(150, 210, 255)));
+        if place {
+            job.append(&asset.gen_name, 8.0, format(Color32::from_gray(120)));
+        }
+        return;
+    }
+    let name = display_name(asset, None);
+    let (short, where_) = short_name(&name);
+    job.append(&short, 0.0, format(Color32::from_gray(205)));
+    if place && let Some(w) = where_ {
+        job.append(w, 8.0, format(Color32::from_gray(120)));
     }
 }
 
@@ -565,7 +589,11 @@ fn favorites_section(ui: &mut Ui, state: &mut AppState) {
         .as_ref()
         .map(|s| s.profile.id.clone())
         .unwrap_or_default();
-    let header = egui::CollapsingHeader::new(format!("Favorites ({} groups)", groups.len()))
+    let count = match groups.len() {
+        1 => "1 group".to_owned(),
+        n => format!("{n} groups"),
+    };
+    let header = egui::CollapsingHeader::new(format!("Favorites ({count})"))
         .id_salt("browser_favorites")
         .default_open(true);
     header.show(ui, |ui| {
@@ -577,7 +605,10 @@ fn favorites_section(ui: &mut Ui, state: &mut AppState) {
                     error: None,
                 });
             }
-            ui.weak("Drag tiles here to add, drag to reorder; the star adds to the first group.");
+            let hint = "Drag tiles onto a group to add them, drag to reorder; \
+                        the star adds to the first group.";
+            ui.add(egui::Label::new(RichText::new(hint).weak()).truncate())
+                .on_hover_text(hint);
         });
         if groups.is_empty() {
             return;
@@ -703,7 +734,7 @@ fn favorite_group(
 
 // ───────────────────────── results ─────────────────────────
 
-fn results_grid(ui: &mut Ui, state: &mut AppState) {
+fn results_grid(ui: &mut Ui, state: &mut AppState, panel: Rect) {
     let n = state.browser.results.hits.len();
     if n == 0 {
         if !state.browser.live.busy() && state.browser.results.failed.is_none() {
@@ -740,7 +771,10 @@ fn results_grid(ui: &mut Ui, state: &mut AppState) {
         return;
     }
     let cell = Vec2::new(size + 6.0, size + 22.0);
-    let width = ui.available_width();
+    let width = ui
+        .available_width()
+        .min(panel.right() - ui.cursor().left())
+        .max(cell.x);
     let cols = (((width + spacing.x) / (cell.x + spacing.x)).floor() as usize).max(1);
     let rows = n.div_ceil(cols);
     let mut area = egui::ScrollArea::vertical()
@@ -1062,5 +1096,22 @@ fn used_in_window(ctx: &egui::Context, state: &mut AppState) {
     }
     if let Some(path) = to_open {
         state.open_map(&d2_assets::GamePath::new(&path));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_names_put_the_index_first() {
+        assert_eq!(
+            short_name("Act1 Town Floor · Floor · grass · 05/02"),
+            ("05/02 · Floor · grass".to_owned(), Some("Act1 Town Floor"))
+        );
+        assert_eq!(
+            short_name("Act1 Town Towne1 · DS1"),
+            ("Act1 Town Towne1 · DS1".to_owned(), None)
+        );
     }
 }

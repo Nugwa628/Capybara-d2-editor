@@ -360,7 +360,10 @@ pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     {
         state.toggle_palette();
     }
+    // The Ctrl+K palette and the browser's questions take the keyboard.
+    let browser_modal = state.browser.palette.open || state.browser.prompt.is_some();
     match state.config.mode {
+        _ if browser_modal => {}
         AppMode::Map => shortcuts::handle(ctx, state),
         AppMode::Sprites => sprites::shortcuts(ctx, state),
     }

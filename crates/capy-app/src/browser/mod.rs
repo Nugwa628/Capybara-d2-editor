@@ -941,6 +941,10 @@ impl AppState {
         crate::ui::cancel_map_gesture(self);
         self.edit.pick(layer, value);
         self.edit.tool = crate::edit::tools::Tool::Paint;
+        if self.config.mode != AppMode::Map {
+            self.config.mode = AppMode::Map;
+            self.config_dirty = true;
+        }
         let key = key.to_ascii_lowercase();
         self.browser.brush_key = Some((key.clone(), value));
         self.browser.selected = Some(key.clone());
@@ -1006,6 +1010,7 @@ impl AppState {
 
     /// Ctrl+K: open (or close) the palette.
     pub fn toggle_palette(&mut self) {
+        self.browser.menu = None;
         let p = &mut self.browser.palette;
         p.open = !p.open;
         if p.open {
@@ -1017,6 +1022,7 @@ impl AppState {
     /// Opens the palette with `query` typed in (scripts).
     pub fn open_palette_with(&mut self, query: &str) {
         let now = self.browser.now;
+        self.browser.menu = None;
         let p = &mut self.browser.palette;
         p.open = true;
         p.focus = true;

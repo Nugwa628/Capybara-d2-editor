@@ -160,7 +160,8 @@ impl Queue {
         if !self.searches.is_empty() {
             return Some(self.searches.remove(0));
         }
-        self.other.pop_front().or_else(|| self.thumbs.pop_front())
+        // Newest thumbnails first: they are the ones on screen now.
+        self.other.pop_front().or_else(|| self.thumbs.pop_back())
     }
 }
 
@@ -293,10 +294,11 @@ mod tests {
         q.push(Request::Thumb { asset_id: 1 });
         q.push(search(Channel::Browser, 1));
         q.push(Request::UsedIn { asset_id: 7 });
+        q.push(Request::Thumb { asset_id: 2 });
         q.push(search(Channel::Palette, 2));
         q.push(search(Channel::Browser, 3));
         let order: Vec<String> = std::iter::from_fn(|| q.pop()).map(|r| id_of(&r)).collect();
-        assert_eq!(order, vec!["Palette2", "Browser3", "u7", "t1"]);
+        assert_eq!(order, vec!["Palette2", "Browser3", "u7", "t2", "t1"]);
     }
 
     #[test]
