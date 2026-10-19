@@ -285,6 +285,12 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **Agent models (user, 2026-10-19):** new agents run on Opus 5.5 with high effort instead of the original Sonnet/Haiku split. Agents already running were not restarted. Compile time remains the main bottleneck, so non-app agents test with `--exclude capy-app` and UI agents reuse the warm app worktree.
 - Repo-local git identity `ZF <112085691+Nugwa628@users.noreply.github.com>` was set because none existed.
 
+## Resume point (paused 2026-10-19 for a machine shutdown)
+- **main** has P0, P1, P2 and P6 done and verified; all libraries for P3-P5 are merged.
+- **In progress, not reviewed:** P3 tile browser + Ctrl+K on branch `lane/app-browser` (worktree `.claude/worktrees/agent-abcd2d318a5d4d7fd`, Bevy already compiled there). Saved as WIP commit; the agent was mid-way through adopting `CellViolation.rect` (add a 5-wide cell test, update the editor UI caller). Resume by starting a new agent on that worktree/branch with the original app-browser brief plus the lib-wishes adoption list (see git log / PLAN "Pending small fixes").
+- **Remaining after P3:** P4 history UI (timeline, checkpoints, visual diff, restore, autosave, milestones), P5 object/NPC placement + NPC path editing + animation playback, release packaging (single exe, embedded assets, release build, final docs).
+- **Build setup:** agents run on Opus high; sccache via gitignored `.cargo/config.toml`; fixed lane slots `.claude/worktrees/lane-1..4`; only one Bevy-building agent at a time (user may relax this to run P4 and P5 UI in parallel).
+
 ## Pending small fixes (lead decisions, not yet implemented)
 - Sprites UI: an import that came from a `sprite.json` export prefills the save prompt with the game path recorded in the json; saving as DCC warns (with a preview) before reducing crowded 4x4 cells instead of reducing silently.
 - Release: GUI-subsystem exe attaches to the parent console for CLI output; the prompt can return before output finishes when run from cmd. Decide at release whether to also ship a console-subsystem `capy.exe`.
