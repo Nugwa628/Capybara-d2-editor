@@ -7,6 +7,7 @@ members = [
     "crates/capy-edit",
     "crates/capy-history",
     "crates/capy-render",
+    "crates/capy-cli",
     "crates/capy-app",
 ]
 
@@ -32,6 +33,7 @@ capy-index = { path = "crates/capy-index" }
 capy-edit = { path = "crates/capy-edit" }
 capy-history = { path = "crates/capy-history" }
 capy-render = { path = "crates/capy-render" }
+capy-cli = { path = "crates/capy-cli" }
 thiserror = "2"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
