@@ -10,6 +10,7 @@ use crate::layer::{CellValue, LayerRef};
 use crate::layer_ops;
 use crate::patch::{CellEdit, Header, LayerData, Patch, Step};
 use crate::selection::Selection;
+use crate::version::{self, TagFate};
 
 /// Upper bound on `width * height` for `resize` (1024 x 1024 cells).
 const MAX_CELLS: u64 = 1 << 20;
@@ -372,20 +373,20 @@ impl Document {
         }
 
         if let Some(tag) = &self.ds1.tag {
-            let kept = version < 4 || (version >= 10 && (1..=2).contains(&header.tag_type));
-            if !kept {
-                if tag.as_slice().iter().all(|&c| c == 0) {
-                    patch.push(Step::RemoveLayer {
-                        layer: LayerRef::Tag,
-                        data: LayerData::Tag(tag.clone()),
-                    });
-                } else if version >= 10 {
-                    header.tag_type = 1;
-                } else {
-                    return Err(EditError::NeedsVersion {
-                        current,
-                        required: 10,
-                    });
+            let all_zero = tag.as_slice().iter().all(|&c| c == 0);
+            match version::tag_fate(version, header.tag_type, all_zero) {
+                TagFate::Keep => {}
+                TagFate::Drop => patch.push(Step::RemoveLayer {
+                    layer: LayerRef::Tag,
+                    data: LayerData::Tag(tag.clone()),
+                }),
+                TagFate::Retype => header.tag_type = 1,
+                TagFate::Blocked => {
+                    return Err(version::needs(
+                        &self.ds1,
+                        &version::Change::default(),
+                        version,
+                    ));
                 }
             }
         }

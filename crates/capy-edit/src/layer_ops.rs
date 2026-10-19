@@ -7,6 +7,7 @@ use d2_formats::ds1::{Ds1, MAX_FLOOR_LAYERS, MAX_WALL_LAYERS};
 use crate::error::{EditError, Result};
 use crate::layer::LayerRef;
 use crate::patch::{Header, LayerData, Step};
+use crate::version;
 
 /// Lowest DS1 version that can store `layer`.
 pub(crate) fn min_version_for(layer: LayerRef) -> i32 {
@@ -88,14 +89,16 @@ pub(crate) fn add_steps(ds1: &Ds1, missing: &[LayerRef]) -> Vec<Step> {
 }
 
 /// Steps creating every layer of `targets` that is missing, or the error the
-/// app should react to (`NeedsVersion`, `LayerLimit`).
+/// app should react to (`NeedsVersion` with the true minimum version,
+/// `LayerLimit`).
 pub(crate) fn ensure_layers(ds1: &Ds1, targets: &[LayerRef]) -> Result<Vec<Step>> {
     let missing = missing_layers(ds1, targets)?;
     if let Some(required) = version_needed(ds1, &missing) {
-        return Err(EditError::NeedsVersion {
-            current: ds1.version,
-            required,
-        });
+        let change = version::Change {
+            layers: targets.to_vec(),
+            ..version::Change::default()
+        };
+        return Err(version::needs(ds1, &change, required));
     }
     Ok(add_steps(ds1, &missing))
 }
