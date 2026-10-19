@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [1.1.0] - 2026-10-19
+## [1.1.0] - 2026-10-20
 
 ### Added
 - **Convert to palette** (Sprites tab, and right-click a tile set in the Tiles
