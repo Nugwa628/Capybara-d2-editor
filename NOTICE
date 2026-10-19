@@ -6,6 +6,8 @@ Diablo II DS1 map editor. It contains no code copied from the projects below,
 but it owes them its understanding of the file formats and of how an editor
 for them should behave.
 
+Third-party licenses for everything in the exe: see THIRD-PARTY-LICENSES.md.
+
 
 1. win_ds1edit by Paul Siramy (2002-2011)
 -----------------------------------------
