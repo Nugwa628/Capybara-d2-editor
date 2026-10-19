@@ -13,6 +13,7 @@ use crate::patch::Patch;
 mod clip;
 mod edits;
 mod objects;
+mod paths;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveMode {
