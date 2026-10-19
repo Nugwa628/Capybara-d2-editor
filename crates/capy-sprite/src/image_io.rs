@@ -15,7 +15,9 @@ use crate::model::RgbaFrame;
 
 /// Largest image side or pixel count accepted from a file.
 const MAX_SIDE: usize = 1 << 14;
-const MAX_PIXELS: usize = 1 << 26;
+/// Matches the largest sheet `export_sheet` writes (`MAX_SHEET_PIXELS`), so
+/// every exported sheet can be imported again.
+const MAX_PIXELS: usize = 1 << 28;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImageKind {
@@ -39,6 +41,10 @@ impl ImageKind {
 }
 
 /// Decodes an image file to RGBA with offsets 0.
+///
+/// The declared size is checked against [`MAX_SIDE`] and [`MAX_PIXELS`]
+/// before any pixel buffer is allocated, so a tiny file that claims a huge
+/// image is an error, not a huge allocation.
 pub fn import_image(bytes: &[u8], kind: ImageKind) -> Result<RgbaFrame> {
     let format = match kind {
         ImageKind::Png => ImageFormat::Png,
@@ -46,15 +52,18 @@ pub fn import_image(bytes: &[u8], kind: ImageKind) -> Result<RgbaFrame> {
         ImageKind::Gif => ImageFormat::Gif,
         ImageKind::Pcx => return read_pcx(bytes),
     };
-    let img = image::load_from_memory_with_format(bytes, format)
-        .map_err(|e| SpriteError::Image(e.to_string()))?
-        .to_rgba8();
+    let image_err = |e: image::ImageError| SpriteError::Image(e.to_string());
+    let reader = || image::ImageReader::with_format(Cursor::new(bytes), format);
+    let (width, height) = reader().into_dimensions().map_err(image_err)?;
+    check_size(width as usize, height as usize)?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = u32::try_from(MAX_SIDE).ok();
+    limits.max_image_height = u32::try_from(MAX_SIDE).ok();
+    let mut decoder = reader();
+    decoder.limits(limits);
+    let img = decoder.decode().map_err(image_err)?.to_rgba8();
     let (width, height) = img.dimensions();
-    if width as usize > MAX_SIDE || height as usize > MAX_SIDE {
-        return Err(SpriteError::Image(format!(
-            "{width}x{height} is larger than {MAX_SIDE} pixels on a side"
-        )));
-    }
+    check_size(width as usize, height as usize)?;
     Ok(RgbaFrame {
         width,
         height,
@@ -90,6 +99,22 @@ pub fn export_png(frame: &RgbaFrame) -> Result<Vec<u8>> {
         )
         .map_err(|e| SpriteError::Image(e.to_string()))?;
     Ok(out)
+}
+
+/// Errors for an image larger than [`MAX_SIDE`] on a side or than
+/// [`MAX_PIXELS`] in all.
+fn check_size(width: usize, height: usize) -> Result<()> {
+    if width > MAX_SIDE || height > MAX_SIDE {
+        return Err(SpriteError::Image(format!(
+            "{width}x{height} is larger than {MAX_SIDE} pixels on a side"
+        )));
+    }
+    if width.saturating_mul(height) > MAX_PIXELS {
+        return Err(SpriteError::Image(format!(
+            "{width}x{height} has more than {MAX_PIXELS} pixels"
+        )));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +169,9 @@ fn read_pcx(bytes: &[u8]) -> Result<RgbaFrame> {
     // scan lines
     let row_len = planes * per_line;
     let total = row_len * height;
-    let mut data = Vec::with_capacity(total);
+    // A run byte pair expands to at most 63 bytes, so the file bounds what
+    // the data can grow to; do not reserve more than that up front.
+    let mut data = Vec::with_capacity(total.min(bytes.len().saturating_mul(32)));
     let mut pos = 128usize;
     if rle {
         while data.len() < total {

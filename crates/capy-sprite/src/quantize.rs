@@ -87,10 +87,20 @@ impl<'a> Matcher<'a> {
     }
 }
 
-/// Converts an RGBA frame to palette indices (offsets are copied).
+/// Converts an RGBA frame to palette indices (offsets are copied). Pixels
+/// missing from a short `pixels` buffer count as transparent; a frame whose
+/// buffer holds fewer than `width x height` pixels while claiming more than
+/// 2^26 gives an empty (0x0) image instead of a huge allocation.
 pub fn quantize(frame: &RgbaFrame, palette: &Palette, opts: &QuantizeOptions) -> IndexedImage {
     let (w, h) = (frame.width as usize, frame.height as usize);
+    let declared = u64::from(frame.width) * u64::from(frame.height);
+    if declared > crate::ops::MAX_UNBACKED_PIXELS && declared > (frame.pixels.len() / 4) as u64 {
+        return IndexedImage::new(0, 0, frame.offset_x, frame.offset_y);
+    }
     let mut out = IndexedImage::new(frame.width, frame.height, frame.offset_x, frame.offset_y);
+    if w == 0 || h == 0 {
+        return out;
+    }
     let mut matcher = Matcher::new(palette, opts.protect_transparent);
     let pixel = |x: usize, y: usize| -> [u8; 4] {
         let i = (y * w + x) * 4;
@@ -153,7 +163,12 @@ pub fn quantize(frame: &RgbaFrame, palette: &Palette, opts: &QuantizeOptions) ->
 }
 
 /// Palette colours with the image's alpha. Transparent pixels get RGB 0,0,0.
+/// An image whose buffers hold fewer than `width x height` pixels while
+/// claiming more than 2^26 gives an empty (0x0) frame.
 pub fn to_rgba(img: &IndexedImage, palette: &Palette) -> RgbaFrame {
+    if !crate::ops::backed(img) {
+        return RgbaFrame::new(0, 0, img.offset_x, img.offset_y);
+    }
     let mut pixels = img.to_rgba(palette);
     for px in pixels.as_chunks_mut::<4>().0 {
         if px[3] == 0 {

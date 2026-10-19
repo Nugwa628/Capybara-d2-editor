@@ -40,31 +40,53 @@ fn crop(img: &IndexedImage, x0: u32, y0: u32, w: u32, h: u32) -> IndexedImage {
 /// and bottom edges are smaller when the size is not a multiple. Each tile's
 /// offset is the image offset plus the tile's position, so every pixel keeps
 /// its place relative to the anchor. A zero tile size or an empty image
-/// returns the image unchanged.
+/// returns the image unchanged, and so does an image whose pixel buffers
+/// hold fewer than `width x height` pixels while claiming more than 2^26
+/// (its fields disagree with its data).
 pub fn split_frame(img: &IndexedImage, tile_w: u32, tile_h: u32) -> Vec<IndexedImage> {
-    if tile_w == 0 || tile_h == 0 || img.width == 0 || img.height == 0 {
+    if tile_w == 0 || tile_h == 0 || img.width == 0 || img.height == 0 || !backed(img) {
         return vec![img.clone()];
     }
     let mut out = Vec::new();
-    let mut y = 0;
+    let mut y = 0u32;
     while y < img.height {
         let h = tile_h.min(img.height - y);
-        let mut x = 0;
+        let mut x = 0u32;
         while x < img.width {
             let w = tile_w.min(img.width - x);
             out.push(crop(img, x, y, w, h));
-            x += tile_w;
+            let Some(next) = x.checked_add(tile_w) else {
+                break;
+            };
+            x = next;
         }
-        y += tile_h;
+        let Some(next) = y.checked_add(tile_h) else {
+            break;
+        };
+        y = next;
     }
     out
+}
+
+/// Images claiming more pixels than this must hold them in their buffers
+/// before [`split_frame`] cuts them (a guard against absurd declared sizes).
+pub(crate) const MAX_UNBACKED_PIXELS: u64 = 1 << 26;
+
+/// Whether the declared size is plausible: at most [`MAX_UNBACKED_PIXELS`],
+/// or backed by both pixel buffers.
+pub(crate) fn backed(img: &IndexedImage) -> bool {
+    let declared = u64::from(img.width) * u64::from(img.height);
+    let held = img.pixels.len().min(img.alpha.len()) as u64;
+    declared <= MAX_UNBACKED_PIXELS || declared <= held
 }
 
 /// Joins tiles laid out row-major in `columns` columns back into one image
 /// (the inverse of [`split_frame`]). Column widths come from the widest tile
 /// of each column and row heights from the tallest tile of each row; tiles
 /// smaller than their cell are padded with transparency at the right and
-/// bottom. The result's offset is the first tile's.
+/// bottom. The result's offset is the first tile's. A frame whose buffers
+/// hold fewer than `width x height` pixels while claiming more than 2^26 is
+/// an error.
 pub fn join_frames(frames: &[IndexedImage], columns: u32) -> Result<IndexedImage> {
     let first = frames
         .first()
@@ -72,7 +94,13 @@ pub fn join_frames(frames: &[IndexedImage], columns: u32) -> Result<IndexedImage
     if columns == 0 {
         return Err(SpriteError::invalid("a join needs at least one column"));
     }
-    let columns = columns as usize;
+    if !frames.iter().all(backed) {
+        return Err(SpriteError::invalid(
+            "a frame claims more pixels than its buffers hold",
+        ));
+    }
+    // Columns past the last frame are empty and add no width.
+    let columns = (columns as usize).min(frames.len());
     let rows = frames.len().div_ceil(columns);
     let mut col_w = vec![0u32; columns];
     let mut row_h = vec![0u32; rows];
@@ -103,7 +131,9 @@ pub fn join_frames(frames: &[IndexedImage], columns: u32) -> Result<IndexedImage
     for (r, &rh) in row_h.iter().enumerate() {
         let mut x0 = 0usize;
         for (c, &cw) in col_w.iter().enumerate() {
-            if let Some(f) = frames.get(r * columns + c) {
+            if let Some(f) = frames.get(r * columns + c)
+                && f.width > 0
+            {
                 for y in 0..f.height as usize {
                     let n = f.width as usize;
                     let src = y * n;
@@ -132,14 +162,19 @@ pub fn join_frames(frames: &[IndexedImage], columns: u32) -> Result<IndexedImage
 pub fn trim_borders(img: &IndexedImage) -> IndexedImage {
     let (w, h) = (img.width as usize, img.height as usize);
     let mut bounds: Option<(usize, usize, usize, usize)> = None;
-    for y in 0..h {
-        for x in 0..w {
-            if opaque_at(img, y * w + x) {
-                bounds = Some(match bounds {
-                    None => (x, y, x, y),
-                    Some((a, b, c, d)) => (a.min(x), b.min(y), c.max(x), d.max(y)),
-                });
-            }
+    // Only pixels both buffers hold can be opaque, so the scan stops there
+    // (an image whose fields claim more than its buffers hold stays cheap).
+    let held = w
+        .saturating_mul(h)
+        .min(img.pixels.len())
+        .min(img.alpha.len());
+    for i in 0..held {
+        if opaque_at(img, i) {
+            let (x, y) = (i % w, i / w);
+            bounds = Some(match bounds {
+                None => (x, y, x, y),
+                Some((a, b, c, d)) => (a.min(x), b.min(y), c.max(x), d.max(y)),
+            });
         }
     }
     match bounds {
@@ -157,8 +192,9 @@ pub fn trim_borders(img: &IndexedImage) -> IndexedImage {
 /// Puts the anchor on the bottom-centre pixel: `offset_x = -(width / 2)`,
 /// `offset_y = -(height - 1)`.
 pub fn center_offset(img: &mut IndexedImage) {
-    img.offset_x = -((img.width / 2) as i32);
-    img.offset_y = -(img.height.saturating_sub(1) as i32);
+    // Saturates at i32::MIN for sizes beyond 2^31 instead of overflowing.
+    img.offset_x = 0i32.saturating_sub_unsigned(img.width / 2);
+    img.offset_y = 0i32.saturating_sub_unsigned(img.height.saturating_sub(1));
 }
 
 /// Moves every frame by `(dx, dy)`.
