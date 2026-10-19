@@ -1329,21 +1329,31 @@ fn set_object_replaces_fields_and_moves_the_path() {
 
 #[test]
 fn path_edits_need_version_14_and_actions_need_15() {
-    // below v14: every path edit asks for an upgrade, nothing changes
+    // below v14: creating a path asks for an upgrade; editing one fails as the
+    // map has none (no upgrade would help); nothing changes
     for version in [3, 10, 13] {
         let mut doc = Document::new(path_map(version));
-        let needs14 = |r: capy_edit::Result<()>| {
+        let r = doc.add_path_point(0, pt(1, 1, 1), None);
+        assert!(
+            matches!(r, Err(EditError::NeedsVersion { required: 14, .. })),
+            "v{version}: {r:?}"
+        );
+        let no_path = |r: capy_edit::Result<()>| {
             assert!(
-                matches!(r, Err(EditError::NeedsVersion { required: 14, .. })),
+                matches!(&r, Err(EditError::Format(d2_formats::FormatError::Invalid { detail, .. }))
+                    if detail.contains("no NPC path")),
                 "v{version}: {r:?}"
             );
         };
-        needs14(doc.add_path_point(0, pt(1, 1, 1), None));
-        needs14(doc.move_path_point(0, 0, 1, 1));
-        needs14(doc.set_path_action(0, 0, 1));
-        needs14(doc.delete_path_points(0, &[0]));
+        no_path(doc.move_path_point(0, 0, 1, 1));
+        no_path(doc.set_path_action(0, 0, 1));
+        no_path(doc.delete_path_points(0, &[0]));
         assert!(!doc.can_undo());
         assert!(doc.path_of(0).is_none());
+        // the upgrade the error asks for makes the same call succeed
+        doc.upgrade_version(14).unwrap();
+        doc.add_path_point(0, pt(1, 1, 1), None).unwrap();
+        assert_roundtrips(doc.ds1());
     }
 
     // v14: paths yes, actions other than 1 no
@@ -1725,5 +1735,256 @@ fn edits_on_a_map_without_walls_or_floors() {
     doc.add_layer(LayerRef::Floor(0)).unwrap();
     assert_roundtrips(doc.ds1());
     doc.remove_layer(LayerRef::Wall(0)).unwrap();
+    assert_roundtrips(doc.ds1());
+}
+
+// ----- NeedsVersion is the true minimum ---------------------------------------
+
+/// Expects `NeedsVersion { current, required }`.
+fn assert_needs<T: std::fmt::Debug>(r: capy_edit::Result<T>, current: i32, required: i32) {
+    match r {
+        Err(EditError::NeedsVersion {
+            current: c,
+            required: q,
+        }) if (c, q) == (current, required) => {}
+        other => panic!("expected NeedsVersion {current} -> {required}, got {other:?}"),
+    }
+}
+
+/// A v3 map with a wall tile, an object and, optionally, a non-empty tag layer.
+fn v3_map(tag_cells: bool) -> Ds1 {
+    let mut ds = blank_v3(4, 4);
+    ds.walls[0].tiles.set(1, 1, Cell(tile(1, 1)));
+    if tag_cells {
+        ds.tag.as_mut().unwrap().set(0, 0, 7);
+    }
+    ds.objects.push(obj(1, 2, 2));
+    assert_roundtrips(&ds);
+    ds
+}
+
+#[test]
+fn needs_version_accounts_for_the_tag_layer_of_old_maps() {
+    let flagged = Object {
+        flags: 1,
+        ..obj(1, 2, 2)
+    };
+    let wall_clip = Clipboard {
+        width: 1,
+        height: 1,
+        cells: vec![(LayerRef::Wall(1), 0, 0, cv(2, 2))],
+        objects: Vec::new(),
+        source: ClipSource {
+            game_path: None,
+            act: 0,
+            lvl_type: None,
+            version: 18,
+        },
+    };
+    // (tag cells?, version a 2nd wall needs, version object flags need)
+    for (tag_cells, wall, flags) in [(false, 4, 6), (true, 10, 10)] {
+        let original = v3_map(tag_cells);
+        let mut doc = Document::new(original.clone());
+        let sel = select_all(&doc, &[LayerRef::Wall(0)]);
+        let mv = |d: &mut Document| {
+            d.move_to_layer(
+                &sel,
+                LayerRef::Wall(0),
+                LayerRef::Wall(1),
+                MoveMode::Overwrite,
+            )
+        };
+        assert_needs(mv(&mut doc), 3, wall);
+        assert_needs(doc.add_layer(LayerRef::Wall(1)), 3, wall);
+        assert_needs(doc.add_layer(LayerRef::Floor(1)), 3, 16);
+        assert_needs(doc.add_object(flagged), 3, flags);
+        assert_needs(doc.set_object(0, flagged), 3, flags);
+        let p = doc.preview_paste(&wall_clip, (0, 0), PasteMode::Overwrite);
+        assert_eq!(p.needs_version, Some(wall));
+        assert_needs(doc.paste(&wall_clip, (0, 0), PasteMode::Overwrite), 3, wall);
+        assert_eq!(doc.ds1(), &original);
+        assert!(!doc.can_undo());
+
+        // a version below the reported one does not help: before the fix a
+        // map with tag cells asked for 4, and then upgrading to 4 asked for 10
+        if tag_cells {
+            assert_needs(doc.upgrade_version(4), 3, 10);
+            assert_needs(doc.upgrade_version(9), 3, 10);
+            assert_eq!(doc.ds1(), &original);
+        }
+
+        // the reported version is enough for each request
+        let try_after_upgrade =
+            |version: i32, edit: &dyn Fn(&mut Document) -> capy_edit::Result<()>| {
+                let mut d = Document::new(original.clone());
+                d.upgrade_version(version).unwrap();
+                edit(&mut d).unwrap();
+                assert_roundtrips(d.ds1());
+                if tag_cells {
+                    assert_eq!(d.ds1().tag.as_ref().unwrap().get(0, 0), Some(7));
+                }
+            };
+        try_after_upgrade(wall, &|d| mv(d).map(|_| ()));
+        try_after_upgrade(wall, &|d| d.add_layer(LayerRef::Wall(1)));
+        try_after_upgrade(16, &|d| d.add_layer(LayerRef::Floor(1)));
+        try_after_upgrade(flags, &|d| d.add_object(flagged).map(|_| ()));
+        try_after_upgrade(flags, &|d| d.set_object(0, flagged));
+        try_after_upgrade(wall, &|d| {
+            d.paste(&wall_clip, (0, 0), PasteMode::Overwrite)
+                .map(|_| ())
+        });
+    }
+}
+
+#[test]
+fn paste_needs_version_follows_a_tag_layer_the_upgrade_would_drop() {
+    // An all-zero v3 tag layer is dropped by an upgrade to 4..=9. A paste that
+    // writes tag cells and flagged objects needs 6 for the flags, but at v6 the
+    // tag layer is gone and it cannot come back below v10.
+    let original = blank_v3(4, 4);
+    let mut doc = Document::new(original.clone());
+    let clip = Clipboard {
+        width: 1,
+        height: 1,
+        cells: vec![(
+            LayerRef::Tag,
+            0,
+            0,
+            CellValue {
+                cell: 5,
+                orientation: 0,
+            },
+        )],
+        objects: vec![Object {
+            flags: 2,
+            ..obj(4, 1, 1)
+        }],
+        source: ClipSource {
+            game_path: None,
+            act: 0,
+            lvl_type: None,
+            version: 18,
+        },
+    };
+    let p = doc.preview_paste(&clip, (1, 1), PasteMode::Overwrite);
+    assert_eq!(p.needs_version, Some(10));
+    assert_needs(doc.paste(&clip, (1, 1), PasteMode::Overwrite), 3, 10);
+    doc.upgrade_version(10).unwrap();
+    doc.paste(&clip, (1, 1), PasteMode::Overwrite).unwrap();
+    assert_eq!(doc.ds1().tag.as_ref().unwrap().get(1, 1), Some(5));
+    assert_roundtrips(doc.ds1());
+
+    // without the tag cells the flags alone need 6
+    let mut doc = Document::new(original);
+    let objects_only = Clipboard {
+        cells: Vec::new(),
+        ..clip
+    };
+    assert_needs(doc.paste(&objects_only, (1, 1), PasteMode::Overwrite), 3, 6);
+}
+
+// ----- ambiguous NPC path anchors ----------------------------------------------
+
+/// Expects `Format(Invalid)` whose detail contains `needle`.
+fn assert_invalid(r: capy_edit::Result<()>, needle: &str) {
+    match r {
+        Err(EditError::Format(d2_formats::FormatError::Invalid { detail, .. })) => {
+            assert!(detail.contains(needle), "{detail:?} lacks {needle:?}");
+        }
+        other => panic!("expected Format(Invalid) with {needle:?}, got {other:?}"),
+    }
+}
+
+#[test]
+fn object_moves_refuse_ambiguous_path_anchors() {
+    // objects 0 (1,1), 1 (2,2) with a path, 2 (3,3)
+    let original = path_map(18);
+    let mut doc = Document::new(original.clone());
+
+    // a pathed object onto another object, and an object onto a pathed one
+    assert_invalid(
+        doc.set_object(1, obj(2, 1, 1)),
+        "object 1 has an NPC path and would share sub-tile (1, 1) with object 0",
+    );
+    assert_invalid(
+        doc.set_object(0, obj(1, 2, 2)),
+        "object 0 would share sub-tile (2, 2) with object 1 that has an NPC path",
+    );
+    assert_invalid(
+        doc.move_objects(&[1], -1, -1),
+        "object 1 has an NPC path and would share sub-tile (1, 1) with object 0",
+    );
+    assert_invalid(
+        doc.move_objects(&[0], 1, 1),
+        "object 0 would share sub-tile (2, 2) with object 1 that has an NPC path",
+    );
+    // moving both: object 1 and its path land on object 2
+    assert_invalid(
+        doc.move_objects(&[0, 1], 1, 1),
+        "object 1 has an NPC path and would share sub-tile (3, 3) with object 2",
+    );
+    assert_eq!(doc.ds1(), &original);
+    assert!(!doc.can_undo());
+
+    // no path involved: allowed
+    doc.move_objects(&[0], 2, 2).unwrap();
+    assert_eq!((doc.ds1().objects[0].x, doc.ds1().objects[0].y), (3, 3));
+    assert!(doc.undo());
+    doc.set_object(2, obj(3, 1, 1)).unwrap();
+    assert!(doc.undo());
+    assert_eq!(doc.ds1(), &original);
+
+    // a stray path with no object: a pathed object may not join it, an
+    // object without a path may (it takes the path over)
+    let mut stray = original.clone();
+    stray.npc_paths.push(NpcPath {
+        x: 9,
+        y: 9,
+        points: vec![pt(1, 1, 1)],
+    });
+    let mut doc = Document::new(stray.clone());
+    assert_invalid(
+        doc.set_object(1, obj(2, 9, 9)),
+        "would leave 2 NPC paths anchored on sub-tile (9, 9)",
+    );
+    assert_invalid(doc.move_objects(&[1], 7, 7), "2 NPC paths");
+    assert_eq!(doc.ds1(), &stray);
+    doc.set_object(0, obj(1, 9, 9)).unwrap();
+    assert_eq!(doc.path_of(0).map(|p| p.points.len()), Some(1));
+    assert!(doc.undo());
+    // two objects without paths may not land together on the stray path
+    let mut pair = stray.clone();
+    pair.objects.push(obj(4, 1, 1)); // shares (1,1) with object 0, no path there
+    let mut doc = Document::new(pair.clone());
+    assert_invalid(
+        doc.move_objects(&[0, 3], 8, 8),
+        "would share sub-tile (9, 9), where an NPC path is anchored",
+    );
+    assert_eq!(doc.ds1(), &pair);
+}
+
+#[test]
+fn an_already_ambiguous_anchor_can_be_moved_edited_and_cleaned_up() {
+    // objects 1 and 3 share (2,2), which carries a path
+    let mut shared = path_map(18);
+    shared.objects.push(obj(9, 2, 2));
+    let mut doc = Document::new(shared.clone());
+
+    // moving the whole sub-tile keeps it as ambiguous as it was
+    doc.move_objects(&[1, 3], 1, 0).unwrap();
+    assert_eq!((doc.ds1().npc_paths[0].x, doc.ds1().npc_paths[0].y), (3, 2));
+    assert!(doc.undo());
+    // a sharer may leave (the path stays with the other one)
+    doc.set_object(3, obj(9, 0, 0)).unwrap();
+    assert!(doc.undo());
+    // ... but nothing may join
+    assert_invalid(doc.move_objects(&[0], 1, 1), "that has an NPC path");
+    assert_eq!(doc.ds1(), &shared);
+
+    // the ambiguous path itself can still be edited and deleted
+    doc.move_path_point(1, 0, 9, 9).unwrap();
+    doc.set_path_action(3, 1, 4).unwrap();
+    doc.delete_path_points(1, &[0, 1]).unwrap();
+    assert!(doc.ds1().npc_paths.is_empty());
     assert_roundtrips(doc.ds1());
 }

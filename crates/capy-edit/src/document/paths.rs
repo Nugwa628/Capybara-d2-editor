@@ -1,14 +1,19 @@
 //! NPC path edits. A path belongs to the object standing on its anchor
 //! sub-tile; the DS1 stores no other link, so an object whose sub-tile is
 //! shared with another object has no unambiguous path (the game drops it).
+//!
+//! Every method checks the request against the document first and the file
+//! version last, so a `NeedsVersion` always means the same call succeeds
+//! after `upgrade_version(required)`.
 
 use std::collections::BTreeSet;
 
 use d2_formats::ds1::{NpcPath, Object, PathPoint};
 
 use super::Document;
-use crate::error::{EditError, Result, invalid};
+use crate::error::{Result, invalid};
 use crate::patch::{Patch, Step};
+use crate::version;
 
 /// First version that stores NPC paths.
 const PATH_VERSION: i32 = 14;
@@ -25,24 +30,26 @@ impl Document {
         })
     }
 
-    fn require_path_version(&self) -> Result<()> {
-        if self.ds1.version < PATH_VERSION {
-            return Err(EditError::NeedsVersion {
-                current: self.ds1.version,
-                required: PATH_VERSION,
-            });
+    /// `NeedsVersion` unless the file stores NPC paths and, for `Some(action)`
+    /// other than 1, path point actions.
+    fn require_path_version(&self, action: Option<i32>) -> Result<()> {
+        let mut at_least = PATH_VERSION;
+        if action.is_some_and(|a| a != 1) {
+            at_least = ACTION_VERSION;
         }
-        Ok(())
-    }
-
-    fn require_action_version(&self, action: i32) -> Result<()> {
-        if action != 1 && self.ds1.version < ACTION_VERSION {
-            return Err(EditError::NeedsVersion {
-                current: self.ds1.version,
-                required: ACTION_VERSION,
-            });
+        if self.ds1.version >= at_least {
+            return Ok(());
         }
-        Ok(())
+        let change = version::Change {
+            path: Some(
+                action
+                    .map(|action| PathPoint { x: 0, y: 0, action })
+                    .into_iter()
+                    .collect(),
+            ),
+            ..version::Change::default()
+        };
+        Err(version::needs(&self.ds1, &change, at_least))
     }
 
     /// Position in `ds1.npc_paths` of the first path anchored on `object`'s sub-tile.
@@ -51,6 +58,12 @@ impl Document {
             .npc_paths
             .iter()
             .position(|p| p.x == object.x && p.y == object.y)
+    }
+
+    /// Position of the path of the object at `object_index`, or `Format(Invalid)`.
+    fn existing_path(&self, object_index: usize, object: &Object) -> Result<usize> {
+        self.path_position(object)
+            .ok_or_else(|| invalid(format!("object {object_index} has no NPC path")))
     }
 
     /// The NPC path of the object at `object_index`: the path anchored on its
@@ -69,10 +82,10 @@ impl Document {
     /// at point position `at` (`None` = the end), creating the path when the
     /// object has none (then `at` must be `None` or `Some(0)`).
     ///
-    /// Errors: `NeedsVersion { required: 14 }` below v14; `required: 15` for an
-    /// `action` other than 1 below v15; `Format(Invalid)` for a bad object
-    /// index, a bad `at`, or when another object stands on the same sub-tile
-    /// (the path would be ambiguous and the game would drop it).
+    /// Errors: `Format(Invalid)` for a bad object index, a bad `at`, or when
+    /// another object stands on the same sub-tile (the path would be ambiguous
+    /// and the game would drop it); then `NeedsVersion` below v14, or below
+    /// v15 for an `action` other than 1.
     pub fn add_path_point(
         &mut self,
         object_index: usize,
@@ -80,8 +93,6 @@ impl Document {
         at: Option<usize>,
     ) -> Result<()> {
         let object = self.object_at(object_index)?;
-        self.require_path_version()?;
-        self.require_action_version(point.action)?;
         let sharing = self
             .ds1
             .objects
@@ -95,8 +106,7 @@ impl Document {
                 object.x, object.y
             )));
         }
-        let mut patch = Patch::new("Add path point");
-        match self.path_position(&object) {
+        let step = match self.path_position(&object) {
             Some(pos) => {
                 let before = self.ds1.npc_paths[pos].clone();
                 let mut after = before.clone();
@@ -108,31 +118,35 @@ impl Document {
                     )));
                 }
                 after.points.insert(at, point);
-                patch.push(Step::PathSet {
+                Step::PathSet {
                     at: pos,
                     before,
                     after,
-                });
+                }
             }
             None => {
                 if at.is_some_and(|a| a != 0) {
                     return Err(invalid("a new path has no point to insert after"));
                 }
-                patch.push(Step::PathInsert {
+                Step::PathInsert {
                     at: self.ds1.npc_paths.len(),
                     path: NpcPath {
                         x: object.x,
                         y: object.y,
                         points: vec![point],
                     },
-                });
+                }
             }
-        }
+        };
+        self.require_path_version(Some(point.action))?;
+        let mut patch = Patch::new("Add path point");
+        patch.push(step);
         self.commit(patch)
     }
 
     /// Moves point `point_index` of the object's path to `(x, y)` (sub-tiles).
-    /// `Format(Invalid)` when the object has no path or no such point.
+    /// `Format(Invalid)` when the object has no path or no such point (so a
+    /// map below v14, which has no paths, gets `Format(Invalid)`).
     pub fn move_path_point(
         &mut self,
         object_index: usize,
@@ -140,15 +154,14 @@ impl Document {
         x: i32,
         y: i32,
     ) -> Result<()> {
-        self.object_at(object_index)?;
-        self.require_path_version()?;
-        self.edit_point("Move path point", object_index, point_index, |p| {
+        self.edit_point("Move path point", object_index, point_index, None, |p| {
             p.x = x;
             p.y = y;
         })
     }
 
-    /// Sets the action of point `point_index`. An action other than 1 needs v15
+    /// Sets the action of point `point_index`. `Format(Invalid)` when the
+    /// object has no path or no such point; an action other than 1 needs v15
     /// (`NeedsVersion { required: 15 }` on a v14 map).
     pub fn set_path_action(
         &mut self,
@@ -156,12 +169,15 @@ impl Document {
         point_index: usize,
         action: i32,
     ) -> Result<()> {
-        self.object_at(object_index)?;
-        self.require_path_version()?;
-        self.require_action_version(action)?;
-        self.edit_point("Set path action", object_index, point_index, |p| {
-            p.action = action;
-        })
+        self.edit_point(
+            "Set path action",
+            object_index,
+            point_index,
+            Some(action),
+            |p| {
+                p.action = action;
+            },
+        )
     }
 
     fn edit_point(
@@ -169,12 +185,11 @@ impl Document {
         label: &str,
         object_index: usize,
         point_index: usize,
+        action: Option<i32>,
         change: impl FnOnce(&mut PathPoint),
     ) -> Result<()> {
         let object = self.object_at(object_index)?;
-        let pos = self
-            .path_position(&object)
-            .ok_or_else(|| invalid(format!("object {object_index} has no NPC path")))?;
+        let pos = self.existing_path(object_index, &object)?;
         let before = self.ds1.npc_paths[pos].clone();
         let mut after = before.clone();
         let len = after.points.len();
@@ -184,6 +199,7 @@ impl Document {
             ))
         })?;
         change(point);
+        self.require_path_version(action)?;
         let mut patch = Patch::new(label);
         if before != after {
             patch.push(Step::PathSet {
@@ -196,20 +212,18 @@ impl Document {
     }
 
     /// Deletes the points at `point_indices` (duplicates ignored). The path is
-    /// removed when no point is left.
+    /// removed when no point is left. An empty list is a no-op;
+    /// `Format(Invalid)` when the object has no path or no such point.
     pub fn delete_path_points(
         &mut self,
         object_index: usize,
         point_indices: &[usize],
     ) -> Result<()> {
         let object = self.object_at(object_index)?;
-        self.require_path_version()?;
         if point_indices.is_empty() {
             return Ok(());
         }
-        let pos = self
-            .path_position(&object)
-            .ok_or_else(|| invalid(format!("object {object_index} has no NPC path")))?;
+        let pos = self.existing_path(object_index, &object)?;
         let before = self.ds1.npc_paths[pos].clone();
         let doomed: BTreeSet<usize> = point_indices.iter().copied().collect();
         if let Some(bad) = doomed.iter().find(|&&i| i >= before.points.len()) {
@@ -218,6 +232,7 @@ impl Document {
                 before.points.len()
             )));
         }
+        self.require_path_version(None)?;
         let mut after = before.clone();
         after.points = before
             .points

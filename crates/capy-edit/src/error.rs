@@ -15,7 +15,9 @@ pub enum EditError {
         height: u32,
     },
     /// The change needs a newer DS1 version (e.g. a 2nd wall layer in a v3 file).
-    /// The app offers `Document::upgrade_version(required)`.
+    /// The app offers `Document::upgrade_version(required)`: `required` is the
+    /// lowest version after which the same call succeeds (a v3 map with tag
+    /// cells asks for 10, since v4..=9 cannot store its tag layer).
     #[error("needs DS1 version {required} (file is version {current})")]
     NeedsVersion { current: i32, required: i32 },
     #[error("layer limit reached: {0}")]

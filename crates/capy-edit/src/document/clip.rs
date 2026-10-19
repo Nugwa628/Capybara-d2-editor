@@ -12,6 +12,7 @@ use crate::layer::{CellValue, LayerRef};
 use crate::layer_ops;
 use crate::patch::{CellEdit, Patch, Step};
 use crate::selection::{CellRect, Selection};
+use crate::version;
 
 /// Sub-tiles per cell along one axis.
 const SUBTILES: i64 = 5;
@@ -171,7 +172,9 @@ impl Document {
     /// Pastes `clip` with its top-left cell at `at`, adding the layers it needs.
     /// Cells outside the map are dropped (counted in `out_of_bounds`).
     /// `NeedsVersion` when the clip needs layers or objects the file version
-    /// cannot store; when nothing would change it succeeds and records nothing.
+    /// cannot store (`required` is the lowest version the map can be upgraded
+    /// to that takes the paste, the same as `PastePreview::needs_version`);
+    /// when nothing would change it succeeds and records nothing.
     pub fn paste(
         &mut self,
         clip: &Clipboard,
@@ -320,6 +323,16 @@ impl Document {
         }
         if let Some(required) = version_needed(ds1, &objects) {
             needs = needs.max(Some(required));
+        }
+        if let Some(at_least) = needs {
+            // The gates above are the paste's own; the map must also be able to
+            // reach that version (e.g. a v3 map with tag cells cannot be v4..=9).
+            let change = version::Change {
+                layers: edits.iter().map(|(layer, _)| *layer).collect(),
+                objects: objects.clone(),
+                path: None,
+            };
+            needs = Some(version::required(ds1, &change, at_least));
         }
 
         preview.layers_to_add = missing;
