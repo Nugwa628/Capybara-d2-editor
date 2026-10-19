@@ -17,8 +17,18 @@ pub enum GameVersion {
     #[serde(rename = "d2r")]
     D2r,
 }
-// TODO(excel): `GameVersion::excel() -> Option<d2_formats::excel::ExcelVersion>`
-// once d2_formats::excel exists.
+
+impl GameVersion {
+    /// The `.bin` layout family for this version; `None` for D2R, which has
+    /// no `.bin` tables.
+    pub fn excel(self) -> Option<d2_formats::excel::ExcelVersion> {
+        match self {
+            GameVersion::V113c => Some(d2_formats::excel::ExcelVersion::V113c),
+            GameVersion::V114d => Some(d2_formats::excel::ExcelVersion::V114d),
+            GameVersion::D2r => None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -272,6 +282,14 @@ impl Profile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn excel_version_mapping() {
+        use d2_formats::excel::ExcelVersion;
+        assert_eq!(GameVersion::V113c.excel(), Some(ExcelVersion::V113c));
+        assert_eq!(GameVersion::V114d.excel(), Some(ExcelVersion::V114d));
+        assert_eq!(GameVersion::D2r.excel(), None);
+    }
 
     #[test]
     fn globbing() {

@@ -17,10 +17,11 @@ pub mod overlay;
 pub mod path;
 pub mod profile;
 pub mod source;
+pub mod tables;
 
 pub use error::{AssetError, Result};
 pub use mpq::{MpqArchive, MpqCoverage, MpqHeader};
-pub use names::KnownNames;
+pub use names::{HarvestStats, KnownNames};
 pub use overlay::{LayerId, Overlay};
 pub use path::GamePath;
 pub use profile::{GameVersion, LayerSpec, Profile};
