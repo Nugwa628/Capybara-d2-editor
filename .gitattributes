@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.ds1 binary
+*.dt1 binary
+*.dc6 binary
+*.dcc binary
+*.cof binary
+*.pl2 binary
+*.dat binary
+*.d2 binary
+*.bin binary
+*.mpq binary
+*.png binary
+*.tbl binary

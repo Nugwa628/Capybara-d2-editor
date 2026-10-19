@@ -1,0 +1,56 @@
+NOTICE
+======
+
+Capybara Map Editor is an independent, from-scratch Rust implementation of a
+Diablo II DS1 map editor. It contains no code copied from the projects below,
+but it owes them its understanding of the file formats and of how an editor
+for them should behave.
+
+
+1. win_ds1edit by Paul Siramy (2002-2011)
+-----------------------------------------
+
+Paul Siramy wrote ds1edit / win_ds1edit, the DS1 map editor the Diablo II
+modding community has relied on since 2002, and documented the DS1, DT1, DCC,
+DC6, COF and AnimData.d2 formats for everyone.
+
+    http://paul.siramy.free.fr/_divers/ds1/dl_ds1edit.html
+
+
+2. DS1Edit by Ben Ethington (2025-2026), MIT License
+----------------------------------------------------
+
+DS1Edit (https://github.com/bethington/d2-ds1-edit) continues win_ds1edit. Its
+format guides (docs/guides/*.md) were used as specifications, and its
+headless renderer is used as a test oracle. It is not ported line by line.
+
+Data files derived from DS1Edit and embedded in this program, if present,
+are used under its MIT license:
+
+    assets/editor/obj.txt     DS1 object -> COF token table
+    assets/editor/ds1edit.dt1 editor marker tiles
+
+DS1Edit's license:
+
+    Copyright (c) 2025-2026 Ben Ethington
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to permit
+    persons to whom the Software is furnished to do so, subject to the
+    following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+
+3. Game data
+------------
+
+Diablo II and its data files are the property of Blizzard Entertainment.
+Median XL is the work of its authors. Neither is distributed with this
+program; it reads them read-only from the user's own installation.

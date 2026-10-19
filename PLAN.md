@@ -1,0 +1,184 @@
+# Capybara Map Editor — Plan
+
+Status: planning, re-verified 2026-10-19. No code yet.
+
+## Decisions
+- **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
+- **UI:** Bevy draws the map as a live scene. bevy_egui and egui_dock provide the panels.
+- **Game data:**
+  - Classic D2/LoD MPQs and mod MPQs, with an overlay of any number of archives, including Median XL's split MPQs.
+  - Loose mod folders.
+  - D2R CASC sits behind the same trait; it is unimplemented and untested until a D2R install exists, so D2R is tested through extracted mod folders.
+- **Game profiles** (TOML): *Vanilla* is the vanilla install's base MPQs. *Median XL* is the medianxl-* archives on top of Median XL's **own** base MPQs (never the vanilla ones). Users can add their own profiles.
+- **Portable layout:** everything the editor writes lives next to the exe. Game install folders are **read-only and never written**. Copying or zipping the folder moves the whole setup.
+  ```
+  CapybaraMapEditor.exe
+  capybara\
+    config.toml                  settings + game profiles
+    saves\<profile>\data\global\tiles\...\*.ds1
+                                 edited maps, mirroring game paths exactly
+    saves\<profile>\CHANGED.txt  game-relative paths changed since the last "mark as packed"
+    history\<profile>\           deduped snapshots + index.json (timeline)
+    user.db                      tags, aliases, favorites, recents, saved searches
+    cache\                       index.db + thumbnails (safe to delete; rebuilt automatically)
+  ```
+- **Output:** saves are loose `.ds1` files. **The user packs them into the MPQ by hand.** To make that easy:
+  - drag the `saves\<profile>\data` folder into an MPQ editor and the paths match;
+  - `CHANGED.txt` lists exactly which files need packing;
+  - the editor has "Open saves folder" and "Mark as packed" buttons, which clear CHANGED.txt.
+  - The editor never writes MPQs.
+- **Load order:** files in `saves\<profile>\` override the game archives, so maps you've edited open as your edited version.
+- **Versioning:** hybrid.
+  - Deduped snapshots in `capybara\history\<profile>\`.
+  - An optional "Milestone" that makes a `gix` commit, with the repo in `capybara\saves\`.
+- **Reference:** `reference/d2-ds1-edit` (MIT, gitignored) is a spec and test oracle. It is not ported line by line, and it is credited in NOTICE.
+
+## Verified facts (2026-10-19, read-only probes)
+### Machine
+- rustc/cargo 1.99 stable `x86_64-pc-windows-msvc`. VS 2026 (v18) Community with MSVC 14.51. Python 3.14.
+- Git's `link.exe` is on PATH. rustc normally finds MSVC's linker anyway, but if linking fails, check this first.
+
+### Vanilla D2: `C:\Program Files (x86)\Diablo II`, patch 1.14d
+- `d2data.mpq` has a plain listfile: 10,841 names, including 1,771 ds1, 206 dt1 and 83 txt.
+- `d2exp.mpq` has an encrypted listfile compressed with **PKWARE implode (0x08)**.
+- `Patch_D2.mpq` has **no listfile**, so its file names must come from elsewhere.
+
+### Median XL: `C:\games\median-xl`, runs on 1.13c with D2Sigma.dll
+- 56 MPQs named `medianxl-<base64>[-N].mpq`, plus its own modified copies of the base MPQs (`d2data.mpq` here is not identical to vanilla).
+- The base64 parts decode to: animdata, bintbltxt, gui, itemsgfx, object, overlays, local, monzzz, maps, missls, sfx, tiles.
+- Every listfile is encrypted with FIX_KEY (flags 0x80030200), and standard MPQ decryption reads them.
+- 8,528 files in total, with **no path overlaps between the medianxl MPQs**. Their order relative to each other doesn't matter; together they only need to rank above the base MPQs.
+- Maps:
+  - 574 ds1 files: overrides of vanilla paths plus new ones under `data\global\tiles\mxl\{zone,quest,other,generic}\…`.
+  - 129 dt1 files, all in `medianxl-dGlsZXM.mpq`.
+- **Data tables ship only as compiled `.bin`** (`lvltypes.bin`, `lvlprest.bin`, `lvlwarp.bin`, `objects.bin`, `objpreset.bin`, `automap.bin`, …). There are no `.txt` versions, so we need a `.bin` excel decoder with the 1.13c record layouts.
+
+### Reference editor (DS1Edit 2.1.1 source)
+- **Specs to use:** `docs/guides/{ds1-map-format,dt1-tile-format,sprite-formats-dcc-dc6,cof-pipeline-1.13c,animdata-d2,palettes-and-colour,excel-tables-and-data-loading,tbl-string-tables}.md`. Each has a `.verification.md` companion.
+  - **Do not trust** `docs/internal/ds1-validation.md` or `ds1-decoding.md`; their fixed layer counts are wrong.
+- **MPQ reader:**
+  - Hard-limited to 4 base MPQs and 1 mod folder (`structs.h:24-25`), so it **cannot load Median XL's extra MPQs**.
+  - Accepts v1 headers only. Handles implode and zlib, but not bzip2.
+  - Excel tables are read as `.txt` only, so **it cannot render Median XL maps**, which ship `.bin` tables only.
+- **DS1:**
+  - Reads any version through a ladder of version checks (ds1.c:535-1195). Truncated files must be tolerated.
+  - Always saves as **v18** and renames the old file to `name-NNN.ds1` as a backup.
+  - Stores editor state as `DS1EDIT_WRKSPC_*` strings inside the file list. We must keep these.
+- **Tile rules:**
+  - A tile is keyed by (orientation, main, sub), where `main = (prop3>>4)|((prop4&3)<<4)`. Floors use orientation 0, shadows 13.
+  - Orientations 18 and 19 fall back to each other, then to sub 0.
+  - Variant choice: the highest rarity wins. If the rarity sum is 0, the last block of the first DT1 is used, so DT1 load order matters.
+  - The DT1 list comes from LvlTypes `File1..32`, masked by LvlPrest `Dt1Mask`.
+- **Render order** is in `preview.c:2574`:
+  1. Lower walls, then floors, then DT1 shadows.
+  2. Object shadows.
+  3. Objects with orderflag 1.
+  4. Upper walls together with objects of orderflag 0/2.
+  5. Roofs.
+  6. Special tiles (orientation 10/11).
+- **Blend modes** (`preview.c:291-380`, keyed on COF `trans_b`): 25/50/75% alpha, additive, multiply, and (ONE, INV_SRC_COLOR).
+- **Gamma** is `255*(i/255)^(1/g)`. The palette is chosen per act, and LvlTypes row 35 needs the Act 4 palette.
+- **Features it has:**
+  - Tile-only undo with no redo.
+  - Copy/paste for tiles and objects.
+  - No way to move tiles between layers.
+  - Two tile pickers: the old modal one has no mouse-wheel support at all; the newer one has the wheel and a recently-used list but no search.
+- **Headless oracle:** `ds1edit <file.ds1> <LvlTypesId> <LvlPrestDef> --zoom=1:4 --headless out.png`. It renders deterministically. Compare terrain only, with a tolerance, because object frames use `rand()` and gamma comes from the ini (default 1.30).
+- A prebuilt `ds1edit.exe` already exists at `C:\Users\ZF\Desktop\sugma\ds1edit-v2.1.1-windows-x86\DS1Edit-2.1.1-win32\`. **Copy that folder** to a scratch location before use; never edit the user's ini there.
+- Embeddable editor data under MIT: `assets/editor/obj.txt` (DS1 object → COF token) and `ds1edit.dt1` (marker tiles).
+
+### Crates (crates.io, 2026-10-19)
+| Crate | Version | Note |
+|---|---|---|
+| bevy | 0.20 | |
+| bevy_egui | 0.43 | |
+| egui | 0.37 | |
+| egui_dock | 0.21 | Prove one shared egui version with `cargo tree -d` before pinning |
+| gix | 0.89 | |
+| rusqlite | 0.40 | Bundled SQLite, FTS5 |
+| image_hasher | 3.1 | |
+| nucleo | 0.5 | |
+| pklib / explode | 0.2 / 0.1 | |
+| mpq | 0.8 | Read-only |
+| wow-mpq | 0.7 | |
+
+- Use an MPQ crate only if it passes the archive tests below. Otherwise write an MPQ reader of about 600 lines, since the format is small. It must handle:
+  - v1 headers, and v2+ headers without failing;
+  - encrypted files and FIX_KEY;
+  - implode, zlib and bzip2 (Huffman and ADPCM only matter for wav files, which we skip);
+  - every Median XL archive.
+
+## Workspace layout
+```
+crates/
+  d2-formats/    ds1 dt1 dc6 dcc cof pl2 animdata txt excel-bin tbl  (pure, no Bevy)
+  d2-assets/     AssetSource trait: Mpq, Folder, Casc(stub); N-layer overlay resolver; known-names
+  capy-index/    crawler -> SQLite+FTS5, thumbnails, generated names, pHash, tags/favorites/recents
+  capy-edit/     document model, commands, undo/redo, selection, clipboard, layer ops
+  capy-history/  snapshot store + gix milestones
+  capy-app/      Bevy + egui binary (the only crate that depends on Bevy)
+docs/specs/      cross-checked format notes (reference guides + our findings)
+reference/       upstream clone (gitignored)
+testdata/        synthetic fixtures (committed); testdata/private/ = real game files (gitignored)
+```
+
+## Phases (each needs its tests to pass before the next one starts)
+- **P0 Formats and assets.**
+  - Cross-check the reference guides. Build `d2-formats` and `d2-assets`, including the `.bin` excel decoder for 1.13c and 1.14d and the known-names list.
+  - **Test:**
+    - Every ds1 in both installs round-trips byte-identical when unchanged; exceptions such as truncated files are listed and justified.
+    - Every dt1 parses. There is no dt1 writer.
+    - Every known name resolves.
+    - The `.bin` decoder matches `.txt` wherever a table exists in both forms. Every DT1 and DS1 named in Median XL's LvlTypes and LvlPrest resolves.
+- **P1 Viewer and index.**
+  - Bevy renders tiles in reference order with blend modes and act palettes. Mouse-wheel zoom from 1:1 to 1:16, pan, and layer toggles.
+  - `capy-index` runs in the background with a progress bar.
+  - **Test:**
+    - At least 5 vanilla maps match the reference headless renders, terrain only and within tolerance.
+    - At least 5 Median XL maps render without missing tiles. Their screenshots are sent to the user to check by eye, because the reference can't render Median XL.
+    - The second launch loads the index from cache with no re-crawl. A unit test checks that changing an archive's size or modified time triggers a rebuild. No timing benchmarks.
+- **P2 Editing.**
+  - A command pattern with unlimited undo and redo.
+  - Box, lasso and select-by-tile-ID selection, plus "select identical".
+  - Copy, cut and paste across maps, with a preview of conflicts.
+  - Move or batch-move a selection between layers (for example wall1 → wall3). A layer is added automatically if the map doesn't have it.
+  - **Test:** property tests show that undoing a redo returns the original, and that edit-then-save files load in the reference editor.
+- **P3 Tile browser and search.** See the asset index section.
+  - **Test:** a table-driven test of about 20 queries over the Median XL index (by index, generated name, color, tag, source file). Each must return the expected asset in the top 5.
+- **P4 History.**
+  - Snapshots on save and by autosave timer, named checkpoints, a timeline, a visual tile diff, restore, a retention limit, and gix milestones.
+  - Saves are atomic (write a temp file, then rename). Each save also updates `CHANGED.txt`.
+  - **Test:** killing the process during a save never corrupts the target file.
+- **P5 Extras.** Objects and NPC paths, animated DCC/DC6, a headless render CLI, and an importer for the legacy `assets/*.ini` files. (No MPQ writing; the user packs by hand.)
+  - Stretch goal: offline CLIP text-to-image tile search.
+
+## Asset index (`capy-index`, built in P1, used by P3)
+1. **Crawl:**
+   - Build the file list from three sources:
+     - the archives' own listfiles;
+     - a known-names list built from both installs' listfiles;
+     - names referenced by LvlTypes, LvlPrest, objects, COF and DS1 files.
+   - This covers `Patch_D2.mpq`, which has no listfile.
+   - Record each file's source archive, priority, size, hash and which layer wins.
+2. **Decode** per tile:
+   - DT1: orientation, main/sub index, rarity, size and flags. Also the parent DT1, the LvlTypes rows that load it, and the Dt1Mask bit.
+   - DC6/DCC: frames and directions.
+   - DS1: which DT1s and objects it references, giving "used in" back-links.
+3. **Names for unnamed tiles:**
+   - Generated from context: `Act1 Wilderness · Floor · grass · 05/02`.
+   - Plus visual descriptors: dominant palette color, a texture class estimated from edge density, and how much of the tile is transparent.
+   - pHash for "find similar", detecting mirrored copies and grouping variants.
+   - User aliases, tags and notes are stored separately, so re-indexing never wipes them.
+4. **Storage:**
+   - `capybara\cache\index.db` holds one SQLite file per machine: the asset rows, FTS5 search, and thumbnails stored as small PNG blobs. Storing them as blobs means no atlas code.
+   - `capybara\user.db` holds the user's data (tags, aliases, favorites, recents, saved searches), keyed by stable asset keys such as path + orientation/main/sub, so it survives a rebuild of the cache.
+   - Rebuild rule, chosen to keep the code small: if any archive in a profile changes size or modified time, rebuild that whole profile's index in the background. Incremental per-archive re-indexing waits until rebuilds actually feel slow.
+5. **Ctrl+K global search:**
+   - Fuzzy matching (nucleo) plus filter tokens: `type: act: color: tag: idx:5/2 file: similar: used-in: mirrored: src:mxl`.
+   - Thumbnails update live as you type. Enter picks the result as the brush; Shift+Enter shows it in the browser.
+6. **Recents** are recorded automatically. **Favorites** are stars in named, reorderable groups. **Saved searches** work as smart folders, so custom tiles can be pinned to the top.
+
+## Open questions
+- None currently. Answered on 2026-10-19:
+  - Saves go next to the exe and are packed into the MPQ by hand.
+  - Performance targets are smoke tests, not benchmarks, to save time and code.
