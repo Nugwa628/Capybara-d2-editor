@@ -286,6 +286,7 @@ pub fn shortcuts(ctx: &Context, state: &mut AppState) {
 
 pub fn dialogs(ctx: &Context, state: &mut AppState) {
     save_prompt(ctx, state);
+    dcc_warning(ctx, state);
     discard_prompt(ctx, state);
     quit_prompt(ctx, state);
 }
@@ -338,9 +339,52 @@ fn save_prompt(ctx: &Context, state: &mut AppState) {
             Err(e) => prompt.error = Some(e),
             Ok(_) => {
                 state.sprites.save_prompt = None;
-                let _ = state.sprite_save_game(target, &text);
+                state.sprite_write_checked(target, crate::sprites::DccWrite::Game(text));
             }
         }
+    }
+}
+
+/// "N cells hold more than 4 values": reduce and save, look first, or not.
+fn dcc_warning(ctx: &Context, state: &mut AppState) {
+    use crate::sprites::{DccAnswer, DccWrite, Target};
+    let Some(w) = state.sprites.dcc_warning.clone() else {
+        return;
+    };
+    let mut answer = None;
+    egui::Modal::new(Id::new("sprite_dcc_warning")).show(ctx, |ui| {
+        ui.set_max_width(460.0);
+        ui.heading("Reduce crowded DCC cells?");
+        let what = match &w.write {
+            DccWrite::Game(p) => p.clone(),
+            DccWrite::Export(p) => p.display().to_string(),
+        };
+        ui.label(format!(
+            "{} 4x4 cell(s) hold more than 4 values. A DCC cell can store 4 at most,              so writing {what} merges the nearest colours in those cells.",
+            w.cells
+        ));
+        if w.target == Target::Editor {
+            ui.weak("\"Reduce and save\" changes the editor's frames first (one undo step).");
+        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui.button("Reduce and save").clicked() {
+                answer = Some(DccAnswer::ReduceAndSave);
+            }
+            if ui
+                .button("Open the cell check")
+                .on_hover_text("Lists the cells in the editor so you can fix them by hand")
+                .clicked()
+            {
+                answer = Some(DccAnswer::OpenCellCheck);
+            }
+            if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                answer = Some(DccAnswer::Cancel);
+            }
+        });
+    });
+    if let Some(a) = answer {
+        state.answer_dcc_warning(a);
     }
 }
 

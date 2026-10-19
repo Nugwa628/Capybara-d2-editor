@@ -540,11 +540,16 @@ fn dcc_check(ui: &mut Ui, state: &mut AppState) {
     {
         let Some(e) = editor(state) else { return };
         let is_dcc = e.format == capy_sprite::SpriteFormat::Dcc;
+        let force_open = std::mem::take(&mut state.sprites.open_cell_check);
+        let Some(e) = state.sprites.editor.as_mut() else {
+            return;
+        };
         egui::CollapsingHeader::new(format!(
             "DCC cell check{}",
             if is_dcc { "" } else { " (sprite is DC6)" }
         ))
         .default_open(is_dcc)
+        .open(force_open.then_some(true))
         .show(ui, |ui| {
             let list = e.violations().to_vec();
             if list.is_empty() {

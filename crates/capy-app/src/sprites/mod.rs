@@ -38,6 +38,9 @@ pub enum SpriteSource {
     File(PathBuf),
     /// Made in the Converter.
     Imported(String),
+    /// Made in the Converter from an export whose `sprite.json` names the
+    /// game path the sprite came from (the save prompt offers it).
+    Reimported { what: String, game: GamePath },
 }
 
 impl SpriteSource {
@@ -46,6 +49,28 @@ impl SpriteSource {
             SpriteSource::Game(p) => p.as_str().to_owned(),
             SpriteSource::File(f) => f.display().to_string(),
             SpriteSource::Imported(what) => format!("(imported) {what}"),
+            SpriteSource::Reimported { what, game } => format!("(imported) {what}, from {game}"),
+        }
+    }
+
+    /// An import: from an export with a game path in its `sprite.json`
+    /// when there is one, else a plain import.
+    pub fn import(what: String, meta: Option<&capy_sprite::ExportMeta>) -> SpriteSource {
+        match meta
+            .and_then(|m| m.source.as_deref())
+            .and_then(|s| convert::check_game_path(s).ok())
+        {
+            Some((game, _)) => SpriteSource::Reimported { what, game },
+            None => SpriteSource::Imported(what),
+        }
+    }
+
+    /// The game path "Save to game path" offers: where the sprite was read
+    /// from, or where the export it was imported from came from.
+    pub fn save_path(&self) -> Option<&GamePath> {
+        match self {
+            SpriteSource::Game(p) | SpriteSource::Reimported { game: p, .. } => Some(p),
+            _ => None,
         }
     }
 
@@ -65,6 +90,7 @@ impl SpriteSource {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             SpriteSource::Imported(_) => "sprite".to_owned(),
+            SpriteSource::Reimported { game, .. } => game.file_name().to_owned(),
         };
         let stem = name.rsplit_once('.').map_or(name.as_str(), |(s, _)| s);
         if stem.is_empty() {
@@ -80,6 +106,33 @@ impl SpriteSource {
 pub enum Target {
     Viewer,
     Editor,
+}
+
+/// A DCC write that waits for "these cells will be reduced" to be answered.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DccWrite {
+    /// "Save to game path" with this game path.
+    Game(String),
+    /// "Export to..." a `.dcc` file.
+    Export(PathBuf),
+}
+
+/// The question asked before writing a DCC whose 4x4 cells hold more than
+/// four values (the encoder would merge colours there).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DccWarning {
+    pub target: Target,
+    pub write: DccWrite,
+    /// Crowded cells.
+    pub cells: usize,
+}
+
+/// The answer to a [`DccWarning`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DccAnswer {
+    ReduceAndSave,
+    OpenCellCheck,
+    Cancel,
 }
 
 /// The game-path prompt of "Save to game path".
@@ -143,6 +196,10 @@ pub struct SpritesState {
     pub preview: PreviewState,
     pub dialogs: Dialogs,
     pub save_prompt: Option<SavePrompt>,
+    /// Asked before a DCC write would reduce crowded cells.
+    pub dcc_warning: Option<DccWarning>,
+    /// Open the editor's "DCC cell check" section on the next frame.
+    pub open_cell_check: bool,
     /// An editor session waiting for "discard the unsaved one?".
     pub pending_editor: Option<Box<EditorState>>,
     pub quit_prompt: bool,
@@ -173,6 +230,8 @@ impl Default for SpritesState {
             preview: PreviewState::default(),
             dialogs: Dialogs::default(),
             save_prompt: None,
+            dcc_warning: None,
+            open_cell_check: false,
             pending_editor: None,
             quit_prompt: false,
             quit_confirmed: false,
@@ -192,7 +251,10 @@ impl SpritesState {
 
     /// True while a modal of the Sprites mode is open.
     pub fn modal_open(&self) -> bool {
-        self.save_prompt.is_some() || self.pending_editor.is_some() || self.quit_prompt
+        self.save_prompt.is_some()
+            || self.dcc_warning.is_some()
+            || self.pending_editor.is_some()
+            || self.quit_prompt
     }
 }
 
@@ -579,7 +641,7 @@ impl AppState {
         let palette = self.sprite_palette();
         let result = convert::build_import(&settings, &palette);
         match result {
-            Ok(sprite) => {
+            Ok((sprite, meta)) => {
                 let what = match settings.files.as_slice() {
                     [one] => one
                         .file_name()
@@ -589,7 +651,7 @@ impl AppState {
                 };
                 let format = settings.format;
                 let (dirs, frames) = (sprite.directions.len(), sprite.frames_per_direction());
-                let source = SpriteSource::Imported(what.clone());
+                let source = SpriteSource::import(what.clone(), meta.as_ref());
                 self.sprites.viewer.set_loaded(
                     Loaded::Sprite(SingleSprite {
                         sprite: sprite.clone(),
@@ -623,7 +685,7 @@ impl AppState {
             self.error("Nothing to save: open or import a DC6/DCC first");
             return;
         };
-        let text = match data.source.as_ref().and_then(SpriteSource::game_path) {
+        let text = match data.source.as_ref().and_then(SpriteSource::save_path) {
             Some(p) => p.as_str().to_owned(),
             None => format!(
                 "data\\global\\{}.{}",
@@ -637,6 +699,88 @@ impl AppState {
             text,
             error: None,
         });
+    }
+
+    /// Crowded DCC cells of `target`'s sprite (0 when there is none).
+    pub fn crowded_dcc_cells(&self, target: Target) -> usize {
+        self.target_data(target)
+            .map_or(0, |d| capy_paint::dcc_cell_violations(&d.sprite.directions).len())
+    }
+
+    /// Writes `write` now, or asks first when it is a DCC with crowded cells.
+    /// Returns `false` when the question was asked instead.
+    pub fn sprite_write_checked(&mut self, target: Target, write: DccWrite) -> bool {
+        let is_dcc = match &write {
+            DccWrite::Game(text) => {
+                convert::check_game_path(text).is_ok_and(|(_, f)| f == SpriteFormat::Dcc)
+            }
+            DccWrite::Export(path) => {
+                convert::format_of(&path.to_string_lossy()) == Some(SpriteFormat::Dcc)
+            }
+        };
+        let cells = if is_dcc {
+            self.crowded_dcc_cells(target)
+        } else {
+            0
+        };
+        if cells > 0 {
+            self.sprites.dcc_warning = Some(DccWarning {
+                target,
+                write,
+                cells,
+            });
+            return false;
+        }
+        self.sprite_write(target, &write);
+        true
+    }
+
+    fn sprite_write(&mut self, target: Target, write: &DccWrite) {
+        match write {
+            DccWrite::Game(text) => {
+                let _ = self.sprite_save_game(target, text);
+            }
+            DccWrite::Export(path) => {
+                let _ = self.sprite_export(Purpose::ExportSprite, path, target);
+            }
+        }
+    }
+
+    /// The answer to the crowded-cells question.
+    pub fn answer_dcc_warning(&mut self, answer: DccAnswer) {
+        let Some(w) = self.sprites.dcc_warning.take() else {
+            return;
+        };
+        match answer {
+            DccAnswer::Cancel => self.info("Save cancelled; nothing was written"),
+            DccAnswer::ReduceAndSave => {
+                // The editor reduces as one undo step, so the canvas shows
+                // what is written; the encoder does the same for the viewer.
+                if w.target == Target::Editor
+                    && let Some(e) = self.sprites.editor.as_mut()
+                {
+                    match e.reduce_all() {
+                        Ok(n) => self.info(format!("Editor: reduced {n} DCC cell(s)")),
+                        Err(err) => {
+                            self.error(format!("Cannot reduce the DCC cells: {err}"));
+                            return;
+                        }
+                    }
+                }
+                self.sprite_write(w.target, &w.write);
+            }
+            DccAnswer::OpenCellCheck => {
+                if w.target == Target::Viewer
+                    && let Err(e) = self.edit_viewer_sprite(None)
+                {
+                    self.error(format!("Cannot open the sprite in the editor: {e}"));
+                    return;
+                }
+                self.config.mode = crate::config::AppMode::Sprites;
+                self.sprites.focus = Some(Focus::Editor);
+                self.sprites.open_cell_check = true;
+            }
+        }
     }
 
     /// "Save to game path": `capybara\saves\<profile>\<game path>`, CHANGED.txt
@@ -869,12 +1013,13 @@ impl AppState {
                     let opts = self.sprites.converter.import.matching.quantize();
                     match capy_sprite::import_frames(dir, &palette, &opts) {
                         Ok((sprite, meta)) => {
-                            let format =
-                                meta.map_or(self.sprites.converter.import.format, |m| m.format);
+                            let format = meta
+                                .as_ref()
+                                .map_or(self.sprites.converter.import.format, |m| m.format);
                             let what = dir.display().to_string();
                             self.sprites.viewer.set_loaded(
                                 Loaded::Sprite(SingleSprite { sprite, format }),
-                                SpriteSource::Imported(what.clone()),
+                                SpriteSource::import(what.clone(), meta.as_ref()),
                                 viewer::DEFAULT_FPS,
                                 "default".to_owned(),
                             );
@@ -887,6 +1032,11 @@ impl AppState {
             }
             Purpose::BatchInput => self.sprites.converter.batch.input = paths.into_iter().next(),
             Purpose::BatchOutput => self.sprites.converter.batch.output = paths.into_iter().next(),
+            Purpose::ExportSprite => {
+                if let Some(p) = paths.first() {
+                    self.sprite_write_checked(target, DccWrite::Export(p.clone()));
+                }
+            }
             export => {
                 if let Some(p) = paths.first() {
                     let _ = self.sprite_export(export, p, target);
@@ -990,6 +1140,30 @@ mod tests {
             "zmtrlitnuhth"
         );
         assert_eq!(SpriteSource::Imported("x".into()).stem(), "sprite");
+        assert!(SpriteSource::Imported("x".into()).save_path().is_none());
+        // sprite.json's `source` is offered only when it is a game path.
+        let meta = |source: Option<&str>| capy_sprite::ExportMeta {
+            version: 1,
+            format: SpriteFormat::Dcc,
+            directions: 1,
+            frames_per_direction: 1,
+            palette: "act1".into(),
+            source: source.map(str::to_owned),
+            frames: Vec::new(),
+        };
+        let game = SpriteSource::import(
+            "f".into(),
+            Some(&meta(Some("data\\global\\monsters\\zz\\Foo.DCC"))),
+        );
+        assert_eq!(
+            game.save_path().map(GamePath::as_str),
+            Some("data\\global\\monsters\\zz\\foo.dcc")
+        );
+        assert_eq!(game.stem(), "foo");
+        for not_game in [Some("C:\\art\\foo.dcc"), Some("(imported) 4 images"), None] {
+            let s = SpriteSource::import("f".into(), Some(&meta(not_game)));
+            assert_eq!(s, SpriteSource::Imported("f".into()), "{not_game:?}");
+        }
         assert!(
             SpriteSource::File(PathBuf::from("C:\\a.dc6"))
                 .game_path()
@@ -1058,5 +1232,57 @@ mod tests {
         s.sprite_export(Purpose::ExportFrames, &out, Target::Editor)
             .expect("export");
         assert!(out.join("sprite.json").is_file());
+    }
+
+    /// A DC6 with one 4x4 cell of 6 distinct values (a DCC cannot hold it).
+    fn crowded_sprite_file(dir: &Path) -> PathBuf {
+        let mut img = IndexedImage::new(4, 4, 0, -4);
+        for i in 0..6 {
+            img.pixels[i] = 40 + 10 * i as u8;
+            img.alpha[i] = 255;
+        }
+        let sprite = Sprite {
+            directions: vec![vec![img]],
+        };
+        let file = dir.join("crowded.dc6");
+        std::fs::write(&file, sprite.encode(SpriteFormat::Dc6).expect("enc")).expect("write");
+        file
+    }
+
+    #[test]
+    fn a_dcc_write_with_crowded_cells_asks_first() {
+        let (tmp, mut s) = state();
+        s.open_sprite_file(&crowded_sprite_file(tmp.path())).expect("open");
+        assert_eq!(s.crowded_dcc_cells(Target::Viewer), 1);
+        // As DCC: nothing is written, the question is asked.
+        let out = tmp.path().join("out.dcc");
+        assert!(!s.sprite_write_checked(Target::Viewer, DccWrite::Export(out.clone())));
+        let w = s.sprites.dcc_warning.clone().expect("asked");
+        assert_eq!((w.cells, w.target), (1, Target::Viewer));
+        assert!(s.sprites.modal_open());
+        assert!(!out.exists());
+        s.answer_dcc_warning(DccAnswer::Cancel);
+        assert!(s.sprites.dcc_warning.is_none() && !out.exists());
+        // "Reduce and save" writes; the file decodes.
+        assert!(!s.sprite_write_checked(Target::Viewer, DccWrite::Export(out.clone())));
+        s.answer_dcc_warning(DccAnswer::ReduceAndSave);
+        let bytes = std::fs::read(&out).expect("written");
+        assert!(Sprite::decode(&bytes, SpriteFormat::Dcc).is_ok());
+        // As DC6 there is nothing to ask.
+        let dc6 = tmp.path().join("out.dc6");
+        assert!(s.sprite_write_checked(Target::Viewer, DccWrite::Export(dc6.clone())));
+        assert!(dc6.is_file());
+        // A game save path is checked the same way (no profile: it fails later).
+        assert!(!s.sprite_write_checked(Target::Viewer, DccWrite::Game(r"data\a.dcc".into())));
+        // "Open the cell check" opens the sprite in the editor at the check.
+        s.answer_dcc_warning(DccAnswer::OpenCellCheck);
+        assert!(s.sprites.editor.is_some());
+        assert_eq!(s.sprites.focus, Some(Focus::Editor));
+        assert!(s.sprites.open_cell_check);
+        // From the editor, "Reduce and save" reduces the frames (undoable).
+        assert!(!s.sprite_write_checked(Target::Editor, DccWrite::Export(out.clone())));
+        s.answer_dcc_warning(DccAnswer::ReduceAndSave);
+        assert_eq!(s.crowded_dcc_cells(Target::Editor), 0);
+        assert!(s.sprites.editor_dirty());
     }
 }

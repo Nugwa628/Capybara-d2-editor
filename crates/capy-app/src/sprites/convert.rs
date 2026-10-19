@@ -150,15 +150,26 @@ pub fn frame_layout(count: usize, directions: u32, frames: u32) -> Result<(usize
 /// Builds the sprite of an import. Offsets come from a `sprite.json` next to
 /// the files (exact re-import of an export) when it names them; otherwise
 /// each frame is anchored bottom-centre.
-pub fn build_import(settings: &ImportSettings, palette: &Palette) -> Result<Sprite, String> {
+pub fn build_import(
+    settings: &ImportSettings,
+    palette: &Palette,
+) -> Result<(Sprite, Option<ExportMeta>), String> {
     let opts = settings.matching.quantize();
+    let meta;
     let mut sprite = match settings.layout {
         Layout::Frames => {
+            meta = sibling_meta(&settings.files);
             let (dirs, per) =
                 frame_layout(settings.files.len(), settings.directions, settings.frames)?;
-            let meta = sibling_meta(&settings.files);
-            // An export with sprite.json carries real alpha: a colour key would
-            // turn opaque black pixels transparent and break the round trip.
+            if let Some(dir) = whole_export(&settings.files, meta.as_ref(), (dirs, per)) {
+                // Exactly an export's frames in its layout: the library reads
+                // it (offsets, and no colour keying, from sprite.json).
+                let (sprite, _) = capy_sprite::import_frames(dir, palette, &opts)
+                    .map_err(|e| format!("{}: {e}", dir.display()))?;
+                return finish_import(sprite, settings, meta);
+            }
+            // Some frames of an export: they carry real alpha too, so no colour
+            // key (`import_frames` does the same for a whole export).
             let opts = if meta.is_some() {
                 QuantizeOptions {
                     transparent_rgb: None,
@@ -199,7 +210,7 @@ pub fn build_import(settings: &ImportSettings, palette: &Palette) -> Result<Spri
                     export_png(&rgba).map_err(|e| e.to_string())?
                 }
             };
-            let meta = sheet_meta(file);
+            meta = sheet_meta(file);
             import_sheet(
                 &png,
                 settings.directions.max(1),
@@ -214,7 +225,49 @@ pub fn build_import(settings: &ImportSettings, palette: &Palette) -> Result<Spri
     if settings.split {
         sprite = split_large(sprite)?;
     }
-    Ok(sprite)
+    Ok((sprite, meta))
+}
+
+fn finish_import(
+    sprite: Sprite,
+    settings: &ImportSettings,
+    meta: Option<ExportMeta>,
+) -> Result<(Sprite, Option<ExportMeta>), String> {
+    let sprite = if settings.split {
+        split_large(sprite)?
+    } else {
+        sprite
+    };
+    Ok((sprite, meta))
+}
+
+/// The folder of `files` when they are exactly the frames its `sprite.json`
+/// lists, in its layout `(directions, frames)` (an export picked whole).
+fn whole_export<'a>(
+    files: &'a [PathBuf],
+    meta: Option<&ExportMeta>,
+    layout: (usize, usize),
+) -> Option<&'a Path> {
+    let meta = meta?;
+    let dir = files.first()?.parent()?;
+    let meta_layout = (
+        usize::try_from(meta.directions).ok()?,
+        usize::try_from(meta.frames_per_direction).ok()?,
+    );
+    if layout != meta_layout
+        || files.len() != meta.frames.len()
+        || files.iter().any(|f| f.parent() != Some(dir))
+    {
+        return None;
+    }
+    let mut picked: Vec<String> = files
+        .iter()
+        .filter_map(|f| f.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()))
+        .collect();
+    let mut listed: Vec<String> = meta.frames.iter().map(|f| f.file.to_ascii_lowercase()).collect();
+    picked.sort();
+    listed.sort();
+    (picked == listed).then_some(dir)
 }
 
 /// Replaces frames larger than 256x256 by their 256x256 tiles. Every
@@ -667,7 +720,8 @@ mod tests {
             directions: 2,
             ..ImportSettings::default()
         };
-        let sprite = build_import(&s, &grey_palette()).expect("import");
+        let (sprite, meta) = build_import(&s, &grey_palette()).expect("import");
+        assert!(meta.is_none());
         assert_eq!(sprite.directions.len(), 2);
         assert_eq!(sprite.frames_per_direction(), 2);
         // bottom-centre anchor without metadata
@@ -677,7 +731,9 @@ mod tests {
         let dir = tmp.path().join("exp");
         let mut shifted = sprite.clone();
         shifted.directions[1][1].offset_x = 17;
-        export_frames(&shifted, SpriteFormat::Dcc, &pal, "grey", None, &dir).expect("export");
+        let game = r"data\global\monsters\zz\a.dcc";
+        export_frames(&shifted, SpriteFormat::Dcc, &pal, "grey", Some(game), &dir)
+            .expect("export");
         let exported: Vec<PathBuf> = [
             "d00_f000.png",
             "d00_f001.png",
@@ -687,9 +743,22 @@ mod tests {
         .iter()
         .map(|n| dir.join(n))
         .collect();
-        s.files = exported;
-        let back = build_import(&s, &pal).expect("re-import");
+        s.files = exported.clone();
+        let (back, meta) = build_import(&s, &pal).expect("re-import");
         assert_eq!(back, shifted);
+        // The save prompt will offer the game path the export recorded.
+        let source = crate::sprites::SpriteSource::import("x".into(), meta.as_ref());
+        assert_eq!(
+            source.save_path().map(|p| p.as_str().to_owned()),
+            Some(game.to_owned())
+        );
+        // Part of an export still gets its exact offsets.
+        s.files = exported[2..].to_vec();
+        s.directions = 1;
+        let (part, _) = build_import(&s, &pal).expect("part");
+        assert_eq!(part.directions[0][1], shifted.directions[1][1]);
+        s.files = exported;
+        s.directions = 2;
         // wrong counts are refused, not a panic
         s.frames = 3;
         assert!(build_import(&s, &pal).is_err());
