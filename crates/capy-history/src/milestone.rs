@@ -13,6 +13,10 @@ use crate::error::{HistoryError, Result};
 
 const AUTHOR_NAME: &str = "Capybara Map Editor";
 const AUTHOR_EMAIL: &str = "capybara@localhost";
+/// Deepest folder nesting a milestone follows (saves mirror game paths, a
+/// handful of levels deep); deeper trees are an error instead of unbounded
+/// recursion.
+const MAX_TREE_DEPTH: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MilestoneInfo {
@@ -52,7 +56,7 @@ impl Milestones {
             .workdir()
             .ok_or_else(|| HistoryError::Milestone("repository has no work tree".into()))?
             .to_path_buf();
-        let tree_id = self.write_tree(&workdir, true)?;
+        let tree_id = self.write_tree(&workdir, 0)?;
 
         let parent = self.head_commit_id()?;
         if let Some(parent) = parent {
@@ -116,7 +120,15 @@ impl Milestones {
     }
 
     /// Writes the directory as git tree objects (blobs for files), recursively.
-    fn write_tree(&self, dir: &Path, is_root: bool) -> Result<ObjectId> {
+    /// `depth` is 0 for the work tree root.
+    fn write_tree(&self, dir: &Path, depth: usize) -> Result<ObjectId> {
+        if depth > MAX_TREE_DEPTH {
+            return Err(HistoryError::Milestone(format!(
+                "{} is nested more than {MAX_TREE_DEPTH} folders deep",
+                dir.display()
+            )));
+        }
+        let is_root = depth == 0;
         let mut entries: Vec<Entry> = Vec::new();
         let rd = fs::read_dir(dir).map_err(|e| HistoryError::io(dir, e))?;
         for item in rd {
@@ -128,7 +140,7 @@ impl Milestones {
             let path = item.path();
             let file_type = item.file_type().map_err(|e| HistoryError::io(&path, e))?;
             if file_type.is_dir() {
-                let sub = self.write_tree(&path, false)?;
+                let sub = self.write_tree(&path, depth + 1)?;
                 if sub == ObjectId::empty_tree(self.repo.object_hash()) {
                     continue; // git does not track empty directories
                 }

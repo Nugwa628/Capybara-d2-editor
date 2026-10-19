@@ -21,6 +21,11 @@ const INDEX_FILE: &str = "index.json";
 const OBJECTS_DIR: &str = "objects";
 const INDEX_VERSION: u32 = 1;
 const MS_PER_DAY: i64 = 86_400_000;
+/// Upper bound on what deflate can expand one input byte to.
+const MAX_DEFLATE_RATIO: u64 = 1032;
+/// Most bytes reserved up front when decompressing a blob (it grows past this
+/// on demand), so a damaged `size` cannot reserve an absurd buffer.
+const MAX_PREALLOC: u64 = 64 << 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SnapshotId(pub u64);
@@ -170,10 +175,17 @@ impl SnapshotStore {
             }
             Err(e) => return Err(HistoryError::io(&path, e)),
         };
-        // Bounded read: a damaged blob must not expand without limit.
-        let mut out = Vec::with_capacity(usize::try_from(snap.size).unwrap_or(0));
+        // Bounded read: a damaged blob must not expand without limit, and a
+        // damaged `size` in index.json must not allocate without limit.
+        // Deflate cannot expand by more than ~1032:1, so nothing a valid blob
+        // holds lies beyond that bound.
+        let possible = (compressed.len() as u64)
+            .saturating_mul(MAX_DEFLATE_RATIO)
+            .saturating_add(64);
+        let limit = snap.size.min(possible);
+        let mut out = Vec::with_capacity(usize::try_from(limit.min(MAX_PREALLOC)).unwrap_or(0));
         ZlibDecoder::new(compressed.as_slice())
-            .take(snap.size.saturating_add(1))
+            .take(limit.saturating_add(1))
             .read_to_end(&mut out)
             .map_err(|e| corrupt(format!("decompress failed: {e}")))?;
         if out.len() as u64 != snap.size {
@@ -250,9 +262,17 @@ impl SnapshotStore {
         {
             return Ok(newest.clone());
         }
+        // A damaged index.json can carry `next_id = u64::MAX`.
+        let id = self.next_id;
+        let following = id.checked_add(1).ok_or_else(|| {
+            HistoryError::Index(format!(
+                "{}: snapshot ids are exhausted (next id {id})",
+                self.dir.join(INDEX_FILE).display()
+            ))
+        })?;
         self.store_blob(&hash, bytes)?;
         let snap = Snapshot {
-            id: SnapshotId(self.next_id),
+            id: SnapshotId(id),
             game_path: game_path.clone(),
             hash,
             size: bytes.len() as u64,
@@ -260,12 +280,12 @@ impl SnapshotStore {
             kind,
             label: None,
         };
-        self.next_id += 1;
+        self.next_id = following;
         self.snapshots.push(snap.clone());
         if let Err(e) = self.write_index() {
             // Keep memory and disk consistent when the index could not be written.
             self.snapshots.pop();
-            self.next_id -= 1;
+            self.next_id = id;
             return Err(e);
         }
         Ok(snap)
@@ -351,7 +371,10 @@ impl SnapshotStore {
 
     fn blob_path(&self, hash: &ContentHash) -> PathBuf {
         let h = hash.0.as_str();
-        let (head, rest) = h.split_at(h.len().min(2));
+        // Hashes are validated as 64 hex digits on open; stay panic-free anyway.
+        let cut = h.len().min(2);
+        let cut = if h.is_char_boundary(cut) { cut } else { 0 };
+        let (head, rest) = h.split_at(cut);
         self.dir
             .join(OBJECTS_DIR)
             .join(head)
