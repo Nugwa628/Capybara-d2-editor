@@ -324,6 +324,9 @@ impl Dc6Frame { pub fn render(&self) -> Result<IndexedImage>; }
 pub struct Dcc { pub version: u8, pub frames_per_direction: u32, pub directions: Vec<DccDirection> }
 pub struct DccDirection { pub frames: Vec<IndexedImage> }
 impl Dcc { pub fn parse(bytes: &[u8]) -> Result<Dcc>; }
+/// The decoder's cell partition along one axis: (start relative to the direction box, length).
+/// Partial first cell up to the 4-px grid, then 4-px cells; a trailing 1-px sliver merges (cells up to 5 px).
+pub fn dcc::cell_spans(frame_min: i64, dir_min: i64, frame_len: i64) -> Vec<(i64, i64)>;
 
 pub struct CofLayer { pub component: u8, pub shadow: u8, pub selectable: u8, pub transparent: u8, pub draw_effect: u8, pub weapon_class: [u8; 4] }
 pub struct Cof { pub directions: u8, pub frames_per_direction: u8, pub layers: Vec<CofLayer>, pub keyframes: Vec<u8>, pub layer_order: Vec<u8> }

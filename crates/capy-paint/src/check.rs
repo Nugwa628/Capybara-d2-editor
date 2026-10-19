@@ -15,12 +15,14 @@
 //!
 //! # The grid
 //!
-//! The grid is aligned to the *direction* box: `cells = ceil(box / 4)` from the
-//! box origin, and each frame's cells are the direction cells clipped to the
-//! frame (spec "Cell grid", `dcc.c:632,645`). A frame's box is taken as the
-//! bounding box of its opaque pixels, and the direction box as the union of
-//! those, which is what an encoder cropping the frames would produce. Fully
-//! transparent frames have no cells.
+//! Cells follow the decoder's own partition (`d2_formats::dcc::cell_spans`):
+//! along each axis a partial first cell ends on the direction box's 4-pixel
+//! grid, then 4-pixel cells, and a trailing 1-pixel sliver merges into the
+//! last cell (so a cell can be 5 pixels wide). A frame's box is the bounding
+//! box of its opaque pixels and the direction box the union of those, which is
+//! what `Dcc::from_frames` encodes. Using the decoder's partition guarantees
+//! that a frame passing this check encodes without further reduction (tested
+//! by an encode -> decode round trip). Fully transparent frames have no cells.
 
 use crate::error::Result;
 use crate::ramps::distance;
@@ -96,20 +98,18 @@ fn scan(frames: &[Vec<IndexedImage>]) -> Vec<(CellViolation, Rect)> {
             let Some(&(bx0, by0, bx1, by1)) = b.as_ref() else {
                 continue;
             };
-            let cx0 = (bx0 - ox).div_euclid(CELL);
-            let cx1 = (bx1 - 1 - ox).div_euclid(CELL);
-            let cy0 = (by0 - oy).div_euclid(CELL);
-            let cy1 = (by1 - 1 - oy).div_euclid(CELL);
-            for cy in cy0..=cy1 {
-                for cx in cx0..=cx1 {
-                    // Cell clipped to the frame box, then to image coordinates.
+            let cols = d2_formats::dcc::cell_spans(bx0, ox, bx1 - bx0);
+            let rows = d2_formats::dcc::cell_spans(by0, oy, by1 - by0);
+            for &(rs, rl) in &rows {
+                for &(cs, cl) in &cols {
+                    let (cx, cy) = (cs.div_euclid(CELL), rs.div_euclid(CELL));
                     // Inside the frame box, so these fit the image (and an i32).
                     let local = |v: i64, offset: i32| (v - i64::from(offset)) as i32;
                     let r = Rect {
-                        x0: local((ox + cx * CELL).max(bx0), img.offset_x),
-                        y0: local((oy + cy * CELL).max(by0), img.offset_y),
-                        x1: local((ox + cx * CELL + CELL).min(bx1), img.offset_x),
-                        y1: local((oy + cy * CELL + CELL).min(by1), img.offset_y),
+                        x0: local(ox + cs, img.offset_x),
+                        y0: local(oy + rs, img.offset_y),
+                        x1: local(ox + cs + cl, img.offset_x),
+                        y1: local(oy + rs + rl, img.offset_y),
                     };
                     let mut seen = [false; 256];
                     for y in r.y0..r.y1 {
@@ -277,7 +277,9 @@ mod tests {
         let b = img(4, 1, 2, 0, &[1, 2, 3, 4]);
         // Cell 0 of frame 1 holds x=2,3 (values 1,2); cell 1 holds x=4,5 (3,4).
         assert!(dcc_cell_violations(&[vec![a, b]]).is_empty());
-        // Same pixels in a 5-wide, 1-tall row all land in one cell when aligned.
+        // A 5-pixel-wide frame box is ONE cell: the decoder merges a trailing
+        // 1-pixel sliver into the last cell (`d2_formats::dcc::cell_spans`),
+        // so 5 distinct values in one 5x1 row violate the limit.
         let wide = img(
             5,
             4,
@@ -286,7 +288,11 @@ mod tests {
             &[1, 2, 3, 4, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         );
         let v = dcc_cell_violations(&[vec![wide]]);
-        assert!(v.is_empty(), "5 values spread over 2 cells: {v:?}");
+        assert_eq!(v.len(), 1, "the sliver merges into one 5-wide cell: {v:?}");
+        assert_eq!(v[0].colors, 5);
+        // A 6-pixel row splits 4 + 2, so 6 values fit (4 and 2 per cell).
+        let six = img(6, 1, 0, 0, &[1, 2, 3, 4, 5, 6]);
+        assert!(dcc_cell_violations(&[vec![six]]).is_empty());
         let dense = img(
             4,
             4,
@@ -392,8 +398,33 @@ mod tests {
                 assert_eq!(im.alpha, alpha[d][f]);
             }
         }
-        // TODO: once `d2_formats::dcc::Dcc::from_frames` is merged, encode the
-        // reduced frames with `to_bytes`, `parse` them again and compare.
+        // The reduced frames survive DCC encode -> decode unchanged. The
+        // decoder crops frames to their own box, so compare the opaque pixels
+        // in anchor space rather than the rectangles.
+        let opaque = |im: &IndexedImage| -> std::collections::BTreeMap<(i64, i64), u8> {
+            let mut out = std::collections::BTreeMap::new();
+            for y in 0..im.height {
+                for x in 0..im.width {
+                    let i = (y * im.width + x) as usize;
+                    if im.alpha[i] != 0 {
+                        let at = (
+                            i64::from(im.offset_x) + i64::from(x),
+                            i64::from(im.offset_y) + i64::from(y),
+                        );
+                        out.insert(at, im.pixels[i]);
+                    }
+                }
+            }
+            out
+        };
+        let dcc = d2_formats::dcc::Dcc::from_frames(s.frames()).unwrap();
+        let back = d2_formats::dcc::Dcc::parse(&dcc.to_bytes().unwrap()).unwrap();
+        for (d, dir) in s.frames().iter().enumerate() {
+            for (f, im) in dir.iter().enumerate() {
+                let decoded = &back.directions[d].frames[f];
+                assert_eq!(opaque(decoded), opaque(im), "dir {d} frame {f}");
+            }
+        }
     }
 
     #[test]

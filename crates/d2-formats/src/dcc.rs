@@ -289,6 +289,17 @@ fn eof(bs: &Bits<'_>, _what: &'static str) -> FormatError {
     truncated(bs.absolute(), 1)
 }
 
+/// Public view of the decoder's cell partition, for tools that must agree
+/// with it exactly (e.g. the sprite editor's 4-colours-per-cell check): the
+/// cells covering one axis of a frame whose box starts at `frame_min`, inside
+/// a direction box starting at `dir_min`, as `(start relative to the
+/// direction box, length)`. Cells are 4 pixels except a partial first cell
+/// that ends on the direction's 4-pixel grid, and a last cell that absorbs a
+/// trailing 1-pixel sliver (so up to 5 pixels).
+pub fn cell_spans(frame_min: i64, dir_min: i64, frame_len: i64) -> Vec<(i64, i64)> {
+    axis_cells(frame_min, dir_min, frame_len)
+}
+
 /// Sizes of the cells covering one axis of a frame: `(start relative to the
 /// direction box, length)`. The first cell ends on the 4-pixel grid, and a
 /// final sliver of one pixel is merged into the previous cell.
