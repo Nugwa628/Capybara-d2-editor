@@ -120,6 +120,11 @@ impl Paths {
         self.saves.join(profile_id)
     }
 
+    /// `user.db`: aliases, tags, notes, favorites, recents, saved searches.
+    pub fn user_db(&self) -> PathBuf {
+        self.root.join("user.db")
+    }
+
     /// `cache\known-names-<profile id>.txt`.
     pub fn names_cache(&self, profile_id: &str) -> PathBuf {
         self.cache.join(format!("known-names-{profile_id}.txt"))

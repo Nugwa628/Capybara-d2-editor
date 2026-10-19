@@ -245,6 +245,9 @@ fn begin_gesture(
             });
             if !stroke(state, index, layer, None, cell, erase) {
                 end_gesture(state, false);
+            } else if !erase {
+                let value = state.edit.current;
+                state.note_paint(index, layer, value);
             }
         }
         Tool::Objects => begin_object_gesture(state, index, f, p, mods),

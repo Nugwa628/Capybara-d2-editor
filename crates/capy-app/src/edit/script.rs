@@ -45,6 +45,26 @@
 //! ```
 //!
 //! Paint commands open the viewer's sprite in the editor when none is open.
+//!
+//! Asset browser (these wait for the asset index; keys contain `#`, so a
+//! comment starts only at a `#` that begins the line or follows a space):
+//!
+//! ```text
+//! search color:green type:floor file:whimsyfloor.dt1   # the Tiles browser's query
+//! assert-search-top 5 data\global\tiles\...\whimsyfloor.dt1#0/23/0/0
+//! brush-from data\global\tiles\...\whimsyfloor.dt1#0/23/0/0
+//! assert-brush floor0 0x017000c2 [orientation]
+//! paint-brush 3 4                       # paint the brush on its layer (records a use)
+//! assert-recent <key>
+//! favorite-add <group> <key>
+//! alias <key> <text...>
+//! ctrl-k <query...>                     # open the Ctrl+K palette with this query
+//! ctrl-k-close
+//! browser-scope map|profile|sprites
+//! thumb-size 96
+//! tile-menu <key>                       # open the tile's context menu
+//! tiles-tab                             # bring the Tiles panel to the front
+//! ```
 
 use std::path::PathBuf;
 
@@ -140,6 +160,36 @@ pub enum Cmd {
     },
     PaintOnion(bool),
     PaintUndo,
+    Search(String),
+    AssertSearchTop {
+        n: usize,
+        key: String,
+    },
+    BrushFrom(String),
+    AssertBrush {
+        layer: LayerRef,
+        cell: u32,
+        orientation: Option<u32>,
+    },
+    PaintBrush {
+        x: u32,
+        y: u32,
+    },
+    AssertRecent(String),
+    FavoriteAdd {
+        group: String,
+        key: String,
+    },
+    Alias {
+        key: String,
+        text: String,
+    },
+    CtrlK(String),
+    CtrlKClose,
+    BrowserScope(crate::browser::scope::Scope),
+    ThumbSize(f32),
+    TileMenu(String),
+    TilesTab,
 }
 
 /// Colours of `paint-gradient`.
@@ -271,9 +321,21 @@ fn parse_bool(text: &str) -> Result<bool, String> {
     }
 }
 
+/// The line without its comment: a `#` at the start or after whitespace
+/// (asset keys hold a `#` right after the file name).
+fn strip_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'#' && (i == 0 || bytes[i - 1].is_ascii_whitespace()) {
+            return &line[..i];
+        }
+    }
+    line
+}
+
 /// Parses one line. Blank lines and `#` comments give `Ok(None)`.
 pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
-    let line = line.split('#').next().unwrap_or("").trim();
+    let line = strip_comment(line).trim();
     if line.is_empty() {
         return Ok(None);
     }
@@ -559,6 +621,83 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
             need(0, "no arguments")?;
             Cmd::PaintUndo
         }
+        "search" => Cmd::Search(rest.to_owned()),
+        "assert-search-top" => {
+            need(2, "<n> <asset key>")?;
+            Cmd::AssertSearchTop {
+                n: parse_usize(args[0], "n")?,
+                key: args[1].to_owned(),
+            }
+        }
+        "brush-from" => {
+            need(1, "<asset key>")?;
+            Cmd::BrushFrom(args[0].to_owned())
+        }
+        "assert-brush" => {
+            if !(2..=3).contains(&args.len()) {
+                return Err("assert-brush: expected <layer> <cell hex> [orientation]".to_owned());
+            }
+            Cmd::AssertBrush {
+                layer: parse_layer(args[0])?,
+                cell: parse_cell(args[1])?,
+                orientation: args
+                    .get(2)
+                    .map(|o| parse_u32(o, "orientation"))
+                    .transpose()?,
+            }
+        }
+        "paint-brush" => {
+            need(2, "x y")?;
+            Cmd::PaintBrush {
+                x: parse_u32(args[0], "x")?,
+                y: parse_u32(args[1], "y")?,
+            }
+        }
+        "assert-recent" => {
+            need(1, "<asset key>")?;
+            Cmd::AssertRecent(args[0].to_owned())
+        }
+        "favorite-add" => {
+            need(2, "<group> <asset key>")?;
+            Cmd::FavoriteAdd {
+                group: args[0].to_owned(),
+                key: args[1].to_owned(),
+            }
+        }
+        "alias" => {
+            let Some((key, text)) = rest.split_once(char::is_whitespace) else {
+                return Err("alias: expected <asset key> <text>".to_owned());
+            };
+            Cmd::Alias {
+                key: key.to_owned(),
+                text: text.trim().to_owned(),
+            }
+        }
+        "ctrl-k" => Cmd::CtrlK(rest.to_owned()),
+        "ctrl-k-close" => {
+            need(0, "no arguments")?;
+            Cmd::CtrlKClose
+        }
+        "browser-scope" => {
+            need(1, "map|profile|sprites")?;
+            Cmd::BrowserScope(
+                crate::browser::scope::Scope::from_slug(args[0]).ok_or_else(|| {
+                    format!("scope {:?} must be map, profile or sprites", args[0])
+                })?,
+            )
+        }
+        "thumb-size" => {
+            need(1, "<points>")?;
+            Cmd::ThumbSize(parse_f32(args[0], "size")?)
+        }
+        "tile-menu" => {
+            need(1, "<asset key>")?;
+            Cmd::TileMenu(args[0].to_owned())
+        }
+        "tiles-tab" => {
+            need(0, "no arguments")?;
+            Cmd::TilesTab
+        }
         other => return Err(format!("unknown command {other:?}")),
     };
     Ok(Some(cmd))
@@ -830,6 +969,94 @@ mode map
         ] {
             assert!(parse_line(bad).is_err(), "{bad:?} must be rejected");
         }
+    }
+
+    #[test]
+    fn browser_commands_parse_and_keys_keep_their_hash() {
+        let key = r"data\global\tiles\mxl\zone\whimsy\whimsyfloor.dt1#0/23/0/0";
+        let text = format!(
+            "search color:green type:floor file:whimsyfloor.dt1  # comment\n\
+             assert-search-top 5 {key}\n\
+             brush-from {key}\n\
+             assert-brush floor0 0x017000c2\n\
+             assert-brush wall1 017000c2 4\n\
+             paint-brush 3 4\n\
+             assert-recent {key}\n\
+             favorite-add Meadow {key}\n\
+             alias {key} capy e2e meadow\n\
+             ctrl-k type:floor green\n\
+             browser-scope map\n\
+             thumb-size 96\n\
+             tile-menu {key}\n\
+             tiles-tab\n\
+             ctrl-k-close\n"
+        );
+        let lines = parse_script(&text).expect("parses");
+        let cmds: Vec<&Cmd> = lines.iter().map(|(_, c)| c).collect();
+        assert_eq!(
+            cmds[0],
+            &Cmd::Search("color:green type:floor file:whimsyfloor.dt1".to_owned())
+        );
+        assert_eq!(
+            cmds[1],
+            &Cmd::AssertSearchTop {
+                n: 5,
+                key: key.to_owned()
+            }
+        );
+        assert_eq!(cmds[2], &Cmd::BrushFrom(key.to_owned()));
+        assert_eq!(
+            cmds[3],
+            &Cmd::AssertBrush {
+                layer: LayerRef::Floor(0),
+                cell: 0x0170_00C2,
+                orientation: None
+            }
+        );
+        assert!(matches!(
+            cmds[4],
+            Cmd::AssertBrush {
+                layer: LayerRef::Wall(1),
+                orientation: Some(4),
+                ..
+            }
+        ));
+        assert_eq!(cmds[5], &Cmd::PaintBrush { x: 3, y: 4 });
+        assert_eq!(cmds[6], &Cmd::AssertRecent(key.to_owned()));
+        assert_eq!(
+            cmds[7],
+            &Cmd::FavoriteAdd {
+                group: "Meadow".to_owned(),
+                key: key.to_owned()
+            }
+        );
+        assert_eq!(
+            cmds[8],
+            &Cmd::Alias {
+                key: key.to_owned(),
+                text: "capy e2e meadow".to_owned()
+            }
+        );
+        assert_eq!(cmds[9], &Cmd::CtrlK("type:floor green".to_owned()));
+        assert_eq!(
+            cmds[10],
+            &Cmd::BrowserScope(crate::browser::scope::Scope::MapTileSet)
+        );
+        assert_eq!(cmds[11], &Cmd::ThumbSize(96.0));
+        assert_eq!(cmds[12], &Cmd::TileMenu(key.to_owned()));
+        assert_eq!(cmds[13], &Cmd::TilesTab);
+        assert_eq!(cmds[14], &Cmd::CtrlKClose);
+        for bad in [
+            "assert-search-top 5",
+            "assert-search-top x k",
+            "assert-brush floor0",
+            "alias onlykey",
+            "browser-scope everywhere",
+            "favorite-add g",
+        ] {
+            assert!(parse_line(bad).is_err(), "{bad:?} must be rejected");
+        }
+        assert_eq!(parse_line("#x"), Ok(None));
     }
 
     #[test]

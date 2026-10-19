@@ -320,6 +320,14 @@ fn batch(ui: &mut Ui, state: &mut AppState) {
         }
         ui.ctx().request_repaint();
     } else {
+        if let Some((cancelled, text)) = &state.sprites.converter.batch_outcome {
+            let color = if *cancelled {
+                Color32::from_rgb(230, 150, 60)
+            } else {
+                Color32::from_rgb(110, 200, 110)
+            };
+            ui.colored_label(color, text);
+        }
         ui.colored_label(Color32::from_gray(150), "The report goes to the Log panel.");
     }
 }

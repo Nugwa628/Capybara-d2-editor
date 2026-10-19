@@ -90,6 +90,8 @@ pub struct Config {
     pub last_profile: Option<String>,
     pub gamma: f32,
     pub autosave_minutes: u32,
+    /// Thumbnail edge of the Tiles browser in points (Ctrl+wheel).
+    pub browser_thumb: f32,
     pub mode: AppMode,
     pub window: WindowConfig,
     pub layer_visibility: LayerVisibility,
@@ -103,6 +105,7 @@ impl Default for Config {
             last_profile: None,
             gamma: DEFAULT_GAMMA,
             autosave_minutes: 5,
+            browser_thumb: 64.0,
             mode: AppMode::default(),
             window: WindowConfig::default(),
             layer_visibility: LayerVisibility::default(),

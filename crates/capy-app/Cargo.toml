@@ -29,6 +29,7 @@ capy-sprite.workspace = true
 capy-paint.workspace = true
 capy-cli.workspace = true
 rfd.workspace = true
+image.workspace = true
 arboard = { workspace = true, features = ["image-data"] }
 bevy = { workspace = true, features = [
     "std",

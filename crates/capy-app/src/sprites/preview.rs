@@ -161,20 +161,6 @@ pub fn cof_path(info: &ObjectInfo) -> Option<GamePath> {
     )))
 }
 
-/// File direction of a user direction (the editor's tables, as the map
-/// renderer maps them).
-pub fn file_direction(cof_dirs: u8, user: u8) -> u8 {
-    const DIR8: [u8; 8] = [4, 0, 5, 1, 6, 2, 7, 3];
-    const DIR16: [u8; 16] = [4, 8, 0, 9, 5, 10, 1, 11, 6, 12, 2, 13, 7, 14, 3, 15];
-    let u = usize::from(user);
-    match cof_dirs {
-        8 => DIR8.get(u).copied().unwrap_or(0),
-        16 => DIR16.get(u).copied().unwrap_or(0),
-        n if n > 0 => user.min(n - 1),
-        _ => 0,
-    }
-}
-
 /// RGBA frames of one object at a user direction: `(info, cof, frames)`
 /// where each frame is `(width, height, rgba, offset)` or `None` when empty.
 pub type RawFrame = Option<(u32, u32, Vec<u8>, (i32, i32))>;
@@ -185,28 +171,35 @@ pub fn build_frames(
     info: &ObjectInfo,
     direction: u8,
     palette: &Palette,
-) -> Result<(Cof, Vec<RawFrame>, Option<u32>), String> {
+) -> Result<(u8, Vec<RawFrame>, Option<u32>), String> {
     let path = cof_path(info).ok_or_else(|| format!("{} has no sprite", info.name))?;
+    // Only the direction count for the picker; frames come from the renderer.
     let bytes = overlay
         .read_bytes(&path)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("{path} not found"))?;
     let cof = Cof::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
-    if cof.frames_per_direction == 0 || cof.directions == 0 {
-        return Err(format!("{path} has no frames"));
+    if cof.directions == 0 {
+        return Err(format!("{path} has no directions"));
     }
     let sprites = ObjectSprites::new(overlay, catalog);
     let opts = ObjectOptions::default();
-    let mut frames = Vec::with_capacity(usize::from(cof.frames_per_direction));
-    for f in 0..cof.frames_per_direction {
+    let first = sprites
+        .frame_of_info(info, &opts, Some(0), direction)
+        .map_err(|r| format!("{r:?}"))?;
+    let count = first.frames_per_direction.max(1);
+    let mut frames = Vec::with_capacity(usize::from(count));
+    let raw = |frame: &capy_render::ObjectFrame| {
+        frame
+            .composite(palette)
+            .map(|(img, offset)| (img.width, img.height, img.pixels, offset))
+    };
+    frames.push(raw(&first));
+    for f in 1..count {
         let frame = sprites
             .frame_of_info(info, &opts, Some(f), direction)
             .map_err(|r| format!("{r:?}"))?;
-        frames.push(
-            frame
-                .composite(palette)
-                .map(|(img, offset)| (img.width, img.height, img.pixels, offset)),
-        );
+        frames.push(raw(&frame));
     }
     // Objects animate at their FrameDelta; monsters at the AnimData speed.
     let delta = info.frame_delta.or_else(|| {
@@ -218,22 +211,12 @@ pub fn build_frames(
         let key = path.file_name().to_owned();
         anim.get(&key).map(|r| r.speed)
     });
-    Ok((cof, frames, delta))
+    Ok((cof.directions, frames, delta))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn user_directions_map_like_the_renderer() {
-        assert_eq!(file_direction(8, 0), 4);
-        assert_eq!(file_direction(8, 1), 0);
-        assert_eq!(file_direction(16, 2), 0);
-        assert_eq!(file_direction(1, 5), 0);
-        assert_eq!(file_direction(4, 9), 3);
-        assert_eq!(file_direction(0, 3), 0);
-    }
 
     #[test]
     fn cof_paths_follow_token_mode_class() {
