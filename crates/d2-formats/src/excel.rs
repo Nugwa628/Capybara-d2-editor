@@ -23,6 +23,18 @@
 //! | `objects` | `0x1C0` | see [`ExcelTableKind::Objects`]; `Id` is the record index |
 //! | `levels` | `0x220` | `levels.bin`: `Id`, `Pal`, `Act`, flags, spawn data, names; the DRLG half lives in `leveldefs.bin` (`0x9C`), see [`decode_levels_bin`] |
 //! | `objpreset` | `4` | Median XL only; 750 `i32`: `table[act * 150 + id]` = `Objects.txt` id |
+//! | `monpreset` | `4` | `Act`, then which table `Place` names (MonPlace / MonStats / SuperUniques) and the row in it |
+//! | `monstats` | `0x1A8` | no `Id` text: links are row numbers, `NameStr` is a string id; see [`ExcelTableKind::MonStats`] |
+//! | `monstats2` | `0x134` | no `Id` text; part and mode flags are bit words; see [`ExcelTableKind::MonStats2`] |
+//! | `superuniques` | `0x34` | no `Superunique` text; `Class` is a MonStats row, `Name` a string id |
+//!
+//! The monster tables store no names: the compiler replaces every text that
+//! names a row of another table with that row's number (and a `NameStr` /
+//! `Name` key with its `.tbl` string id), so the decoded columns for those are
+//! called `...Row` / `...Id` instead of reusing the `.txt` name. Vanilla's own
+//! `.bin` files are slightly stale against the shipped `.txt` in a few places
+//! (`monstats.bin` record words 723..733, the `NameStr` of `uberandariel`);
+//! the comparison test lists them.
 //!
 //! **1.13c versus 1.14d.** Every table where both a 1.13c-era file (Median XL)
 //! and the 1.14d install's file exist has the same record size, and the
@@ -75,6 +87,52 @@ pub enum ExcelTableKind {
     ObjPreset,
     /// `levels.bin` alone; see [`decode_levels_bin`] for the full table.
     Levels,
+    /// `monpreset.bin`: the per-act placement table DS1 monster ids index.
+    /// Four bytes per record: `Act` (`1..=5`), `PlaceKind` (`0` = a MonPlace
+    /// row, `1` = a MonStats row, `2` = a SuperUniques row) and `PlaceIndex`
+    /// (the row in that table). The `.txt` `Place` text is not stored: it is
+    /// the code/Id/Superunique of the row that `PlaceKind` + `PlaceIndex` name,
+    /// and the MonStats / SuperUniques `.bin` files hold no Id text either, so
+    /// the decoder keeps the indices. [`monplace_code`] names the MonPlace rows.
+    MonPreset,
+    /// `monstats.bin`. The `Id` text and the text links (`BaseId`, `MonStatsEx`,
+    /// ...) are not stored; the compiled form keeps row numbers. Decoded
+    /// columns: `hcIdx` (the record index, see below), `BaseIdRow`,
+    /// `NextInClassRow`, `spawnRow`, `minion1Row`, `minion2Row` (MonStats rows,
+    /// `-1` = blank), `MonStatsExRow` (a **MonStats2** row, `-1` = blank),
+    /// `NameStrId` (a string id, see below), `Code` (4 characters, trailing
+    /// spaces trimmed), the 29 flag columns `isSpawn..rangedtype` (bits of the
+    /// word at `0xC`), `TransLvl`, `Align`, `threat`, `spawnx/y`,
+    /// `PartyMin/Max`, `Rarity`, `MinGrp/MaxGrp`, `sparsePopulate`, `Level`,
+    /// `Level(N)`, `Level(H)`, `TCQuestId` and `TCQuestCP`.
+    ///
+    /// `NameStrId` is the string id of the `NameStr` key: ids below 10000 are in
+    /// `string.tbl`, `10000..20000` in `patchstring.tbl` (id - 10000) and
+    /// `20000..` in `expansionstring.tbl` (id - 20000); a blank or unknown key
+    /// is compiled as the id of `dummy`. The word at offset 0 equals the record
+    /// index in every Median XL record, but the last 11 vanilla records hold a
+    /// stale value (index - 1); `hcIdx` is therefore decoded as the record
+    /// index, which is also what the `.txt` says.
+    MonStats,
+    /// `monstats2.bin` (rows are addressed by `MonStatsExRow`; the `Id` text is
+    /// not stored, the word at offset 0 is the record index). Decoded columns:
+    /// `SizeX`, `SizeY`, `spawnCol`, `Height`, `OverlayHeight`, `pixHeight`,
+    /// `MeleeRng`, `BaseW` (4 characters, trailing spaces trimmed), `HitClass`,
+    /// the part flags `HD TR LG RA LA RH LH SH S1..S8`, `TotalPieces`, the mode
+    /// flags `mDT..mRN`, the counts `dDT..dRN`, `A2mv S1mv S2mv`, the flags
+    /// `noGfxHitTest .. unflatDead`, `htTop/Left/Width/Height`, `localBlood`,
+    /// `Bleed`, `Light`, `light-r/g/b`, `Utrans(N/H)` and
+    /// `InfernoLen/Anim/Rollback`. `SizeX`/`SizeY` are equal in every vanilla
+    /// row, so their order (offset 8 then 9) follows the `.txt` column order.
+    MonStats2,
+    /// `superuniques.bin` (the `Superunique` and `Name` texts are not stored).
+    /// Decoded columns: `NameStrId` (string id of `Name`, see
+    /// [`ExcelTableKind::MonStats`]), `ClassRow` (a MonStats row), `hcIdx`,
+    /// `Mod1..Mod3`, `MinGrp`, `MaxGrp`, `AutoPos`, `EClass`, `Stacks`,
+    /// `Replaceable`, `Utrans`, `Utrans(N)`, `Utrans(H)`. The three `Utrans`
+    /// bytes are equal in every vanilla row, so their order follows the
+    /// `.txt` column order.
+    SuperUniques,
 }
 
 impl ExcelTableKind {
@@ -87,6 +145,10 @@ impl ExcelTableKind {
             ExcelTableKind::Objects => "objects",
             ExcelTableKind::ObjPreset => "objpreset",
             ExcelTableKind::Levels => "levels",
+            ExcelTableKind::MonPreset => "monpreset",
+            ExcelTableKind::MonStats => "monstats",
+            ExcelTableKind::MonStats2 => "monstats2",
+            ExcelTableKind::SuperUniques => "superuniques",
         }
     }
 
@@ -98,6 +160,10 @@ impl ExcelTableKind {
             ExcelTableKind::Objects,
             ExcelTableKind::ObjPreset,
             ExcelTableKind::Levels,
+            ExcelTableKind::MonPreset,
+            ExcelTableKind::MonStats,
+            ExcelTableKind::MonStats2,
+            ExcelTableKind::SuperUniques,
         ]
     }
 }
@@ -116,6 +182,14 @@ enum Field {
     U32,
     /// NUL-terminated Latin-1 string in a fixed field of this many bytes.
     Str(usize),
+    /// Like `Str`, with trailing spaces removed (the 4-byte codes of
+    /// `monstats` are space padded, e.g. `"SK  "`).
+    StrPad(usize),
+    I16,
+    /// One bit (`0..32`) of the little-endian `u32` at the column offset,
+    /// written as `0` or `1`. Several `Bit` columns share a word, so they do
+    /// not count towards [`Field::width`].
+    Bit(u8),
 }
 
 impl Field {
@@ -123,9 +197,19 @@ impl Field {
         match self {
             Field::Index => 0,
             Field::U8 | Field::I8 => 1,
-            Field::U16 => 2,
+            Field::U16 | Field::I16 => 2,
             Field::I32 | Field::U32 => 4,
-            Field::Str(n) => n,
+            Field::Str(n) | Field::StrPad(n) => n,
+            Field::Bit(_) => 0,
+        }
+    }
+
+    /// Bytes read from the record, including the word a `Bit` lives in.
+    #[cfg(test)]
+    fn reach(self) -> usize {
+        match self {
+            Field::Bit(_) => 4,
+            other => other.width(),
         }
     }
 }
@@ -155,6 +239,15 @@ impl Layout {
             offset,
             field,
         });
+        self
+    }
+
+    /// One `Bit` column per name: `names[i]` is bit `first_bit + i` of the word
+    /// at `offset`.
+    fn bits(&mut self, names: &[&str], offset: usize, first_bit: u8) -> &mut Self {
+        for (bit, name) in (first_bit..).zip(names) {
+            self.col(name, offset, Field::Bit(bit));
+        }
         self
     }
 
@@ -221,17 +314,27 @@ fn read_field(record: &[u8], c: &Column, index: usize) -> Result<String> {
             .ok_or_else(bad)?
             .to_string(),
         Field::I8 => (le(record, c.offset, 1).ok_or_else(bad)? as u8 as i8).to_string(),
+        Field::I16 => (le(record, c.offset, 2).ok_or_else(bad)? as u16 as i16).to_string(),
+        Field::Bit(bit) => {
+            ((le(record, c.offset, 4).ok_or_else(bad)? >> u32::from(bit)) & 1).to_string()
+        }
         Field::I32 => (le(record, c.offset, 4).ok_or_else(bad)? as i32).to_string(),
-        Field::Str(n) => {
+        Field::Str(n) | Field::StrPad(n) => {
             let b = record
                 .get(c.offset..c.offset.checked_add(n).ok_or_else(bad)?)
                 .ok_or_else(bad)?;
             let end = b.iter().position(|&x| x == 0).unwrap_or(b.len());
-            b.get(..end)
+            let text: String = b
+                .get(..end)
                 .unwrap_or(&[])
                 .iter()
                 .map(|&x| char::from(x))
-                .collect()
+                .collect();
+            if matches!(c.field, Field::StrPad(_)) {
+                text.trim_end_matches(' ').to_owned()
+            } else {
+                text
+            }
         }
     })
 }
@@ -270,6 +373,10 @@ const OBJECTS_SIZE: usize = 0x1C0;
 const OBJPRESET_SIZE: usize = 4;
 const LEVELS_SIZE: usize = 0x220;
 const LEVELDEFS_SIZE: usize = 0x9C;
+const MONPRESET_SIZE: usize = 4;
+const MONSTATS_SIZE: usize = 0x1A8;
+const MONSTATS2_SIZE: usize = 0x134;
+const SUPERUNIQUES_SIZE: usize = 0x34;
 
 /// Size in bytes of one record. Identical for every [`ExcelVersion`] (see the
 /// module docs).
@@ -281,6 +388,10 @@ pub fn record_size(kind: ExcelTableKind, _version: ExcelVersion) -> usize {
         ExcelTableKind::Objects => OBJECTS_SIZE,
         ExcelTableKind::ObjPreset => OBJPRESET_SIZE,
         ExcelTableKind::Levels => LEVELS_SIZE,
+        ExcelTableKind::MonPreset => MONPRESET_SIZE,
+        ExcelTableKind::MonStats => MONSTATS_SIZE,
+        ExcelTableKind::MonStats2 => MONSTATS2_SIZE,
+        ExcelTableKind::SuperUniques => SUPERUNIQUES_SIZE,
     }
 }
 
@@ -499,6 +610,236 @@ fn leveldefs_layout() -> Layout {
     l
 }
 
+fn monpreset_layout() -> Layout {
+    let mut l = Layout::new(MONPRESET_SIZE);
+    l.col("Act", 0, Field::U8)
+        .col("PlaceKind", 1, Field::U8)
+        .col("PlaceIndex", 2, Field::U16);
+    l
+}
+
+/// Flag columns of `monstats`, in bit order of the word at `0xC`.
+const MONSTATS_FLAGS: [&str; 29] = [
+    "isSpawn",
+    "isMelee",
+    "noRatio",
+    "opendoors",
+    "SetBoss",
+    "BossXfer",
+    "boss",
+    "primeevil",
+    "npc",
+    "interact",
+    "inTown",
+    "lUndead",
+    "hUndead",
+    "demon",
+    "flying",
+    "killable",
+    "switchai",
+    "nomultishot",
+    "neverCount",
+    "petIgnore",
+    "deathDmg",
+    "genericSpawn",
+    "zoo",
+    "placespawn",
+    "inventory",
+    "enabled",
+    "NoShldBlock",
+    "noAura",
+    "rangedtype",
+];
+
+fn monstats_layout() -> Layout {
+    use Field::{I8, I16, Index, U8, U16};
+    let mut l = Layout::new(MONSTATS_SIZE);
+    l.col("hcIdx", 0, Index)
+        .col("BaseIdRow", 2, I16)
+        .col("NextInClassRow", 4, I16)
+        .col("NameStrId", 6, U16)
+        .bits(&MONSTATS_FLAGS, 12, 0)
+        .col("Code", 16, Field::StrPad(4))
+        .col("MonStatsExRow", 24, I16)
+        .col("spawnRow", 32, I16)
+        .col("spawnx", 34, I8)
+        .col("spawny", 35, I8)
+        .col("minion1Row", 38, I16)
+        .col("minion2Row", 40, I16)
+        .col("PartyMin", 44, U8)
+        .col("PartyMax", 45, U8)
+        .col("Rarity", 46, U8)
+        .col("MinGrp", 47, U8)
+        .col("MaxGrp", 48, U8)
+        .col("sparsePopulate", 49, U8)
+        .col("Align", 76, U8)
+        .col("TransLvl", 77, U8)
+        .col("threat", 78, U8)
+        .col("TCQuestId", 158, U8)
+        .col("TCQuestCP", 159, U8)
+        .col("Level", 170, U16)
+        .col("Level(N)", 172, U16)
+        .col("Level(H)", 174, U16);
+    l
+}
+
+fn monstats2_layout() -> Layout {
+    use Field::{Bit, I16, U8, U32};
+    let mut l = Layout::new(MONSTATS2_SIZE);
+    l.bits(
+        &[
+            "noGfxHitTest",
+            "noMap",
+            "noOvly",
+            "isSel",
+            "alSel",
+            "noSel",
+            "shiftSel",
+            "corpseSel",
+            "revive",
+            "isAtt",
+            "small",
+            "large",
+            "soft",
+            "critter",
+            "Shadow",
+            "noUniqueShift",
+            "compositeDeath",
+            "inert",
+            "objCol",
+            "deadCol",
+            "unflatDead",
+        ],
+        4,
+        0,
+    )
+    .col("SizeX", 8, U8)
+    .col("SizeY", 9, U8)
+    .col("spawnCol", 10, U8)
+    .col("Height", 11, U8)
+    .col("OverlayHeight", 12, U8)
+    .col("pixHeight", 13, U8)
+    .col("MeleeRng", 14, U8)
+    .col("BaseW", 16, Field::StrPad(4))
+    .col("HitClass", 20, U8)
+    .bits(
+        &[
+            "HD", "TR", "LG", "RA", "LA", "RH", "LH", "SH", "S1", "S2", "S3", "S4", "S5", "S6",
+            "S7", "S8",
+        ],
+        232,
+        0,
+    )
+    .col("TotalPieces", 236, U32)
+    .bits(
+        &[
+            "mDT", "mNU", "mWL", "mGH", "mA1", "mA2", "mBL", "mSC", "mS1", "mS2", "mS3", "mS4",
+            "mDD", "mKB", "mSQ", "mRN",
+        ],
+        240,
+        0,
+    );
+    for (i, name) in [
+        "dDT", "dNU", "dWL", "dGH", "dA1", "dA2", "dBL", "dSC", "dS1", "dS2", "dS3", "dS4", "dDD",
+        "dKB", "dSQ", "dRN",
+    ]
+    .iter()
+    .enumerate()
+    {
+        l.col(name, 244 + i, U8);
+    }
+    l.col("A2mv", 260, Bit(5))
+        .col("S1mv", 260, Bit(8))
+        .col("S2mv", 260, Bit(9))
+        .col("InfernoLen", 264, U8)
+        .col("InfernoAnim", 265, U8)
+        .col("InfernoRollback", 266, U8)
+        .col("htTop", 270, I16)
+        .col("htLeft", 272, I16)
+        .col("htWidth", 274, I16)
+        .col("htHeight", 276, I16)
+        .col("localBlood", 284, U8)
+        .col("Bleed", 285, U8)
+        .col("Light", 286, U8)
+        .col("light-r", 287, U8)
+        .col("light-g", 288, U8)
+        .col("light-b", 289, U8)
+        .col("Utrans", 290, U8)
+        .col("Utrans(N)", 291, U8)
+        .col("Utrans(H)", 292, U8);
+    l
+}
+
+fn superuniques_layout() -> Layout {
+    use Field::{I16, U8, U16, U32};
+    let mut l = Layout::new(SUPERUNIQUES_SIZE);
+    l.col("NameStrId", 2, U16)
+        .col("ClassRow", 4, I16)
+        .col("hcIdx", 8, U32)
+        .col("Mod1", 12, U32)
+        .col("Mod2", 16, U32)
+        .col("Mod3", 20, U32)
+        .col("MinGrp", 28, U32)
+        .col("MaxGrp", 32, U32)
+        .col("AutoPos", 36, U8)
+        .col("EClass", 37, U8)
+        .col("Stacks", 38, U8)
+        .col("Replaceable", 39, U8)
+        .col("Utrans", 40, U8)
+        .col("Utrans(N)", 41, U8)
+        .col("Utrans(H)", 42, U8);
+    l
+}
+
+/// The MonPlace rows: `monplace.txt`'s `code` column in file order.
+/// `monplace.bin` is just `0..37` as `u16` and is byte-identical in vanilla and
+/// Median XL, so the names exist only in the vanilla `.txt`.
+const MONPLACE_CODES: [&str; 37] = [
+    "place_nothing",
+    "place_npc_pack",
+    "place_unique_pack",
+    "place_champion",
+    "place_rogue_warner",
+    "place_bloodraven",
+    "place_rivermonster_right",
+    "place_rivermonster_left",
+    "place_tightspotboss",
+    "place_amphibian",
+    "place_tentacle_ns",
+    "place_tentacle_ew",
+    "place_fallennest",
+    "place_fetishnest",
+    "place_talkingrogue",
+    "place_talkingguard",
+    "place_dumbguard",
+    "place_fallen",
+    "place_fallenshaman",
+    "place_maggot",
+    "place_maggotegg",
+    "place_mosquitonest",
+    "place_fetish",
+    "place_fetishshaman",
+    "place_impgroup",
+    "place_imp",
+    "place_miniongroup",
+    "place_minion",
+    "place_bloodlord",
+    "place_deadminion",
+    "place_deadimp",
+    "place_deadbarb",
+    "place_reanimateddead",
+    "place_group25",
+    "place_group50",
+    "place_group75",
+    "place_group100",
+];
+
+/// The `monplace.txt` code of MonPlace row `index` (`PlaceKind` 0 of
+/// [`ExcelTableKind::MonPreset`]).
+pub fn monplace_code(index: usize) -> Option<&'static str> {
+    MONPLACE_CODES.get(index).copied()
+}
+
 fn layout(kind: ExcelTableKind) -> Layout {
     match kind {
         ExcelTableKind::LvlTypes => lvltypes_layout(),
@@ -507,6 +848,10 @@ fn layout(kind: ExcelTableKind) -> Layout {
         ExcelTableKind::Objects => objects_layout(),
         ExcelTableKind::ObjPreset => Layout::new(OBJPRESET_SIZE),
         ExcelTableKind::Levels => levels_layout(),
+        ExcelTableKind::MonPreset => monpreset_layout(),
+        ExcelTableKind::MonStats => monstats_layout(),
+        ExcelTableKind::MonStats2 => monstats2_layout(),
+        ExcelTableKind::SuperUniques => superuniques_layout(),
     }
 }
 

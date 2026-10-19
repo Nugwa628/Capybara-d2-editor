@@ -1,5 +1,5 @@
 use super::*;
-use crate::txt::TxtTable;
+use crate::txt::{Row, TxtTable};
 
 const BOTH: [ExcelVersion; 2] = [ExcelVersion::V113c, ExcelVersion::V114d];
 
@@ -31,7 +31,7 @@ fn every_column_lies_inside_its_record() {
         assert_eq!(l.record_size, record_size(*kind, ExcelVersion::V113c));
         for c in &l.columns {
             assert!(
-                c.offset + c.field.width() <= l.record_size,
+                c.offset + c.field.reach() <= l.record_size,
                 "{kind:?} {}",
                 c.name
             );
@@ -59,6 +59,10 @@ fn columns_do_not_overlap() {
         ExcelTableKind::LvlWarp,
         ExcelTableKind::Objects,
         ExcelTableKind::Levels,
+        ExcelTableKind::MonPreset,
+        ExcelTableKind::MonStats,
+        ExcelTableKind::MonStats2,
+        ExcelTableKind::SuperUniques,
     ] {
         let l = layout(kind);
         let mut used = vec![None::<&str>; l.record_size];
@@ -95,12 +99,20 @@ fn stems_and_sizes() {
             "lvlwarp",
             "objects",
             "objpreset",
-            "levels"
+            "levels",
+            "monpreset",
+            "monstats",
+            "monstats2",
+            "superuniques"
         ]
     );
     for v in BOTH {
         assert_eq!(record_size(ExcelTableKind::LvlTypes, v), 0x788);
         assert_eq!(record_size(ExcelTableKind::Objects, v), 0x1C0);
+        assert_eq!(record_size(ExcelTableKind::MonPreset, v), 4);
+        assert_eq!(record_size(ExcelTableKind::MonStats, v), 424);
+        assert_eq!(record_size(ExcelTableKind::MonStats2, v), 308);
+        assert_eq!(record_size(ExcelTableKind::SuperUniques, v), 52);
         assert_eq!(leveldefs_record_size(v), 156);
     }
 }
@@ -275,6 +287,9 @@ fn vanilla_bin_equals_txt() {
     let excel = dir.join("data").join("global").join("excel");
     let mut report = Vec::new();
     for kind in ExcelTableKind::all() {
+        if is_mon_kind(*kind) {
+            continue; // cross-table columns: see vanilla_mon_bins_equal_txt
+        }
         let stem = kind.file_stem();
         let (Some(bin), Some(txt)) = (
             read(&excel.join(format!("{stem}.bin"))),
@@ -332,4 +347,468 @@ fn median_xl_bins_decode_as_1_13c() {
         );
         assert!(!table.is_empty(), "{stem}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// monster tables
+
+use crate::tbl::StringTable;
+use std::collections::HashMap;
+use std::path::Path;
+
+fn is_mon_kind(kind: ExcelTableKind) -> bool {
+    matches!(
+        kind,
+        ExcelTableKind::MonPreset
+            | ExcelTableKind::MonStats
+            | ExcelTableKind::MonStats2
+            | ExcelTableKind::SuperUniques
+    )
+}
+
+/// The records of a `.bin` (after the count word).
+fn records(bytes: &[u8], size: usize) -> std::slice::ChunksExact<'_, u8> {
+    bytes[4..].chunks_exact(size)
+}
+
+fn put_u16(rec: &mut [u8], off: usize, v: u16) {
+    rec[off..off + 2].copy_from_slice(&v.to_le_bytes());
+}
+
+#[test]
+fn synthetic_monster_tables() {
+    let preset = file(3, MONPRESET_SIZE, |i, r| {
+        r[0] = 1 + i as u8;
+        r[1] = i as u8;
+        put_u16(r, 2, 300 + i as u16);
+    });
+    let t = decode_bin(ExcelTableKind::MonPreset, ExcelVersion::V113c, &preset).unwrap();
+    let r = t.row(2).unwrap();
+    assert_eq!(r.get_i64("Act"), Some(3));
+    assert_eq!(r.get_i64("PlaceKind"), Some(2));
+    assert_eq!(r.get_i64("PlaceIndex"), Some(302));
+
+    let stats = file(2, MONSTATS_SIZE, |i, r| {
+        put_u16(r, 2, 0xFFFF);
+        put_u16(r, 6, 5382 + i as u16);
+        put_u32(r, 12, 1 << 8 | 1 << 25);
+        put_str(r, 16, "SK  ");
+        put_u16(r, 24, 1446);
+        r[34] = (-3i8) as u8;
+        put_u16(r, 170, 40);
+    });
+    let t = decode_bin(ExcelTableKind::MonStats, ExcelVersion::V114d, &stats).unwrap();
+    let r = t.row(1).unwrap();
+    assert_eq!(r.get_i64("hcIdx"), Some(1));
+    assert_eq!(r.get_i64("BaseIdRow"), Some(-1));
+    assert_eq!(r.get_i64("NameStrId"), Some(5383));
+    assert_eq!(r.get("Code"), Some("SK"));
+    assert_eq!(r.get_i64("MonStatsExRow"), Some(1446));
+    assert_eq!(r.get_i64("npc"), Some(1));
+    assert_eq!(r.get_i64("enabled"), Some(1));
+    assert_eq!(r.get_i64("boss"), Some(0));
+    assert_eq!(r.get_i64("spawnx"), Some(-3));
+    assert_eq!(r.get_i64("Level"), Some(40));
+
+    let stats2 = file(1, MONSTATS2_SIZE, |_, r| {
+        put_u32(r, 232, 0b1011_1111);
+        put_u32(r, 240, 1 << 15);
+        put_str(r, 16, "1hs ");
+        r[8] = 2;
+        r[9] = 3;
+        put_u32(r, 236, 9);
+        r[244] = 8;
+    });
+    let t = decode_bin(ExcelTableKind::MonStats2, ExcelVersion::V113c, &stats2).unwrap();
+    let r = t.row(0).unwrap();
+    assert_eq!(r.get("BaseW"), Some("1hs"));
+    assert_eq!(r.get_i64("SizeX"), Some(2));
+    assert_eq!(r.get_i64("SizeY"), Some(3));
+    assert_eq!(r.get_i64("TotalPieces"), Some(9));
+    assert_eq!(r.get_i64("dDT"), Some(8));
+    let on: Vec<&str> = ["HD", "TR", "LG", "RA", "LA", "RH", "LH", "SH"]
+        .into_iter()
+        .filter(|c| r.get_i64(c) == Some(1))
+        .collect();
+    assert_eq!(on, ["HD", "TR", "LG", "RA", "LA", "RH", "SH"]);
+    assert_eq!(r.get_i64("mRN"), Some(1));
+    assert_eq!(r.get_i64("mDT"), Some(0));
+
+    let supers = file(1, SUPERUNIQUES_SIZE, |_, r| {
+        put_u16(r, 2, 2869);
+        put_u16(r, 4, 58);
+        put_u32(r, 12, 8);
+        r[37] = 1;
+    });
+    let t = decode_bin(ExcelTableKind::SuperUniques, ExcelVersion::V113c, &supers).unwrap();
+    let r = t.row(0).unwrap();
+    assert_eq!(r.get_i64("NameStrId"), Some(2869));
+    assert_eq!(r.get_i64("ClassRow"), Some(58));
+    assert_eq!(r.get_i64("Mod1"), Some(8));
+    assert_eq!(r.get_i64("EClass"), Some(1));
+
+    assert_eq!(monplace_code(0), Some("place_nothing"));
+    assert_eq!(monplace_code(36), Some("place_group100"));
+    assert_eq!(monplace_code(37), None);
+}
+
+/// Rows of a monster `.txt` as the compiler sees them: the `Expansion`
+/// separator is skipped whatever its other cells hold (`monstats2.txt` has an
+/// `EOL` cell on it).
+fn mon_rows(t: &TxtTable) -> Vec<usize> {
+    t.rows()
+        .filter(|r| {
+            !r.cells()
+                .first()
+                .is_some_and(|c| c.trim().eq_ignore_ascii_case("expansion"))
+        })
+        .map(|r| r.index())
+        .collect()
+}
+
+/// Lower-cased text of `column` to its record number (first match wins).
+fn row_numbers(t: &TxtTable, column: &str) -> HashMap<String, usize> {
+    let mut map = HashMap::new();
+    let col = t.column(column).unwrap();
+    for (k, r) in mon_rows(t).into_iter().enumerate() {
+        let text = t.row(r).unwrap().cells()[col].trim().to_ascii_lowercase();
+        map.entry(text).or_insert(k);
+    }
+    map
+}
+
+/// The `string.tbl`, `patchstring.tbl`, `expansionstring.tbl` of one install.
+struct Strings([Option<StringTable>; 3]);
+
+impl Strings {
+    fn load(root: &Path) -> Strings {
+        let dir = root.join("data").join("local").join("lng").join("eng");
+        let one = |name: &str| read(&dir.join(name)).and_then(|b| StringTable::parse(&b).ok());
+        Strings([
+            one("string.tbl"),
+            one("patchstring.tbl"),
+            one("expansionstring.tbl"),
+        ])
+    }
+
+    /// The key a compiled string id stands for.
+    fn key(&self, id: i64) -> Option<String> {
+        let (table, base) = if id >= 20000 {
+            (2, 20000)
+        } else if id >= 10000 {
+            (1, 10000)
+        } else {
+            (0, 0)
+        };
+        let id = u16::try_from(id - base).ok()?;
+        let (key, _) = self.0.get(table)?.as_ref()?.entry_by_id(id)?;
+        Some(key.to_owned())
+    }
+
+    fn has_key(&self, key: &str) -> bool {
+        self.0.iter().flatten().any(|t| t.get(key).is_some())
+    }
+
+    /// Whether the compiled id `cell` stands for the `.txt` key `key`. A blank
+    /// or unknown key is compiled as `dummy`.
+    fn matches(&self, cell: &str, key: &str) -> bool {
+        let Some(found) = cell.parse::<i64>().ok().and_then(|id| self.key(id)) else {
+            return false;
+        };
+        let key = key.trim();
+        if key.is_empty() || !self.has_key(key) {
+            found.eq_ignore_ascii_case("dummy")
+        } else {
+            found.eq_ignore_ascii_case(key)
+        }
+    }
+}
+
+/// Compares `bin` to `txt` column by column (both over the compiled rows).
+/// Columns `special` answers for are compared by it; every other decoded
+/// column must be a `.txt` column of the same name and equal to it. Returns
+/// (columns, cells).
+fn compare_mon(
+    label: &str,
+    bin: &TxtTable,
+    txt: &TxtTable,
+    special: impl Fn(&str, &str, Row<'_>) -> Option<bool>,
+) -> (usize, usize) {
+    let rows = mon_rows(txt);
+    assert_eq!(bin.len(), rows.len(), "{label}: record count");
+    let mut cells = 0;
+    let mut failures = Vec::new();
+    for (bi, header) in bin.headers().iter().enumerate() {
+        let ti = txt.column(header);
+        for (k, &trow) in rows.iter().enumerate() {
+            let b = &bin.row(k).unwrap().cells()[bi];
+            let row = txt.row(trow).unwrap();
+            let ok = match special(header, b, row) {
+                Some(ok) => ok,
+                None => {
+                    let ti = ti.unwrap_or_else(|| {
+                        panic!("{label}: decoded column {header:?} has no .txt column")
+                    });
+                    let t = &row.cells()[ti];
+                    b == t || (t.trim().is_empty() && b == "0")
+                }
+            };
+            if !ok {
+                failures.push(format!(
+                    "{label}: record {k} column {header:?}: bin {b:?} vs txt row {trow}"
+                ));
+                break;
+            }
+            cells += 1;
+        }
+    }
+    assert!(failures.is_empty(), "{:#?}", failures);
+    (bin.headers().len(), cells)
+}
+
+fn load_pair(excel: &Path, stem: &str) -> Option<(Vec<u8>, TxtTable)> {
+    let bin = read(&excel.join(format!("{stem}.bin")))?;
+    let txt = TxtTable::parse(&read(&excel.join(format!("{stem}.txt")))?).ok()?;
+    Some((bin, txt))
+}
+
+#[test]
+fn vanilla_mon_bins_equal_txt() {
+    let Some(dir) = crate::testutil::extracted("vanilla") else {
+        println!("skipped: extracted/vanilla missing");
+        return;
+    };
+    let excel = dir.join("data").join("global").join("excel");
+    let (Some((preset_bin, preset)), Some((stats_bin, stats)), Some((stats2_bin, stats2))) = (
+        load_pair(&excel, "monpreset"),
+        load_pair(&excel, "monstats"),
+        load_pair(&excel, "monstats2"),
+    ) else {
+        println!(
+            "skipped: vanilla monpreset/monstats2 .bin+.txt missing \
+             (re-run scripts/extract_fixtures.py --profile vanilla)"
+        );
+        return;
+    };
+    let Some((supers_bin, supers)) = load_pair(&excel, "superuniques") else {
+        println!("skipped: vanilla superuniques missing");
+        return;
+    };
+    let monplace = TxtTable::parse(&read(&excel.join("monplace.txt")).unwrap()).unwrap();
+    let strings = Strings::load(&dir);
+    assert!(
+        strings.0.iter().all(Option::is_some),
+        "vanilla string tables"
+    );
+
+    let stats_ids = row_numbers(&stats, "Id");
+    let stats2_ids = row_numbers(&stats2, "Id");
+    let place_ids = row_numbers(&monplace, "code");
+    let super_ids = row_numbers(&supers, "Superunique");
+    let mut report = Vec::new();
+
+    // MonStats
+    let version = detect_version(ExcelTableKind::MonStats, &stats_bin).unwrap();
+    assert_eq!(version, ExcelVersion::V113c);
+    let bin = decode_bin(ExcelTableKind::MonStats, version, &stats_bin).unwrap();
+    let row_ref = |row: Row<'_>, column: &str, map: &HashMap<String, usize>, b: &str| {
+        let text = row.get(column).unwrap_or("").trim().to_ascii_lowercase();
+        let want = if text.is_empty() {
+            Some(-1)
+        } else {
+            map.get(&text).map(|&r| r as i64)
+        };
+        want.is_some() && b.parse::<i64>().ok() == want
+    };
+    let (columns, cells) = compare_mon("monstats", &bin, &stats, |h, b, row| match h {
+        "BaseIdRow" => Some(row_ref(row, "BaseId", &stats_ids, b)),
+        "NextInClassRow" => Some(row_ref(row, "NextInClass", &stats_ids, b)),
+        "spawnRow" => Some(row_ref(row, "spawn", &stats_ids, b)),
+        "minion1Row" => Some(row_ref(row, "minion1", &stats_ids, b)),
+        "minion2Row" => Some(row_ref(row, "minion2", &stats_ids, b)),
+        "MonStatsExRow" => Some(row_ref(row, "MonStatsEx", &stats2_ids, b)),
+        // `Lilith` was added to patchstring.tbl after monstats.bin was compiled,
+        // so the vanilla bin still holds the id of `dummy` for uberandariel.
+        "NameStrId" if row.get("Id") == Some("uberandariel") => Some(b == "5382"),
+        "NameStrId" => Some(strings.matches(b, row.get("NameStr").unwrap_or(""))),
+        _ => None,
+    });
+    report.push(format!(
+        "monstats: {} records of {} bytes, {columns} columns, {cells} cells equal",
+        bin.len(),
+        record_size(ExcelTableKind::MonStats, version)
+    ));
+    // The stored word at offset 0 is the record index except in the last 11
+    // vanilla records (stale: index - 1, and 617 for record 723).
+    let stale: Vec<usize> = records(&stats_bin, MONSTATS_SIZE)
+        .enumerate()
+        .filter(|(i, rec)| usize::from(u16::from_le_bytes([rec[0], rec[1]])) != *i)
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(stale, (723..734).collect::<Vec<_>>());
+
+    // MonStats2
+    let version = detect_version(ExcelTableKind::MonStats2, &stats2_bin).unwrap();
+    let bin = decode_bin(ExcelTableKind::MonStats2, version, &stats2_bin).unwrap();
+    let (columns, cells) = compare_mon("monstats2", &bin, &stats2, |_, _, _| None);
+    report.push(format!(
+        "monstats2: {} records of {} bytes, {columns} columns, {cells} cells equal",
+        bin.len(),
+        record_size(ExcelTableKind::MonStats2, version)
+    ));
+    // The word at offset 0 is the record index.
+    for (i, rec) in records(&stats2_bin, MONSTATS2_SIZE).enumerate() {
+        assert_eq!(usize::from(u16::from_le_bytes([rec[0], rec[1]])), i);
+    }
+
+    // SuperUniques
+    let version = detect_version(ExcelTableKind::SuperUniques, &supers_bin).unwrap();
+    let bin = decode_bin(ExcelTableKind::SuperUniques, version, &supers_bin).unwrap();
+    let (columns, cells) = compare_mon("superuniques", &bin, &supers, |h, b, row| match h {
+        "ClassRow" => Some(row_ref(row, "Class", &stats_ids, b)),
+        "NameStrId" => Some(strings.matches(b, row.get("Name").unwrap_or(""))),
+        _ => None,
+    });
+    report.push(format!(
+        "superuniques: {} records of {} bytes, {columns} columns, {cells} cells equal",
+        bin.len(),
+        record_size(ExcelTableKind::SuperUniques, version)
+    ));
+
+    // MonPreset: `Place` is looked up in SuperUniques (when its Class exists),
+    // then MonStats, then MonPlace.
+    let version = detect_version(ExcelTableKind::MonPreset, &preset_bin).unwrap();
+    let bin = decode_bin(ExcelTableKind::MonPreset, version, &preset_bin).unwrap();
+    let place_of = |row: Row<'_>| -> Option<(i64, i64)> {
+        let place = row.get("Place").unwrap_or("").trim().to_ascii_lowercase();
+        let class_known = |s: usize| {
+            let class = supers.row(mon_rows(&supers)[s]).unwrap().get("Class");
+            stats_ids.contains_key(&class.unwrap_or("").trim().to_ascii_lowercase())
+        };
+        if let Some(&s) = super_ids.get(&place)
+            && class_known(s)
+        {
+            return Some((2, s as i64));
+        }
+        if let Some(&m) = stats_ids.get(&place) {
+            return Some((1, m as i64));
+        }
+        place_ids.get(&place).map(|&p| (0, p as i64))
+    };
+    let (columns, cells) = compare_mon("monpreset", &bin, &preset, |h, b, row| match h {
+        "PlaceKind" => Some(place_of(row).map(|p| p.0) == b.parse().ok()),
+        "PlaceIndex" => Some(place_of(row).map(|p| p.1) == b.parse().ok()),
+        _ => None,
+    });
+    report.push(format!(
+        "monpreset: {} records of {} bytes, {columns} columns, {cells} cells equal",
+        bin.len(),
+        record_size(ExcelTableKind::MonPreset, version)
+    ));
+    for row in bin.rows() {
+        if row.get_i64("PlaceKind") == Some(0) {
+            let index = usize::try_from(row.get_i64("PlaceIndex").unwrap()).unwrap();
+            assert!(monplace_code(index).is_some());
+        }
+    }
+    // The built-in MonPlace names are monplace.txt's.
+    for (code, &index) in &place_ids {
+        assert_eq!(
+            monplace_code(index).map(str::to_ascii_lowercase).as_deref(),
+            Some(code.as_str())
+        );
+    }
+    println!("vanilla monster .bin vs .txt:\n  {}", report.join("\n  "));
+}
+
+#[test]
+fn median_xl_mon_bins_are_consistent() {
+    let Some(dir) = crate::testutil::extracted("mxl") else {
+        println!("skipped: extracted/mxl missing");
+        return;
+    };
+    let excel = dir.join("data").join("global").join("excel");
+    let load = |kind: ExcelTableKind| {
+        let bytes = read(&excel.join(format!("{}.bin", kind.file_stem()))).unwrap();
+        assert_eq!(detect_version(kind, &bytes), Some(ExcelVersion::V113c));
+        let table = decode_bin(kind, ExcelVersion::V113c, &bytes).unwrap();
+        println!(
+            "mxl {}: {} records of {} bytes, {} columns",
+            kind.file_stem(),
+            table.len(),
+            record_size(kind, ExcelVersion::V113c),
+            table.headers().len()
+        );
+        (bytes, table)
+    };
+    let (preset_bytes, preset) = load(ExcelTableKind::MonPreset);
+    let (stats_bytes, stats) = load(ExcelTableKind::MonStats);
+    let (stats2_bytes, stats2) = load(ExcelTableKind::MonStats2);
+    let (supers_bytes, supers) = load(ExcelTableKind::SuperUniques);
+    // The words at offset 0 are the record indices.
+    for (i, rec) in records(&stats_bytes, MONSTATS_SIZE).enumerate() {
+        assert_eq!(usize::from(u16::from_le_bytes([rec[0], rec[1]])), i);
+    }
+    for (i, rec) in records(&stats2_bytes, MONSTATS2_SIZE).enumerate() {
+        assert_eq!(usize::from(u16::from_le_bytes([rec[0], rec[1]])), i);
+    }
+    let _ = (preset_bytes, supers_bytes);
+
+    // Every reference points inside its target table.
+    let inside = |value: Option<i64>, len: usize| {
+        value.is_some_and(|v| v == -1 || usize::try_from(v).is_ok_and(|v| v < len))
+    };
+    let mut bad = Vec::new();
+    for row in preset.rows() {
+        let (kind, index) = (row.get_i64("PlaceKind"), row.get_i64("PlaceIndex"));
+        let len = match kind {
+            Some(0) => 37,
+            Some(1) => stats.len(),
+            Some(2) => supers.len(),
+            _ => 0,
+        };
+        if !inside(index, len) || index == Some(-1) {
+            bad.push(format!("monpreset {} {kind:?} {index:?}", row.index()));
+        }
+        assert!((1..=5).contains(&row.get_i64("Act").unwrap()));
+    }
+    for row in stats.rows() {
+        for (column, len) in [
+            ("BaseIdRow", stats.len()),
+            ("NextInClassRow", stats.len()),
+            ("spawnRow", stats.len()),
+            ("minion1Row", stats.len()),
+            ("minion2Row", stats.len()),
+            ("MonStatsExRow", stats2.len()),
+        ] {
+            if !inside(row.get_i64(column), len) {
+                bad.push(format!("monstats {} {column}", row.index()));
+            }
+        }
+    }
+    for row in supers.rows() {
+        if !inside(row.get_i64("ClassRow"), stats.len()) {
+            bad.push(format!("superuniques {} ClassRow", row.index()));
+        }
+    }
+    assert!(bad.is_empty(), "{:#?}", &bad[..bad.len().min(20)]);
+
+    // How many names resolve through Median XL's own string tables.
+    let strings = Strings::load(&dir);
+    let named = |t: &TxtTable| {
+        let ok = t
+            .rows()
+            .filter(|r| {
+                r.get_i64("NameStrId")
+                    .and_then(|id| strings.key(id))
+                    .is_some_and(|k| !k.eq_ignore_ascii_case("dummy"))
+            })
+            .count();
+        format!("{ok}/{}", t.len())
+    };
+    println!(
+        "mxl names resolved: monstats {}, superuniques {}",
+        named(&stats),
+        named(&supers)
+    );
 }
