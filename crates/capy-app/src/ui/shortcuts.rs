@@ -224,3 +224,97 @@ pub fn delete(state: &mut AppState) {
         state.exec(index, EditOp::Erase);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use capy_edit::CellValue;
+    use d2_assets::GamePath;
+    use d2_formats::ds1::{Cell, Ds1};
+
+    use super::*;
+    use crate::config::Config;
+    use crate::doc::{MapDoc, SourceCategory, SourceInfo};
+    use crate::paths::Paths;
+
+    fn state_with_edit() -> (AppState, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut state = AppState::new(
+            Paths::at(tmp.path().join("capybara")),
+            Config::default(),
+            Vec::new(),
+        );
+        let mut ds1 = Ds1::new(4, 4, 0);
+        ds1.floors[0].set(1, 1, Cell(1).with_indices(1, 0));
+        state.docs.push(MapDoc::new(
+            1,
+            "p".into(),
+            GamePath::new("data\\a.ds1"),
+            SourceInfo {
+                category: SourceCategory::Base,
+                layer_name: "x".into(),
+            },
+            ds1,
+            &Config::default().layer_visibility,
+        ));
+        state.active = Some(0);
+        let value = CellValue {
+            cell: Cell(1).with_indices(2, 0).0,
+            orientation: 0,
+        };
+        assert!(state.exec(
+            0,
+            EditOp::Paint {
+                layer: LayerRef::Floor(0),
+                cells: vec![(2, 2, value)],
+            }
+        ));
+        (state, tmp)
+    }
+
+    #[test]
+    fn keyboard_edits_are_refused_while_a_snapshot_is_shown() {
+        let (mut state, _tmp) = state_with_edit();
+        state.docs[0].snapshot_view = Some(capy_history::SnapshotId(1));
+        state.docs[0].object_sel = Vec::new();
+        state.docs[0].selection.insert(LayerRef::Floor(0), 1, 1);
+        let revision = state.docs[0].edit.revision();
+        for action in [
+            Action::Undo,
+            Action::Redo,
+            Action::Cut,
+            Action::Delete,
+            Action::Paste,
+        ] {
+            apply(&mut state, action);
+        }
+        assert_eq!(state.docs[0].edit.revision(), revision, "nothing changed");
+        assert!(state.edit.paste.is_none());
+        assert!(
+            state
+                .toasts
+                .iter()
+                .any(|t| t.text == SNAPSHOT_READ_ONLY),
+            "the user is told why"
+        );
+        // Non-editing keys still work: tools, grid, deselect.
+        apply(&mut state, Action::Tool(Tool::Paint));
+        assert_eq!(state.edit.tool, Tool::Paint);
+        apply(&mut state, Action::Deselect);
+        assert!(state.docs[0].selection.is_empty());
+        // Back on the map, Ctrl+Z works again.
+        state.docs[0].show_current();
+        apply(&mut state, Action::Undo);
+        assert_ne!(state.docs[0].edit.revision(), revision);
+        assert!(!state.docs[0].edit.can_undo());
+    }
+
+    #[test]
+    fn only_map_changing_actions_are_blocked() {
+        assert!(edits_the_map(Action::Undo) && edits_the_map(Action::Delete));
+        assert!(edits_the_map(Action::Paste) && edits_the_map(Action::CommitPaste));
+        assert!(!edits_the_map(Action::Copy));
+        assert!(!edits_the_map(Action::Save));
+        assert!(!edits_the_map(Action::Escape));
+        assert!(!edits_the_map(Action::Tool(Tool::Objects)));
+    }
+}
