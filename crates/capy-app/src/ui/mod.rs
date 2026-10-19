@@ -1,8 +1,8 @@
 //! The egui shell: mode tabs, menu, status bar, toasts and the dock.
 //!
 //! Two modes share the window, each with its own dock layout (persisted
-//! separately): **Map Editor** (the panels below) and **Sprites** (a
-//! placeholder until P6).
+//! separately): **Map Editor** (the panels below) and **Sprites** (sprite
+//! list, viewer, editor, converter and log; see [`sprites`]).
 
 mod dialogs;
 mod layers;
@@ -70,17 +70,29 @@ impl Panel {
 /// Panels of the Sprites mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SpritesPanel {
+    Browser,
     Viewer,
+    Editor,
     Converter,
+    Log,
 }
 
 impl SpritesPanel {
-    pub const ALL: [SpritesPanel; 2] = [SpritesPanel::Viewer, SpritesPanel::Converter];
+    pub const ALL: [SpritesPanel; 5] = [
+        SpritesPanel::Browser,
+        SpritesPanel::Viewer,
+        SpritesPanel::Editor,
+        SpritesPanel::Converter,
+        SpritesPanel::Log,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
+            SpritesPanel::Browser => "Sprites",
             SpritesPanel::Viewer => "Viewer",
+            SpritesPanel::Editor => "Editor",
             SpritesPanel::Converter => "Converter",
+            SpritesPanel::Log => "Log",
         }
     }
 }
@@ -105,10 +117,11 @@ pub fn default_layout() -> DockState<Panel> {
 }
 
 pub fn default_sprites_layout() -> DockState<SpritesPanel> {
-    let mut state = DockState::new(vec![SpritesPanel::Viewer]);
+    let mut state = DockState::new(vec![SpritesPanel::Viewer, SpritesPanel::Editor]);
     let main = state.main_surface_mut();
-    let [_viewer, _converter] =
-        main.split_right(NodeIndex::root(), 0.6, vec![SpritesPanel::Converter]);
+    let [centre, _list] = main.split_left(NodeIndex::root(), 0.18, vec![SpritesPanel::Browser]);
+    let [centre, _converter] = main.split_right(centre, 0.74, vec![SpritesPanel::Converter]);
+    let [_centre, _log] = main.split_below(centre, 0.8, vec![SpritesPanel::Log]);
     state
 }
 
@@ -248,7 +261,7 @@ impl TabViewer for Viewer<'_> {
             Panel::Layers => layers::show(ui, self.state),
             Panel::Properties => properties::show(ui, self.state),
             Panel::Log => log::show(ui, self.state),
-            Panel::SpritePreview => sprites::preview_placeholder(ui),
+            Panel::SpritePreview => sprites::preview::show(ui, self.state),
         }
     }
 
@@ -270,9 +283,11 @@ impl TabViewer for Viewer<'_> {
     }
 }
 
-struct SpritesViewer;
+struct SpritesViewer<'a> {
+    state: &'a mut AppState,
+}
 
-impl TabViewer for SpritesViewer {
+impl TabViewer for SpritesViewer<'_> {
     type Tab = SpritesPanel;
 
     fn title(&mut self, tab: &mut SpritesPanel) -> egui::WidgetText {
@@ -284,7 +299,10 @@ impl TabViewer for SpritesViewer {
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut SpritesPanel) {
-        sprites::show(ui, *tab);
+        match tab {
+            SpritesPanel::Log => log::show(ui, self.state),
+            panel => sprites::show(ui, *panel, self.state),
+        }
     }
 
     fn is_closeable(&self, _tab: &SpritesPanel) -> bool {
@@ -330,9 +348,11 @@ fn mode_tabs(ui: &mut Ui, state: &mut AppState) {
 pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     state.pixels_per_point = ctx.pixels_per_point();
     state.sync_docs();
-    if state.config.mode == AppMode::Map {
-        shortcuts::handle(ctx, state);
+    match state.config.mode {
+        AppMode::Map => shortcuts::handle(ctx, state),
+        AppMode::Sprites => sprites::shortcuts(ctx, state),
     }
+    focus_sprites_panel(state, dock);
     let mut root = root_ui(ctx);
 
     egui::Panel::top("mode_tabs").show(&mut root, |ui| {
@@ -366,13 +386,32 @@ pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
                     .show_close_buttons(false)
                     .show_add_buttons(false)
                     .show_leaf_close_all_buttons(false)
-                    .show_inside(ui, &mut SpritesViewer);
+                    .show_inside(ui, &mut SpritesViewer { state });
             }
         }
     });
 
     dialogs::show_all(ctx, state);
+    sprites::dialogs(ctx, state);
     toasts::show(ctx, state);
+}
+
+/// Brings the panel the sprites state asked for to the front.
+fn focus_sprites_panel(state: &mut AppState, dock: &mut Dock) {
+    if std::mem::take(&mut state.sprites.show_preview_panel) && !dock.has_sprite_preview() {
+        dock.toggle_sprite_preview();
+    }
+    let Some(focus) = state.sprites.focus.take() else {
+        return;
+    };
+    let panel = match focus {
+        crate::sprites::Focus::Viewer => SpritesPanel::Viewer,
+        crate::sprites::Focus::Editor => SpritesPanel::Editor,
+        crate::sprites::Focus::Converter => SpritesPanel::Converter,
+    };
+    if let Some(location) = dock.sprites.find_tab(&panel) {
+        let _ = dock.sprites.set_active_tab(location);
+    }
 }
 
 #[cfg(test)]

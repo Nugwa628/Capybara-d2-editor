@@ -433,6 +433,11 @@ impl AppState {
 
     /// Quit, asking first when any map has unsaved changes.
     pub fn request_quit(&mut self) {
+        // The sprite editor's unsaved work is asked about first.
+        if self.sprites.editor_dirty() && !self.sprites.quit_confirmed {
+            self.sprites.quit_prompt = true;
+            return;
+        }
         self.request_close_target(CloseTarget::Quit);
     }
 

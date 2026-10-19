@@ -201,7 +201,7 @@ fn tab_strip(ui: &mut Ui, state: &mut AppState) {
                     if resp.middle_clicked() {
                         close = Some(i);
                     }
-                    if ui.small_button("\u{2715}").on_hover_text("Close").clicked() {
+                    if ui.small_button("x").on_hover_text("Close").clicked() {
                         close = Some(i);
                     }
                     ui.add_space(6.0);

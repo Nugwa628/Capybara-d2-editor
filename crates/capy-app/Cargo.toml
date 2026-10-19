@@ -25,7 +25,11 @@ capy-render.workspace = true
 capy-index.workspace = true
 capy-edit.workspace = true
 capy-history.workspace = true
-arboard.workspace = true
+capy-sprite.workspace = true
+capy-paint.workspace = true
+capy-cli.workspace = true
+rfd.workspace = true
+arboard = { workspace = true, features = ["image-data"] }
 bevy = { workspace = true, features = [
     "std",
     "bevy_winit",
@@ -42,6 +46,9 @@ bevy = { workspace = true, features = [
 ] }
 bevy_egui.workspace = true
 egui_dock = { workspace = true, features = ["serde"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

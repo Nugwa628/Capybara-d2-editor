@@ -14,6 +14,7 @@ use crate::doc::{MapDoc, RenderState, SourceCategory, SourceInfo, categorize_sou
 use crate::edit::state::EditState;
 use crate::index_task::{self, IndexState, IndexTask};
 use crate::paths::Paths;
+use crate::sprites::SpritesState;
 use crate::tasks::{self, CatalogData, SessionData, TaskEvent};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +43,10 @@ pub struct Session {
     pub profile: Profile,
     pub overlay: std::sync::Arc<Overlay>,
     pub maps: Vec<GamePath>,
+    /// Every `.dc6`/`.dcc`/`.cof` among the known names, sorted.
+    pub sprites: Vec<GamePath>,
+    /// Every `pal.dat` among the known names.
+    pub palettes: Vec<GamePath>,
     pub summary: String,
 }
 
@@ -143,6 +148,8 @@ pub struct AppState {
     /// Tools, clipboard, dialogs: everything about editing that is not one
     /// document's own state.
     pub edit: EditState,
+    /// Sprites mode: viewer, converter, editor, and the map's sprite preview.
+    pub sprites: SpritesState,
 }
 
 const MAX_LOG: usize = 2000;
@@ -179,6 +186,7 @@ impl AppState {
             request_fit: false,
             quit_requested: false,
             edit: EditState::default(),
+            sprites: SpritesState::default(),
         }
     }
 
@@ -258,6 +266,7 @@ impl AppState {
 
     /// Drain finished background work. Call once per frame.
     pub fn poll_tasks(&mut self) {
+        self.poll_sprites();
         let events: Vec<TaskEvent> = match self.rx.lock() {
             Ok(rx) => rx.try_iter().collect(),
             Err(_) => return,
@@ -315,6 +324,8 @@ impl AppState {
             elapsed,
         } = data;
         let maps = tasks::ds1_list(&names);
+        let sprites = crate::sprites::sprite_list(names.iter());
+        let palettes = crate::sprites::palette_list(names.iter());
         let generation = self.generation;
         self.info(format!(
             "Profile {} ready in {:.1}s: {summary}; {} maps{}",
@@ -347,6 +358,8 @@ impl AppState {
             profile,
             overlay,
             maps,
+            sprites,
+            palettes,
             summary,
         });
         self.session_epoch += 1;

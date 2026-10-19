@@ -65,13 +65,25 @@ pub fn save_ds1(
         }
         Err(e) => return Err(SaveError::Failed(format!("cannot serialise the map: {e}"))),
     };
+    save_game_file(paths, profile_id, game_path, &bytes).map_err(SaveError::Failed)
+}
+
+/// Writes `bytes` as the profile's edited copy of `game_path` (any file
+/// type: maps, sprites): `capybara\saves\<profile>\<game path>`, a line in
+/// CHANGED.txt and a history snapshot.
+pub fn save_game_file(
+    paths: &Paths,
+    profile_id: &str,
+    game_path: &GamePath,
+    bytes: &[u8],
+) -> Result<SaveReport, String> {
     let saves = SavesDir::new(&paths.saves, profile_id);
     let path = saves
-        .save(game_path, &bytes)
-        .map_err(|e| SaveError::Failed(format!("cannot write {game_path}: {e}")))?;
+        .save(game_path, bytes)
+        .map_err(|e| format!("cannot write {game_path}: {e}"))?;
     let mut warnings = Vec::new();
     let snapshot = match SnapshotStore::open(&paths.history, profile_id)
-        .and_then(|mut store| store.record(game_path, &bytes, SnapshotKind::Save))
+        .and_then(|mut store| store.record(game_path, bytes, SnapshotKind::Save))
     {
         Ok(s) => Some(s.id),
         Err(e) => {
