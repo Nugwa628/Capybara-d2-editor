@@ -122,7 +122,13 @@ Objects and monsters draw through `ObjectSprites` (borrowing the `Overlay` and a
 pub struct ObjectSprites<'a>;                     // ::new(&Overlay, &ObjectCatalog), caches COF + sprites per (key, direction, frame)
 pub struct ObjectOptions { pub direction: u8, pub animation_tick: Option<u32>,
     pub frame_overrides: Option<Arc<[Option<u8>]>>, pub direction_overrides: Option<Arc<[Option<u8>]>> }
-pub struct ObjectFrame { pub layers: Vec<FrameLayer>, pub offset: (i32, i32), pub order_flag: u8 }  // .composite(&Palette), .to_rgba()
+pub struct ObjectFrame { pub layers: Vec<FrameLayer>, pub offset: (i32, i32), pub order_flag: u8,
+    pub frames_per_direction: u8 /* the COF's frame count (>= 1): what frame_index / forced frames wrap at */ }  // .composite(&Palette), .to_rgba()
+/// User direction -> file direction (index into the sprite's and COF's directions), main.c:331-340:
+/// 8/16/32 use the dir8/dir16/dir32 tables (user 0 = file 4; past the table = user 0's entry),
+/// 4 is the user direction clamped to 3, any other count gives 0. Always < directions when > 0.
+pub fn file_direction(directions: u8, user_dir: u8) -> u8;   // also re-exported at the crate root
+pub fn frame_index(tick: Option<u32>, delta: u32, count: u32) -> u8;
 pub struct FrameLayer { component, image: Arc<IndexedImage>, box_origin: (i32, i32), blend: Blend, shadow: Option<u8> }
 pub struct MissingObject { index, kind, id, x, y, reason: MissingReason }
 pub fn draw_list_with_objects(ds1, tiles, vis, Option<(&ObjectSprites, &ObjectOptions)>) -> Result<DrawList>;

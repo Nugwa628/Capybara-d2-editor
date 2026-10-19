@@ -42,6 +42,11 @@ pub struct CellViolation {
     pub cell_y: u32,
     /// Distinct pixel values in the cell (transparent counts as one).
     pub colors: usize,
+    /// The cell's pixel rectangle in frame-image coordinates, `(x0, y0, x1,
+    /// y1)` with exclusive ends. It is exactly the decoder's cell
+    /// (`d2_formats::dcc::cell_spans`), so it can be 1..=5 pixels wide or
+    /// tall, and always lies inside the frame image.
+    pub rect: (u32, u32, u32, u32),
 }
 
 /// Pixel rectangle in frame-image coordinates, `x0..x1` by `y0..y1`.
@@ -75,6 +80,14 @@ fn opaque_box(img: &IndexedImage) -> Option<(i64, i64, i64, i64)> {
             i64::from(img.offset_y) + y1 as i64 + 1,
         )
     })
+}
+
+impl Rect {
+    /// Non-negative by construction (the cell lies inside the frame box).
+    fn to_u32(self) -> (u32, u32, u32, u32) {
+        let c = |v: i32| u32::try_from(v).unwrap_or(0);
+        (c(self.x0), c(self.y0), c(self.x1), c(self.y1))
+    }
 }
 
 fn value(img: &IndexedImage, x: i32, y: i32) -> u8 {
@@ -125,6 +138,7 @@ fn scan(frames: &[Vec<IndexedImage>]) -> Vec<(CellViolation, Rect)> {
                                 cell_x: u32::try_from(cx).unwrap_or(u32::MAX),
                                 cell_y: u32::try_from(cy).unwrap_or(u32::MAX),
                                 colors,
+                                rect: r.to_u32(),
                             },
                             r,
                         ));
@@ -264,7 +278,8 @@ mod tests {
                 frame: FrameRef { dir: 0, frame: 0 },
                 cell_x: 0,
                 cell_y: 0,
-                colors: 5
+                colors: 5,
+                rect: (0, 0, 4, 4),
             }]
         );
     }
@@ -301,6 +316,40 @@ mod tests {
             &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
         );
         assert_eq!(dcc_cell_violations(&[vec![dense]])[0].colors, 16);
+    }
+
+    #[test]
+    fn violation_rect_is_the_decoder_cell_in_frame_coordinates() {
+        // Frame 0 puts the direction box origin at anchor (0, 0). Frame 1 sits
+        // at offset (1, 1) with a transparent first column, so its opaque box
+        // is anchor x 2..9, y 1..5. `cell_spans` splits x into 2..4 and 4..9
+        // (the trailing sliver merges, 5 wide) and keeps y as one 1..5 cell.
+        let a = img(1, 1, 0, 0, &[9]);
+        let mut px = vec![0u8; 8 * 4];
+        for y in 0..4 {
+            for x in 1..8 {
+                px[y * 8 + x] = (1 + y * 8 + x) as u8;
+            }
+        }
+        let b = img(8, 4, 1, 1, &px);
+        let frames = vec![vec![a, b.clone()]];
+        let v = dcc_cell_violations(&frames);
+        let rects: Vec<_> = v.iter().map(|c| c.rect).collect();
+        assert_eq!(rects, [(1, 0, 3, 4), (3, 0, 8, 4)]);
+        let cols = d2_formats::dcc::cell_spans(2, 0, 7);
+        assert_eq!(cols, [(2, 2), (4, 5)], "matches the decoder partition");
+        // Each rect holds exactly the reported distinct values.
+        for c in &v {
+            let (x0, y0, x1, y1) = c.rect;
+            assert!(x1 <= b.width && y1 <= b.height);
+            let mut seen = std::collections::BTreeSet::new();
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    seen.insert(value(&b, x as i32, y as i32));
+                }
+            }
+            assert_eq!(seen.len(), c.colors, "{c:?}");
+        }
     }
 
     #[test]

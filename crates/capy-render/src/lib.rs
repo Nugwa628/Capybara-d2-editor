@@ -31,7 +31,7 @@ pub use compose::{
 pub use error::{RenderError, Result};
 pub use objects::{
     FrameLayer, MissingObject, MissingReason, ObjectFrame, ObjectOptions, ObjectSprites,
-    PlacedObject, frame_index, object_anchor,
+    PlacedObject, file_direction, frame_index, object_anchor,
 };
 pub use order::{
     DrawEntry, DrawItem, DrawList, DrawPass, MissingTile, ObjectDrawItem, Visibility, draw_list,

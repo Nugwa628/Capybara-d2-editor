@@ -17,6 +17,9 @@
 //! top of the undo stack is the one that was on top at `mark_saved` (so
 //! undoing back to the saved state is clean again). `set_palette` is not
 //! undoable and makes the session dirty until the next `mark_saved`.
+//! `set_display_palette` is the view-only variant: it swaps the palette (and
+//! bumps `revision` so caches refresh) but never dirties the session and
+//! records no history, for previewing the sprite under another act.
 
 use crate::error::{PaintError, Result, invalid};
 use crate::ramps::Ramps;
@@ -282,11 +285,26 @@ impl PaintSession {
     }
 
     /// Swap palette (e.g. another act); pixels keep their indices. Not
-    /// undoable; the session is dirty until the next `mark_saved`.
+    /// undoable; the session is dirty until the next `mark_saved`. Use
+    /// [`PaintSession::set_display_palette`] when the swap only changes how
+    /// the sprite is shown.
     pub fn set_palette(&mut self, palette: Palette) {
+        self.swap_palette(palette);
+        self.palette_dirty = true;
+    }
+
+    /// Display-only palette swap (e.g. previewing another act): pixels keep
+    /// their indices and the ramps follow the new palette, like `set_palette`,
+    /// but the dirty state is left as it was and no history is recorded.
+    /// `revision` still increases so caches built from the palette refresh.
+    /// A pending `set_palette` change stays dirty.
+    pub fn set_display_palette(&mut self, palette: Palette) {
+        self.swap_palette(palette);
+    }
+
+    fn swap_palette(&mut self, palette: Palette) {
         self.ramps = Ramps::build(&palette);
         self.palette = palette;
-        self.palette_dirty = true;
         self.revision += 1;
     }
 

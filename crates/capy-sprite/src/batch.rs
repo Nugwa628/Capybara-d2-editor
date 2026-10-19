@@ -52,6 +52,9 @@ pub struct BatchReport {
     pub skipped: usize,
     pub failed: Vec<(PathBuf, String)>,
     pub log: Vec<String>,
+    /// The run stopped early on `cancel`; the counts cover the items handled
+    /// before that.
+    pub cancelled: bool,
 }
 
 enum Item {
@@ -187,8 +190,10 @@ fn scan(
 
 /// Converts a tree; see the module docs. `progress(done, total, name)` is
 /// called once with `done == 0` and then after every item. `cancel` is
-/// checked before every item: when set, the call returns
-/// [`SpriteError::Cancelled`] and whatever was already written stays.
+/// checked before every item: when set, the call stops and returns
+/// `Ok` with the partial report ([`BatchReport::cancelled`] set, a final log
+/// line saying how far it got); whatever was already written stays.
+/// [`SpriteError::Cancelled`] is no longer returned here.
 pub fn batch_convert(
     input: &Path,
     output: &Path,
@@ -229,7 +234,11 @@ pub fn batch_convert(
     progress(0, total, "");
     for (n, item) in items.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
-            return Err(SpriteError::Cancelled);
+            report.cancelled = true;
+            report
+                .log
+                .push(format!("cancelled after {n} of {total} items"));
+            return Ok(report);
         }
         let name = text(item.rel());
         let outcome = convert_one(

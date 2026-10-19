@@ -287,7 +287,6 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 
 ## Pending small fixes (lead decisions, not yet implemented)
 - Sprites UI: an import that came from a `sprite.json` export prefills the save prompt with the game path recorded in the json; saving as DCC warns (with a preview) before reducing crowded 4x4 cells instead of reducing silently.
-- Library wishes from the Sprites UI: `PaintSession::set_palette` display-only (no dirty), `CellViolation` carries its pixel rect, `RgbaFrame::put` public, `import_frames` disables colour keying when `sprite.json` is present, `batch_convert` returns the partial report on cancel, `capy_render::objects` exposes the direction tables and an `ObjectFrame`'s frame count.
 - Release: GUI-subsystem exe attaches to the parent console for CLI output; the prompt can return before output finishes when run from cmd. Decide at release whether to also ship a console-subsystem `capy.exe`.
 - `capy-render`: a mod colormap that maps a visible index to 0 makes that pixel transparent here; DS1Edit keeps it opaque. No vanilla row does this. Match DS1Edit later.
 - `capy-render`: DS1Edit re-derives DCC indices with `palette_find_closest` (first duplicate colour wins, `cof.c:149-170`), causing ~3 pixel differences on Coldcrow. Not reproduced; low value.
