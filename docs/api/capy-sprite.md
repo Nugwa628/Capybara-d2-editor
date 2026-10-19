@@ -115,6 +115,7 @@ pub fn export_frames(sprite: &Sprite, format: SpriteFormat, palette: &d2_formats
 pub fn import_frames(dir: &std::path::Path, palette: &d2_formats::palette::Palette, opts: &QuantizeOptions) -> Result<(Sprite, Option<ExportMeta>)>;
 /// One PNG: rows = directions, columns = frames, uniform cells of the union box.
 pub fn export_sheet(sprite: &Sprite, palette: &d2_formats::palette::Palette) -> Result<(Vec<u8>, ExportMeta)>;
+/// With `meta` (from export_sheet), colour keying is off with meta, like import_frames with sprite.json.
 pub fn import_sheet(png: &[u8], directions: u32, frames: u32, palette: &d2_formats::palette::Palette, opts: &QuantizeOptions, meta: Option<&ExportMeta>) -> Result<Sprite>;
 
 #[derive(Clone, Debug, PartialEq)]

@@ -366,7 +366,9 @@ pub fn export_sheet(sprite: &Sprite, palette: &Palette) -> Result<(Vec<u8>, Expo
 
 /// Cuts a sheet PNG into `directions x frames` equal cells and quantizes
 /// them. Cell offsets come from `meta` when it has the cell; otherwise each
-/// cell gets [`center_offset`].
+/// cell gets [`center_offset`]. With `meta` (a sheet from [`export_sheet`]),
+/// colour keying is turned off (`transparent_rgb = None`) so opaque black
+/// stays opaque, as [`import_frames`] does when `sprite.json` is present.
 pub fn import_sheet(
     png: &[u8],
     directions: u32,
@@ -388,6 +390,18 @@ pub fn import_sheet(
         )));
     }
     let (cw, ch) = (sheet.width / frames, sheet.height / directions);
+    // A sheet with export metadata came from `export_sheet`, whose alpha is
+    // exact: key nothing by colour, as `import_frames` does with sprite.json.
+    let no_key;
+    let opts = if meta.is_some() {
+        no_key = QuantizeOptions {
+            transparent_rgb: None,
+            ..opts.clone()
+        };
+        &no_key
+    } else {
+        opts
+    };
     let mut out = Vec::with_capacity(directions as usize);
     for r in 0..directions {
         let mut row = Vec::with_capacity(frames as usize);

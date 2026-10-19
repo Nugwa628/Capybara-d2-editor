@@ -336,3 +336,30 @@ fn sprite_json_import_keeps_opaque_black() {
         .collect();
     assert_eq!(alpha, &expect);
 }
+
+/// Same rule for sheets: with the export metadata, `import_sheet` does not
+/// colour-key, so opaque black survives; without it, black is keyed out.
+#[test]
+fn sheet_import_with_meta_keeps_opaque_black() {
+    let mut pal = crate::testutil::synthetic_palette();
+    pal.colors[7] = [0, 0, 0];
+    let px = vec![7, 2, 0, 7, 7, 3];
+    let sprite = Sprite {
+        directions: vec![vec![crate::testutil::image(3, 2, -1, -2, px.clone())]],
+    };
+    let (png, meta) = export_sheet(&sprite, &pal).unwrap();
+    let keyed = QuantizeOptions::default();
+
+    let back = import_sheet(&png, 1, 1, &pal, &keyed, Some(&meta)).unwrap();
+    let frame = &back.directions[0][0];
+    assert_eq!(frame.pixels, px, "black index 7 stays opaque");
+    let opaque: Vec<u8> = px.iter().map(|&p| if p == 0 { 0 } else { 255 }).collect();
+    assert_eq!(frame.alpha, opaque);
+
+    let loose = import_sheet(&png, 1, 1, &pal, &keyed, None).unwrap();
+    let keyed_alpha: Vec<u8> = px
+        .iter()
+        .map(|&p| if p == 0 || p == 7 { 0 } else { 255 })
+        .collect();
+    assert_eq!(loose.directions[0][0].alpha, keyed_alpha);
+}
