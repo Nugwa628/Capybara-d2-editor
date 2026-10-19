@@ -1,6 +1,6 @@
 # Capybara Map Editor — Plan
 
-Status: **P0 in progress** (2026-10-19). Step 0 bootstrap done: workspace skeleton, LICENSE/NOTICE, initial commit, UI crates pinned.
+Status: **P0 in progress** (2026-10-19). Step 0 done. P0 wave 1 merged: MPQ reader + overlay + profiles (`d2-assets`), DS1/txt/excel-bin/tables/tbl (`d2-formats`), spec cross-checks, known-names seed. Wave 2 (graphics formats; known-names harvest + P0 acceptance tests) running.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -94,6 +94,12 @@ Status: **P0 in progress** (2026-10-19). Step 0 bootstrap done: workspace skelet
 - No archive in either install uses bzip2 (covered by synthetic tests only). Vanilla uses PKWARE via the compression mask; Median XL also uses the IMPLODE block flag.
 - `Patch_D2.mpq` holds 209 files; names from the other listfiles cover 114. Vanilla has no `objpreset` table in any archive; Median XL ships `objpreset.bin`.
 - Private corpus: `testdata\private\extracted\{vanilla,mxl}\` (6,458 and 8,681 files, with `_manifest.tsv`).
+
+### DS1 and excel results (2026-10-19, measured)
+- All 2,276 vanilla and 2,424 Median XL `.ds1` round-trip byte-identically, 0 exceptions. Vanilla: 42 files carry trailing bytes (41 x 4 bytes, `swamp2.ds1` 48); 2 are short (`trees.ds1` 12, `expansion\siege\xtransition.ds1` 4). Median XL: 39 trailing, the same 2 short.
+- **The `.bin` layouts are confirmed** against vanilla `.txt` on every decoded cell: LvlTypes 0x788, LvlPrest 0x1B0, LvlWarp 0x30, Objects 0x1C0 (157 columns), Levels 0x220 **plus `leveldefs.bin` 0x9C**. 1.13c and 1.14d layouts are identical. Median XL decodes: 52 LvlTypes, 1,212 LvlPrest, 280 Levels, 589 Objects, and `objpreset.bin` (750 x i32, the `[act*150+id]` object remap vanilla compiles into the DLL).
+- Vanilla's live excel tables come from `Patch_D2.mpq` in **both** `.txt` and `.bin` form, and they decode identically.
+- `.bin` files do not store `Name` (LvlTypes, LvlPrest, LvlWarp) or `Beta`; display names come from Levels `LevelName` and string tables.
 
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
@@ -208,6 +214,10 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **Real-file format tests read an extracted corpus** at `testdata\private\extracted\<profile>\` (made by a `d2-assets` example), because `d2-formats` cannot depend on `d2-assets`. The P0 acceptance tests that need the overlay live in `d2-assets` tests.
 - **Known-names seed** lives at `assets/known-names/seed.txt` (outside any crate so it can be written while `d2-assets` is being built) and is embedded with `include_str!`.
 - `.gitattributes` forces LF for text and marks game formats binary, because `core.autocrlf` is on and would corrupt binary fixtures.
+- **Levels decodes from two files** (`levels.bin` + `leveldefs.bin`), via the added `excel::decode_levels_bin`: LevelType and DrlgType live in `leveldefs.bin`.
+- **Excel source preference per game version**: 1.13c reads `.bin` first, 1.14d reads `.txt` first (each falls back to the other). Vanilla ships identical data in both forms, so this only matters for mods.
+- **`LvlType.act` and `Level.act` are both 0-based**, like the DS1 act field (LvlTypes.txt stores 1-based acts).
+- **DS1 parse limits**: the header and cell layers must be complete; zero-padding past EOF is tolerated only in the object/group/NPC blocks, up to 256 bytes (the shipped short files need 12 and 4). `to_bytes` refuses any model the file's version cannot store, rather than silently dropping data.
 - Repo-local git identity `ZF <112085691+Nugwa628@users.noreply.github.com>` was set because none existed.
 
 ## Open questions
