@@ -158,6 +158,10 @@ dependencies = [
 name = "capy-edit"
 version = "0.1.0"
 dependencies = [
+ "d2-formats",
+ "proptest",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 
