@@ -10,6 +10,32 @@ use common::*;
 use d2_formats::Grid;
 use d2_formats::ds1::{Cell, Ds1, Group, NpcPath, Object, PathPoint};
 
+/// A call that would change nothing must succeed and leave no trace: same
+/// revision, same undo/redo state, same dirty flag, same document.
+macro_rules! noop {
+    ($doc:ident, $call:expr) => {{
+        let snapshot = |d: &Document| {
+            (
+                d.revision(),
+                d.can_undo(),
+                d.can_redo(),
+                d.undo_label().map(str::to_string),
+                d.redo_label().map(str::to_string),
+                d.is_dirty(),
+                d.ds1().clone(),
+            )
+        };
+        let before = snapshot(&$doc);
+        let result = $call;
+        assert!(
+            result.is_ok(),
+            "expected a no-op success: {:?}",
+            result.err()
+        );
+        assert!(before == snapshot(&$doc), "a no-op must not leave a trace");
+    }};
+}
+
 fn select_all(doc: &Document, layers: &[LayerRef]) -> Selection {
     let mut sel = Selection::new();
     let ds = doc.ds1();
@@ -61,10 +87,10 @@ fn paint_errors_change_nothing() {
         Err(EditError::NoSuchLayer(LayerRef::Tag))
     ));
     // painting what is already there records nothing
-    assert!(matches!(
-        doc.paint(LayerRef::Floor(0), &[(0, 0, CellValue::EMPTY)]),
-        Err(EditError::Empty)
-    ));
+    noop!(
+        doc,
+        doc.paint(LayerRef::Floor(0), &[(0, 0, CellValue::EMPTY)])
+    );
     assert_eq!(doc.ds1(), &before);
     assert!(!doc.can_undo());
     assert_eq!(doc.revision(), 0);
@@ -103,10 +129,7 @@ fn erase_and_flags() {
     doc.set_cell_flags(&sel, Some(true), Some(true)).unwrap();
     let c = Cell(LayerRef::Wall(0).get(doc.ds1(), 1, 1).unwrap().cell);
     assert!(c.hidden() && c.unwalkable());
-    assert!(matches!(
-        doc.set_cell_flags(&sel, Some(true), None),
-        Err(EditError::Empty)
-    ));
+    noop!(doc, doc.set_cell_flags(&sel, Some(true), None));
     doc.set_cell_flags(&sel, Some(false), None).unwrap();
     let c = Cell(LayerRef::Wall(0).get(doc.ds1(), 1, 1).unwrap().cell);
     assert!(!c.hidden() && c.unwalkable());
@@ -116,14 +139,11 @@ fn erase_and_flags() {
         LayerRef::Wall(0).get(doc.ds1(), 1, 1),
         Some(CellValue::EMPTY)
     );
-    assert!(matches!(doc.erase(&sel), Err(EditError::Empty)));
+    noop!(doc, doc.erase(&sel));
     doc.undo();
     assert_eq!(doc.ds1().walls[0].orientations.get(1, 1), Some(7));
     // an empty selection is nothing to do
-    assert!(matches!(
-        doc.erase(&Selection::new()),
-        Err(EditError::Empty)
-    ));
+    noop!(doc, doc.erase(&Selection::new()));
 }
 
 #[test]
@@ -191,10 +211,10 @@ fn apply_patch_replace_restores_a_snapshot() {
     assert_eq!(doc.ds1(), &snapshot);
     doc.undo();
     assert_eq!(doc.ds1().width, 5);
-    assert!(matches!(
-        doc.apply_patch(Patch::replace("noop", snapshot.clone(), snapshot)),
-        Err(EditError::Empty)
-    ));
+    noop!(
+        doc,
+        doc.apply_patch(Patch::replace("noop", snapshot.clone(), snapshot))
+    );
 }
 
 // ----- layers ----------------------------------------------------------------
@@ -373,15 +393,15 @@ fn move_between_wall_and_floor_zeroes_orientation() {
         doc.move_to_layer(&sel, LayerRef::Wall(0), LayerRef::Tag, MoveMode::Overwrite),
         Err(EditError::LayerLimit(_))
     ));
-    assert!(matches!(
+    noop!(
+        doc,
         doc.move_to_layer(
             &Selection::new(),
             LayerRef::Wall(0),
             LayerRef::Wall(1),
             MoveMode::Overwrite
-        ),
-        Err(EditError::Empty)
-    ));
+        )
+    );
     assert_eq!(doc.ds1().walls.len(), 1, "nothing to move adds no layer");
 }
 
@@ -403,10 +423,7 @@ fn add_and_remove_layers() {
     doc.undo();
     assert_eq!(doc.ds1(), &original);
 
-    assert!(matches!(
-        doc.add_layer(LayerRef::Wall(1)),
-        Err(EditError::Empty)
-    ));
+    noop!(doc, doc.add_layer(LayerRef::Wall(1)));
     doc.add_layer(LayerRef::Wall(3)).unwrap();
     assert!(matches!(
         doc.add_layer(LayerRef::Wall(4)),
@@ -443,10 +460,7 @@ fn add_and_remove_layers() {
         old.add_layer(LayerRef::Floor(1)),
         Err(EditError::NeedsVersion { required: 16, .. })
     ));
-    assert!(matches!(
-        old.add_layer(LayerRef::Tag),
-        Err(EditError::Empty)
-    ));
+    noop!(old, old.add_layer(LayerRef::Tag));
 }
 
 #[test]
@@ -530,7 +544,7 @@ fn resize_keeps_top_left_and_undo_restores() {
     assert_roundtrips(doc.ds1());
     doc.undo();
     assert_eq!(doc.ds1(), &original);
-    assert!(matches!(doc.resize(4, 4), Err(EditError::Empty)));
+    noop!(doc, doc.resize(4, 4));
     assert!(matches!(doc.resize(0, 4), Err(EditError::LayerLimit(_))));
     assert!(matches!(
         doc.resize(u32::MAX, u32::MAX),
@@ -559,7 +573,7 @@ fn upgrade_version_rules() {
         })
     ));
     assert!(matches!(doc.upgrade_version(2), Err(EditError::Format(_))));
-    assert!(matches!(doc.upgrade_version(3), Err(EditError::Empty)));
+    noop!(doc, doc.upgrade_version(3));
     doc.upgrade_version(18).unwrap();
     let d = doc.ds1();
     assert_eq!(d.version, 18);
@@ -914,10 +928,9 @@ fn cross_document_paste_with_offset() {
     assert_eq!(p.out_of_bounds, 3);
     assert_eq!(p.writes, 0);
     assert!(p.warnings.iter().any(|w| w.contains("object")), "{p:?}");
-    assert!(matches!(
-        dst.paste(&clip, (-9, -9), PasteMode::Overwrite),
-        Err(EditError::Empty)
-    ));
+    noop!(dst, dst.paste(&clip, (-9, -9), PasteMode::Overwrite));
+    let none = dst.paste(&clip, (-9, -9), PasteMode::Overwrite).unwrap();
+    assert_eq!((none.writes, none.out_of_bounds), (0, 3));
     assert!(!dst.can_undo());
     // a preview never changes anything
     assert_eq!(dst.ds1(), &before);
@@ -1078,7 +1091,7 @@ fn cut_removes_cells_and_objects() {
     assert_roundtrips(doc.ds1());
     assert!(doc.undo());
     assert_eq!(doc.ds1(), &before);
-    assert!(matches!(doc.cut(&Selection::new()), Err(EditError::Empty)));
+    noop!(doc, doc.cut(&Selection::new()));
 }
 
 // ----- objects ---------------------------------------------------------------
@@ -1173,16 +1186,13 @@ fn object_edits_and_npc_paths() {
         doc.delete_objects(&[3]),
         Err(EditError::Format(_))
     ));
-    assert!(matches!(
-        doc.move_objects(&[0], 0, 0),
-        Err(EditError::Empty)
-    ));
-    assert!(matches!(doc.move_objects(&[], 1, 1), Err(EditError::Empty)));
+    noop!(doc, doc.move_objects(&[0], 0, 0));
+    noop!(doc, doc.move_objects(&[], 1, 1));
     assert!(matches!(
         doc.move_objects(&[0], i32::MAX, 0),
         Err(EditError::Format(_))
     ));
-    assert!(matches!(doc.delete_objects(&[]), Err(EditError::Empty)));
+    noop!(doc, doc.delete_objects(&[]));
 
     // an object with flags does not fit version 3; the whole map is v3 here
     let mut v3 = Document::new(blank_v3(2, 2));

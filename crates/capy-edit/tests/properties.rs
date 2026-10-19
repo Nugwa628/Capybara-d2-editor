@@ -318,10 +318,10 @@ fn run_edit(doc: &mut Document, kind: u64, seed: u64) -> Result<(), EditError> {
             };
             let sel = rand_selection(rng, &ds);
             match doc.move_to_layer(&sel, from, to, mode) {
-                // every selected target was occupied: reported, but nothing recorded
+                // every selected target was occupied: reported, nothing recorded
                 Ok(report) if report.moved == 0 => {
-                    assert!(report.skipped_occupied > 0 && report.layer_added.is_none());
-                    Err(EditError::Empty)
+                    assert!(report.layer_added.is_none());
+                    Ok(())
                 }
                 Ok(report) => {
                     assert_eq!(report.layer_added.is_some(), !to.exists_in(&ds));
@@ -522,8 +522,15 @@ fn run_case(init_seed: u64, ops: &[(u8, u64)]) -> Result<(), TestCaseError> {
                 prop_assert!(!doc.is_dirty());
             }
             _ => match run_edit(&mut doc, kind % EDIT_KINDS, seed) {
+                // a no-op succeeds and leaves no trace
+                Ok(()) if doc.revision() == revision => {
+                    prop_assert_eq!(doc.ds1(), &before);
+                    prop_assert_eq!(doc.can_undo(), can_u);
+                    prop_assert_eq!(doc.can_redo(), can_r);
+                    prop_assert_eq!(doc.undo_label().map(str::to_string), ul);
+                    prop_assert_eq!(doc.redo_label().map(str::to_string), rl);
+                }
                 Ok(()) => {
-                    prop_assert!(doc.revision() > revision);
                     roundtrip(doc.ds1())?;
                     if depth == 0 {
                         let after = doc.ds1().clone();
@@ -694,8 +701,10 @@ fn every_edit_kind_succeeds_sometimes() {
         let mut doc = Document::new(gen_ds1(&mut rng));
         for _ in 0..30 {
             let kind = rng.below(EDIT_KINDS);
+            let revision = doc.revision();
             match run_edit(&mut doc, kind, rng.next()) {
-                Ok(()) => ok[kind as usize] += 1,
+                Ok(()) if doc.revision() > revision => ok[kind as usize] += 1,
+                Ok(()) => {}
                 Err(EditError::NeedsVersion { .. }) => needs_version += 1,
                 Err(_) => {}
             }

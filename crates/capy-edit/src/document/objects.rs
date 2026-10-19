@@ -96,7 +96,7 @@ impl Document {
     pub fn move_objects(&mut self, indices: &[usize], dx: i32, dy: i32) -> Result<()> {
         let indices = checked_indices(&self.ds1, indices)?;
         if (dx == 0 && dy == 0) || indices.is_empty() {
-            return Err(EditError::Empty);
+            return Ok(());
         }
         let overflow = || invalid("object coordinate overflow");
         let mut edits = Vec::with_capacity(indices.len());

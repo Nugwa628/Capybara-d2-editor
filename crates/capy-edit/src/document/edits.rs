@@ -140,7 +140,7 @@ impl Document {
             return Err(EditError::NoSuchLayer(from));
         }
         if from == to {
-            return Err(EditError::Empty);
+            return Ok(MoveReport::default());
         }
         if from == LayerRef::Tag || to == LayerRef::Tag {
             return Err(EditError::LayerLimit(
@@ -197,11 +197,7 @@ impl Document {
             report.moved += 1;
         }
         if report.moved == 0 {
-            return if report.skipped_occupied > 0 {
-                Ok(report)
-            } else {
-                Err(EditError::Empty)
-            };
+            return Ok(report);
         }
 
         let mut patch = Patch::new("Move to layer");
@@ -219,7 +215,7 @@ impl Document {
 
     /// Adds `layer` and every lower-numbered layer of its kind that is missing.
     /// `NeedsVersion` when the file version cannot store it, `LayerLimit` past
-    /// 4 walls / 2 floors, `Empty` when it already exists. Adding the tag layer
+    /// 4 walls / 2 floors; a no-op when it already exists. Adding the tag layer
     /// to a map without one sets `tag_type` to 1.
     pub fn add_layer(&mut self, layer: LayerRef) -> Result<()> {
         layer_ops::check_limit(layer)?;
@@ -288,7 +284,7 @@ impl Document {
         }
         let (old_w, old_h) = (self.ds1.width, self.ds1.height);
         if (width, height) == (old_w, old_h) {
-            return Err(EditError::Empty);
+            return Ok(());
         }
         let mut cut = Vec::new();
         if width < old_w || height < old_h {
@@ -330,7 +326,7 @@ impl Document {
             )));
         }
         if version == current {
-            return Err(EditError::Empty);
+            return Ok(());
         }
         let mut patch = Patch::new("Upgrade version");
         let mut header = Header::of(&self.ds1);

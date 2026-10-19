@@ -171,7 +171,7 @@ impl Document {
     /// Pastes `clip` with its top-left cell at `at`, adding the layers it needs.
     /// Cells outside the map are dropped (counted in `out_of_bounds`).
     /// `NeedsVersion` when the clip needs layers or objects the file version
-    /// cannot store; `Empty` when nothing would change.
+    /// cannot store; when nothing would change it succeeds and records nothing.
     pub fn paste(
         &mut self,
         clip: &Clipboard,

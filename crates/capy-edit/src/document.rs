@@ -2,12 +2,12 @@
 //!
 //! Every mutating method builds one [`Patch`], applies it and pushes it
 //! (clearing redo). A method that fails changes nothing. A method that would
-//! change nothing returns [`EditError::Empty`] and records no history entry
-//! (`move_to_layer` returns its report instead when it skipped occupied cells).
+//! change nothing returns `Ok` and records no history entry (the revision and
+//! the undo depth stay as they are).
 
 use d2_formats::ds1::Ds1;
 
-use crate::error::{EditError, Result};
+use crate::error::Result;
 use crate::patch::Patch;
 
 mod clip;
@@ -192,10 +192,11 @@ impl Document {
 
     // ----- internals -------------------------------------------------------
 
-    /// Applies `patch` and records it. An empty patch is `EditError::Empty`.
+    /// Applies `patch` and records it. An empty patch is a successful no-op: nothing is
+    /// applied, recorded or counted in the revision.
     fn commit(&mut self, patch: Patch) -> Result<()> {
         if patch.is_empty() {
-            return Err(EditError::Empty);
+            return Ok(());
         }
         patch.apply(&mut self.ds1)?;
         self.record(patch);

@@ -20,6 +20,8 @@ pub enum EditError {
     NeedsVersion { current: i32, required: i32 },
     #[error("layer limit reached: {0}")]
     LayerLimit(String),
+    /// Kept for compatibility; no method returns it. An edit that would change
+    /// nothing succeeds and records no history entry.
     #[error("nothing to do")]
     Empty,
     #[error(transparent)]

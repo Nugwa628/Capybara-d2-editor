@@ -5,9 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use capy_edit::{
-    CellRect, CellValue, Document, EditError, LayerRef, MoveMode, SelectOp, Selection,
-};
+use capy_edit::{CellRect, CellValue, Document, LayerRef, MoveMode, SelectOp, Selection};
 use d2_formats::ds1::Ds1;
 
 const MAX_FILES: usize = 50;
@@ -86,10 +84,7 @@ fn edit_and_undo_restores_real_maps_byte_for_byte() {
         let h = doc.ds1().height;
         if w > 0 && h > 0 {
             doc.paint(layer, &[(w - 1, h - 1, value), (0, 0, value)])
-                .unwrap_or_else(|e| match e {
-                    EditError::Empty => {}
-                    other => panic!("{name}: {other}"),
-                });
+                .unwrap();
         }
         // move everything on the first wall to a layer that may be new, resize, upgrade
         let mut sel = Selection::new();
