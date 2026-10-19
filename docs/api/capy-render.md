@@ -23,9 +23,14 @@ oracle test and the headless CLI use `render_rgba`. Depends on `d2-formats`,
   Orientation 3 (and 4 per the specs) also draws its lower-wall companion with
   orientation 18 (19 for 4?), per `docs/specs/dt1.md`. Follow the reference
   exactly and cite it.
-- **Placement** at 1:1: a cell's anchor is `((x - y) * 80, (x + y) * 40)`.
+- **Placement** at 1:1: a cell's origin is `((x - y) * 80, (x + y) * 40)`
+  (`mx`, `my` in `preview.c`). It is the **left edge** of the cell's 160x80
+  box, on the row of the diamond's top corner; the diamond's top corner is
+  `CELL_DIAMOND_TOP_X` (80) to the right of it, at `(mx + 80, my)`, and its
+  left, right and bottom corners at `(mx, my + 40)`, `(mx + 160, my + 40)`
+  and `(mx + 80, my + 80)`. At `1:div` the offset is `CELL_DIAMOND_TOP_X / div`.
   A tile image's `offset_x`/`offset_y` from `Tile::render` is relative to that
-  anchor. Walls and roofs also apply the reference's vertical adjustments
+  origin. Walls and roofs also apply the reference's vertical adjustments
   (floor vs wall baseline, roof_height, orientation 13 shadow placement) exactly
   as `preview.c` does.
 - **Pass order** (`preview.c:2574`), each pass row-major over cells (y outer, x
@@ -50,7 +55,11 @@ oracle test and the headless CLI use `render_rgba`. Depends on `d2-formats`,
 
 ```rust
 pub mod error;    pub use error::{RenderError, Result};
-pub mod tileset;  pub use tileset::{TileSet, TileRef};
+pub mod tileset;  pub use tileset::{TileSet, TileRef, CELL_DIAMOND_TOP_X};
+
+/// x of a cell's diamond top corner relative to the cell origin
+/// `((x - y) * 80, (x + y) * 40)`, at 1:1 (= 160 / 2).
+pub const CELL_DIAMOND_TOP_X: i32 = 80;
 pub mod order;    pub use order::{DrawPass, DrawItem, Visibility, MissingTile, draw_list, map_screen_bounds};
 pub mod compose;  pub use compose::{Blend, RenderOptions, RgbaImage, render_rgba, downscale};
 pub mod compare;  pub use compare::{ImageDiff, compare_images};
@@ -116,10 +125,38 @@ pub fn compare_images(ours: &RgbaImage, oracle: &RgbaImage, tolerance: u8, max_s
 
 ## Objects (render-objects lane)
 Objects and monsters draw through `ObjectSprites` (borrowing the `Overlay` and an
-`ObjectCatalog`); terrain-only `render`/`draw_list` are unchanged.
+`ObjectCatalog`, or holding them in `Arc`s); terrain-only `render`/`draw_list` are
+unchanged.
 
 ```rust
 pub struct ObjectSprites<'a>;                     // ::new(&Overlay, &ObjectCatalog), caches COF + sprites per (key, direction, frame)
+pub type OwnedObjectSprites = ObjectSprites<'static>;
+impl ObjectSprites<'static> {
+    /// Holds the overlay and catalog through Arcs: 'static + Send + Sync, so the
+    /// cache (and the frame Arcs it hands out) can live across builds.
+    pub fn new_shared(overlay: Arc<Overlay>, catalog: Arc<ObjectCatalog>) -> OwnedObjectSprites;
+}
+impl<'a> ObjectSprites<'a> {
+    pub fn overlay(&self) -> &Overlay;
+    pub fn catalog(&self) -> &ObjectCatalog;
+    /// Same overlay and catalog (by address): whether the cache can be reused.
+    pub fn uses(&self, overlay: &Overlay, catalog: &ObjectCatalog) -> bool;
+    pub fn place(&self, ds1: &Ds1, opts: &ObjectOptions) -> (Vec<PlacedObject>, Vec<MissingObject>);
+    pub fn frame_for(&self, ds1: &Ds1, object: &Object, opts: &ObjectOptions, forced_frame: Option<u8>, direction: u8)
+        -> Result<Arc<ObjectFrame>, MissingReason>;
+    /// One frame at user `direction`: `forced_frame % count`, else the frame of
+    /// opts.animation_tick at the object's speed. Err(NoLayers) for an empty frame.
+    pub fn frame_of_info(&self, info: &ObjectInfo, opts: &ObjectOptions, forced_frame: Option<u8>, direction: u8)
+        -> Result<Arc<ObjectFrame>, MissingReason>;
+    /// Every frame of user `direction` (frame 0 first, frames_per_direction of
+    /// them; the same cached Arcs frame_of_info returns) and the animation speed
+    /// for frame_index: ObjectInfo::frame_delta (objects), else the AnimData speed
+    /// of {token}{mode}{class} (monsters), a missing or 0 speed being 256.
+    /// Empty frames stay in the list with no layers; Err is why the object has no
+    /// sprite, or NoLayers when every frame is empty.
+    pub fn frames_of_info(&self, info: &ObjectInfo, direction: u8)
+        -> Result<(Vec<Arc<ObjectFrame>>, u32), MissingReason>;
+}
 pub struct ObjectOptions { pub direction: u8, pub animation_tick: Option<u32>,
     pub frame_overrides: Option<Arc<[Option<u8>]>>, pub direction_overrides: Option<Arc<[Option<u8>]>> }
 pub struct ObjectFrame { pub layers: Vec<FrameLayer>, pub offset: (i32, i32), pub order_flag: u8,

@@ -18,6 +18,16 @@ pub(crate) const TILE_H: i32 = 80;
 /// Width of a tile cell at 1:1 (`ds1.c:1216`).
 pub(crate) const TILE_W: i32 = 160;
 
+/// How far right of a cell's origin its diamond's top corner is, at 1:1.
+///
+/// The cell `(x, y)` has its origin at `((x - y) * 80, (x + y) * 40)` in map
+/// space (`mx`, `my` in `preview.c`): the **left edge** of the cell's
+/// 160 x 80 bitmap box, on the box's top row. The floor diamond's corners are
+/// then top `(mx + 80, my)`, left `(mx, my + 40)`, right `(mx + 160, my + 40)`
+/// and bottom `(mx + 80, my + 80)`. Zoomed by `1:div`, the offset is
+/// `CELL_DIAMOND_TOP_X / div` (the reference's `tile_w / 2`, `tile_w = 160 / div`).
+pub const CELL_DIAMOND_TOP_X: i32 = TILE_W / 2;
+
 /// Index of a tile: the DT1 (position in the DT1 list) and the tile inside it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TileRef {
@@ -81,8 +91,10 @@ impl TileClass {
 /// (`dt1.c:329-420`, `misc.c:287-337`, `preview.c` draw functions).
 ///
 /// The reference makes one `width x height` bitmap per tile, draws every
-/// sub-block at `(x, y_add + y)` and clips to the bitmap. The bitmap's top row
-/// is then placed at the cell's top corner `(mx, my)`:
+/// sub-block at `(x, y_add + y)` and clips to the bitmap. The bitmap's left
+/// edge is then placed at the cell origin `mx` (the left edge of the cell's
+/// box, not the diamond's top corner, which is [`CELL_DIAMOND_TOP_X`] further
+/// right) and its top row at:
 ///
 /// * floors: `my`;
 /// * roofs: `my - roof_y`;
@@ -169,7 +181,7 @@ impl TileGeometry {
         self.width == 0 || self.height == 0
     }
 
-    /// Row of the bitmap's top edge relative to the cell's top corner, for a
+    /// Row of the bitmap's top edge relative to the cell origin's row `my`, for a
     /// zoom divisor `div` (integer maths exactly as the reference:
     /// `zero_line * mul / div` truncates toward zero).
     pub fn bitmap_top(&self, div: i32) -> i32 {
