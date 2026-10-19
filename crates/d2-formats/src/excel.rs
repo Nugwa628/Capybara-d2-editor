@@ -1,0 +1,595 @@
+//! Precompiled excel tables (`data\global\excel\*.bin`).
+//!
+//! The retail 1.13c loader reads `<table>.bin` by default: a `u32` record
+//! count followed by that many fixed-size records, laid out exactly as the
+//! game's in-memory table (see `docs/guides/excel-tables-and-data-loading.md`).
+//! [`decode_bin`] turns such a file back into a [`TxtTable`] with the column
+//! names of the matching `.txt`, so the rest of the editor reads one shape.
+//!
+//! # What was verified, and how
+//!
+//! Record sizes and field offsets were derived by aligning the vanilla `.bin`
+//! files against the `.txt` of the same table (every row, every candidate
+//! offset and width; blank numeric cells compare equal to 0, which is what the
+//! compiler writes), then checked for plausibility against Median XL's 1.13c
+//! `.bin` files, which have no `.txt`. A test in this module repeats the
+//! alignment on every run when the private corpus is present.
+//!
+//! | table | record size | notes |
+//! |---|---|---|
+//! | `lvltypes` | `0x788` | `File 1..32` (60-byte strings), `Act`, `Expansion`; `Id` is the record index; `Name` and `Beta` are not stored |
+//! | `lvlprest` | `0x1B0` | everything but `Name` and `Beta`; `Def` is stored |
+//! | `lvlwarp` | `0x30` | everything but `Name` and `Beta`; `Direction` is a one-char string |
+//! | `objects` | `0x1C0` | see [`ExcelTableKind::Objects`]; `Id` is the record index |
+//! | `levels` | `0x220` | `levels.bin`: `Id`, `Pal`, `Act`, flags, spawn data, names; the DRLG half lives in `leveldefs.bin` (`0x9C`), see [`decode_levels_bin`] |
+//! | `objpreset` | `4` | Median XL only; 750 `i32`: `table[act * 150 + id]` = `Objects.txt` id |
+//!
+//! **1.13c versus 1.14d.** Every table where both a 1.13c-era file (Median XL)
+//! and the 1.14d install's file exist has the same record size, and the
+//! vanilla 1.14d files are byte-identical in size to the 1.13c archives'
+//! (`objects.bin` is 256,708 bytes in both). The 1.14d game reads `.txt`; its
+//! `.bin` files are the unchanged 1.13c-era ones. Both [`ExcelVersion`]s
+//! therefore share one layout, and [`detect_version`] reports [`ExcelVersion::V113c`]
+//! for any file that fits it.
+
+use crate::txt::TxtTable;
+use crate::{FormatError, Result};
+
+const FORMAT: &str = "excel";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ExcelVersion {
+    V113c,
+    V114d,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ExcelTableKind {
+    LvlTypes,
+    LvlPrest,
+    LvlWarp,
+    /// Decoded columns: `Name`, `Id` (record index; the `.txt` `Id` differs in
+    /// three vanilla rows and the game ignores it), `Token` (stored as at most
+    /// two characters), `SpawnMax`, `Selectable0..7`, `TrapProb`, `SizeX/Y`,
+    /// `FrameCnt0..7`, `FrameDelta0..7`, `CycleAnim0..7`, `Lit0..7`,
+    /// `BlocksLight0..7`, `HasCollision0..7`, `IsAttackable0`, `Start0..7`,
+    /// `OrderFlag0..7`, `EnvEffect`, `IsDoor`, `BlocksVis`, `Orientation`,
+    /// `PreOperate`, `Trans`, `Mode0..7`, `Xoffset`, `Yoffset`, `Draw`, the
+    /// body-part columns `HD..S8`, `TotalPieces`, `Xspace`, `Yspace`,
+    /// `Red/Green/Blue`, `SubClass`, `NameOffset`, `MonsterOK`,
+    /// `OperateRange`, `Act`, `Lockable`, `Gore`, `Restore`,
+    /// `RestoreVirgins`, `Sync`, `Parm0..7`, `nTgtFX/FY/BX/BY`, `Damage`,
+    /// `CollisionSubst`, `Left/Top/Width/Height`, `Beta`, `InitFn`,
+    /// `PopulateFn`, `OperateFn`, `ClientFn`, `Overlay`, `BlockMissile`,
+    /// `DrawUnder`, `OpenWarp`, `AutoMap`. Not decoded: `description - not
+    /// loaded` (not stored), `Flicker` and `ShrineFunction` (no offset could
+    /// be established). Array columns whose values are zero in every record of
+    /// both corpora (`Selectable4..7`, `Start6/7`, `S5..S8`, `LG..LH`, ...)
+    /// cannot be located by value; they sit in the slots left over between
+    /// their verified siblings, in column order.
+    Objects,
+    /// Not an excel table in the vanilla archives: Median XL ships the
+    /// `[5 acts][150]` object remap table that vanilla compiles into
+    /// `D2Common.dll` as `objpreset.bin`. Decoded to columns `Act`, `Id`
+    /// (0..149 within the act) and `ObjectsId`.
+    ObjPreset,
+    /// `levels.bin` alone; see [`decode_levels_bin`] for the full table.
+    Levels,
+}
+
+impl ExcelTableKind {
+    /// The file name without extension, e.g. `"lvltypes"`.
+    pub fn file_stem(self) -> &'static str {
+        match self {
+            ExcelTableKind::LvlTypes => "lvltypes",
+            ExcelTableKind::LvlPrest => "lvlprest",
+            ExcelTableKind::LvlWarp => "lvlwarp",
+            ExcelTableKind::Objects => "objects",
+            ExcelTableKind::ObjPreset => "objpreset",
+            ExcelTableKind::Levels => "levels",
+        }
+    }
+
+    pub fn all() -> &'static [ExcelTableKind] {
+        &[
+            ExcelTableKind::LvlTypes,
+            ExcelTableKind::LvlPrest,
+            ExcelTableKind::LvlWarp,
+            ExcelTableKind::Objects,
+            ExcelTableKind::ObjPreset,
+            ExcelTableKind::Levels,
+        ]
+    }
+}
+
+// --------------------------------------------------------------------------
+// layouts
+
+#[derive(Clone, Copy, Debug)]
+enum Field {
+    /// Zero-based record index, written as the column value.
+    Index,
+    U8,
+    I8,
+    U16,
+    I32,
+    U32,
+    /// NUL-terminated Latin-1 string in a fixed field of this many bytes.
+    Str(usize),
+}
+
+impl Field {
+    fn width(self) -> usize {
+        match self {
+            Field::Index => 0,
+            Field::U8 | Field::I8 => 1,
+            Field::U16 => 2,
+            Field::I32 | Field::U32 => 4,
+            Field::Str(n) => n,
+        }
+    }
+}
+
+struct Column {
+    name: String,
+    offset: usize,
+    field: Field,
+}
+
+struct Layout {
+    record_size: usize,
+    columns: Vec<Column>,
+}
+
+impl Layout {
+    fn new(record_size: usize) -> Self {
+        Layout {
+            record_size,
+            columns: Vec::new(),
+        }
+    }
+
+    fn col(&mut self, name: &str, offset: usize, field: Field) -> &mut Self {
+        self.columns.push(Column {
+            name: name.to_string(),
+            offset,
+            field,
+        });
+        self
+    }
+
+    /// `count` columns `prefix{first}..` laid out back to back from `offset`.
+    fn array(
+        &mut self,
+        prefix: &str,
+        first: usize,
+        count: usize,
+        offset: usize,
+        field: Field,
+    ) -> &mut Self {
+        for i in 0..count {
+            let name = format!("{prefix}{}", first + i);
+            self.col(&name, offset + i * field.width(), field);
+        }
+        self
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Result<TxtTable> {
+        let rec = self.record_size;
+        let count = record_count(bytes, rec)?;
+        let headers: Vec<String> = self.columns.iter().map(|c| c.name.clone()).collect();
+        let mut rows = Vec::with_capacity(count);
+        for (index, record) in bytes.get(4..).unwrap_or(&[]).chunks_exact(rec).enumerate() {
+            let mut row = Vec::with_capacity(self.columns.len());
+            for c in &self.columns {
+                row.push(read_field(record, c, index)?);
+            }
+            rows.push(row);
+        }
+        Ok(TxtTable::from_parts(headers, rows))
+    }
+}
+
+fn invalid(what: &'static str, detail: String) -> FormatError {
+    FormatError::Invalid {
+        format: FORMAT,
+        what,
+        offset: 0,
+        detail,
+    }
+}
+
+fn le(record: &[u8], offset: usize, width: usize) -> Option<u32> {
+    let b = record.get(offset..offset.checked_add(width)?)?;
+    let mut v: u32 = 0;
+    for (i, &byte) in b.iter().enumerate() {
+        v |= u32::from(byte) << (8 * i);
+    }
+    Some(v)
+}
+
+fn read_field(record: &[u8], c: &Column, index: usize) -> Result<String> {
+    let bad = || {
+        invalid(
+            "column",
+            format!("{} at {:#x} lies outside the record", c.name, c.offset),
+        )
+    };
+    Ok(match c.field {
+        Field::Index => index.to_string(),
+        Field::U8 | Field::U16 | Field::U32 => le(record, c.offset, c.field.width())
+            .ok_or_else(bad)?
+            .to_string(),
+        Field::I8 => (le(record, c.offset, 1).ok_or_else(bad)? as u8 as i8).to_string(),
+        Field::I32 => (le(record, c.offset, 4).ok_or_else(bad)? as i32).to_string(),
+        Field::Str(n) => {
+            let b = record
+                .get(c.offset..c.offset.checked_add(n).ok_or_else(bad)?)
+                .ok_or_else(bad)?;
+            let end = b.iter().position(|&x| x == 0).unwrap_or(b.len());
+            b.get(..end)
+                .unwrap_or(&[])
+                .iter()
+                .map(|&x| char::from(x))
+                .collect()
+        }
+    })
+}
+
+/// Validates `u32 count + count * record_size == len` and returns the count.
+fn record_count(bytes: &[u8], record_size: usize) -> Result<usize> {
+    let head: [u8; 4] =
+        bytes
+            .get(..4)
+            .and_then(|h| h.try_into().ok())
+            .ok_or(FormatError::Truncated {
+                format: FORMAT,
+                offset: 0,
+                needed: 4usize.saturating_sub(bytes.len()),
+            })?;
+    let count = u64::from(u32::from_le_bytes(head));
+    let expected = count
+        .checked_mul(record_size as u64)
+        .and_then(|n| n.checked_add(4));
+    if expected != Some(bytes.len() as u64) {
+        return Err(invalid(
+            "record count",
+            format!(
+                "{count} records of {record_size} bytes do not fit a {}-byte file",
+                bytes.len()
+            ),
+        ));
+    }
+    Ok(count as usize)
+}
+
+const LVLTYPES_SIZE: usize = 0x788;
+const LVLPREST_SIZE: usize = 0x1B0;
+const LVLWARP_SIZE: usize = 0x30;
+const OBJECTS_SIZE: usize = 0x1C0;
+const OBJPRESET_SIZE: usize = 4;
+const LEVELS_SIZE: usize = 0x220;
+const LEVELDEFS_SIZE: usize = 0x9C;
+
+/// Size in bytes of one record. Identical for every [`ExcelVersion`] (see the
+/// module docs).
+pub fn record_size(kind: ExcelTableKind, _version: ExcelVersion) -> usize {
+    match kind {
+        ExcelTableKind::LvlTypes => LVLTYPES_SIZE,
+        ExcelTableKind::LvlPrest => LVLPREST_SIZE,
+        ExcelTableKind::LvlWarp => LVLWARP_SIZE,
+        ExcelTableKind::Objects => OBJECTS_SIZE,
+        ExcelTableKind::ObjPreset => OBJPRESET_SIZE,
+        ExcelTableKind::Levels => LEVELS_SIZE,
+    }
+}
+
+/// Size of one `leveldefs.bin` record (the DRLG half of `Levels`).
+pub fn leveldefs_record_size(_version: ExcelVersion) -> usize {
+    LEVELDEFS_SIZE
+}
+
+fn lvltypes_layout() -> Layout {
+    let mut l = Layout::new(LVLTYPES_SIZE);
+    l.col("Id", 0, Field::Index);
+    for i in 0..32 {
+        l.col(&format!("File {}", i + 1), i * 60, Field::Str(60));
+    }
+    l.col("Act", 0x780, Field::I32);
+    l.col("Expansion", 0x784, Field::I32);
+    l
+}
+
+fn lvlprest_layout() -> Layout {
+    let mut l = Layout::new(LVLPREST_SIZE);
+    l.col("Def", 0, Field::I32)
+        .col("LevelId", 4, Field::I32)
+        .col("Populate", 8, Field::I32)
+        .col("Logicals", 12, Field::I32)
+        .col("Outdoors", 16, Field::I32)
+        .col("Animate", 20, Field::I32)
+        .col("KillEdge", 24, Field::I32)
+        .col("FillBlanks", 28, Field::I32)
+        .col("SizeX", 40, Field::I32)
+        .col("SizeY", 44, Field::I32)
+        .col("AutoMap", 48, Field::I32)
+        .col("Scan", 52, Field::I32)
+        .col("Pops", 56, Field::I32)
+        .col("PopPad", 60, Field::I32)
+        .col("Files", 64, Field::I32);
+    for i in 0..6 {
+        l.col(&format!("File{}", i + 1), 68 + i * 60, Field::Str(60));
+    }
+    l.col("Dt1Mask", 428, Field::U32);
+    l.col("Expansion", 32, Field::I32);
+    l
+}
+
+fn lvlwarp_layout() -> Layout {
+    let mut l = Layout::new(LVLWARP_SIZE);
+    l.col("Id", 0, Field::I32)
+        .col("SelectX", 4, Field::I32)
+        .col("SelectY", 8, Field::I32)
+        .col("SelectDX", 12, Field::I32)
+        .col("SelectDY", 16, Field::I32)
+        .col("ExitWalkX", 20, Field::I32)
+        .col("ExitWalkY", 24, Field::I32)
+        .col("OffsetX", 28, Field::I32)
+        .col("OffsetY", 32, Field::I32)
+        .col("LitVersion", 36, Field::I32)
+        .col("Tiles", 40, Field::I32)
+        .col("Direction", 44, Field::Str(4));
+    l
+}
+
+fn objects_layout() -> Layout {
+    use Field::{I32, Index, U8, U16};
+    let mut l = Layout::new(OBJECTS_SIZE);
+    l.col("Name", 0, Field::Str(64))
+        .col("Id", 0, Index)
+        .col("Token", 192, Field::Str(3))
+        .col("SpawnMax", 195, U8)
+        .array("Selectable", 0, 8, 196, U8)
+        .col("TrapProb", 204, I32)
+        .col("SizeX", 208, I32)
+        .col("SizeY", 212, I32)
+        .col("nTgtFX", 408, U8)
+        .col("nTgtFY", 409, U8)
+        .col("nTgtBX", 410, U8)
+        .col("nTgtBY", 411, U8)
+        .array("FrameCnt", 0, 8, 216, I32)
+        .array("FrameDelta", 0, 8, 248, U16)
+        .array("CycleAnim", 0, 8, 264, U8)
+        .array("Lit", 0, 8, 272, U8)
+        .array("BlocksLight", 0, 8, 280, U8)
+        .array("HasCollision", 0, 8, 288, U8)
+        .col("IsAttackable0", 296, U8)
+        .array("Start", 0, 8, 297, U8)
+        .col("EnvEffect", 313, U8)
+        .col("IsDoor", 314, U8)
+        .col("BlocksVis", 315, U8)
+        .col("Orientation", 316, U8)
+        .col("Trans", 318, U8)
+        .array("OrderFlag", 0, 8, 305, U8)
+        .col("PreOperate", 317, U8)
+        .array("Mode", 0, 8, 319, U8)
+        .col("Yoffset", 332, I32)
+        .col("Xoffset", 328, I32)
+        .col("Draw", 336, U8)
+        .col("Red", 356, U8)
+        .col("Green", 357, U8)
+        .col("Blue", 358, U8);
+    for (i, part) in ["HD", "TR", "LG", "RA", "LA", "RH", "LH", "SH"]
+        .iter()
+        .enumerate()
+    {
+        l.col(part, 337 + i, U8);
+    }
+    l.array("S", 1, 8, 345, U8)
+        .col("TotalPieces", 353, U8)
+        .col("SubClass", 359, U8)
+        .col("Xspace", 354, Field::I8)
+        .col("Yspace", 355, Field::I8)
+        .col("NameOffset", 360, I32)
+        .col("MonsterOK", 365, U8)
+        .col("OperateRange", 366, U8)
+        .col("Restore", 371, U8)
+        .array("Parm", 0, 8, 376, I32)
+        .col("Act", 368, U8)
+        .col("Lockable", 369, U8)
+        .col("Gore", 370, U8)
+        .col("Sync", 373, U8)
+        .col("Damage", 412, U8)
+        .col("Beta", 432, U8)
+        .col("Overlay", 437, U8)
+        .col("CollisionSubst", 413, U8)
+        .col("Left", 416, I32)
+        .col("Top", 420, I32)
+        .col("Width", 424, I32)
+        .col("Height", 428, I32)
+        .col("OperateFn", 435, U8)
+        .col("PopulateFn", 434, U8)
+        .col("InitFn", 433, U8)
+        .col("ClientFn", 436, U8)
+        .col("RestoreVirgins", 372, U8)
+        .col("BlockMissile", 438, U8)
+        .col("DrawUnder", 439, U8)
+        .col("OpenWarp", 440, I32)
+        .col("AutoMap", 444, I32);
+    l
+}
+
+fn levels_layout() -> Layout {
+    use Field::{I32, U8, U16, U32};
+    let mut l = Layout::new(LEVELS_SIZE);
+    l.col("Id", 0, U16)
+        .col("Pal", 2, U8)
+        .col("Act", 3, U8)
+        .col("Teleport", 4, U8)
+        .col("Rain", 5, U8)
+        .col("Mud", 6, U8)
+        .col("NoPer", 7, U8)
+        .col("IsInside", 8, U8)
+        .col("DrawEdges", 9, U8)
+        .col("WarpDist", 12, U32)
+        .col("MonLvl1", 16, U16)
+        .col("MonLvl2", 18, U16)
+        .col("MonLvl3", 20, U16)
+        .col("MonLvl1Ex", 22, U16)
+        .col("MonLvl2Ex", 24, U16)
+        .col("MonLvl3Ex", 26, U16)
+        .col("MonDen", 28, U32)
+        .col("MonDen(N)", 32, U32)
+        .col("MonDen(H)", 36, U32)
+        .col("MonUMin", 40, U8)
+        .col("MonUMin(N)", 41, U8)
+        .col("MonUMin(H)", 42, U8)
+        .col("MonUMax", 43, U8)
+        .col("MonUMax(N)", 44, U8)
+        .col("MonUMax(H)", 45, U8)
+        .col("MonWndr", 46, U8)
+        .col("MonSpcWalk", 47, U8)
+        .col("Quest", 48, U8)
+        .col("rangedspawn", 49, U8)
+        .col("NumMon", 50, U8)
+        .col("Waypoint", 228, U8)
+        .array("ObjGrp", 0, 8, 229, U8)
+        .array("ObjPrb", 0, 8, 237, U8)
+        .col("LevelName", 245, Field::Str(40))
+        .col("LevelWarp", 285, Field::Str(40))
+        .col("EntryFile", 325, Field::Str(40))
+        .col("Themes", 528, I32)
+        .col("FloorFilter", 532, I32)
+        .col("BlankScreen", 536, I32)
+        .col("SoundEnv", 540, I32);
+    l
+}
+
+fn leveldefs_layout() -> Layout {
+    use Field::{I32, U8};
+    let mut l = Layout::new(LEVELDEFS_SIZE);
+    l.col("QuestFlag", 0, I32)
+        .col("QuestFlagEx", 4, I32)
+        .col("Layer", 8, I32)
+        .col("SizeX", 12, I32)
+        .col("SizeX(N)", 16, I32)
+        .col("SizeX(H)", 20, I32)
+        .col("SizeY", 24, I32)
+        .col("SizeY(N)", 28, I32)
+        .col("SizeY(H)", 32, I32)
+        .col("OffsetX", 36, I32)
+        .col("OffsetY", 40, I32)
+        .col("Depend", 44, I32)
+        .col("LOSDraw", 152, I32)
+        .col("DrlgType", 48, I32)
+        .col("LevelType", 52, I32)
+        .col("SubType", 56, I32)
+        .col("SubTheme", 60, I32)
+        .col("SubWaypoint", 64, I32)
+        .col("SubShrine", 68, I32)
+        .array("Vis", 0, 8, 72, I32)
+        .array("Warp", 0, 8, 104, I32)
+        .col("Intensity", 136, U8)
+        .col("Red", 137, U8)
+        .col("Green", 138, U8)
+        .col("Blue", 139, U8)
+        .col("Portal", 140, I32)
+        .col("Position", 144, I32)
+        .col("SaveMonsters", 148, I32);
+    l
+}
+
+fn layout(kind: ExcelTableKind) -> Layout {
+    match kind {
+        ExcelTableKind::LvlTypes => lvltypes_layout(),
+        ExcelTableKind::LvlPrest => lvlprest_layout(),
+        ExcelTableKind::LvlWarp => lvlwarp_layout(),
+        ExcelTableKind::Objects => objects_layout(),
+        ExcelTableKind::ObjPreset => Layout::new(OBJPRESET_SIZE),
+        ExcelTableKind::Levels => levels_layout(),
+    }
+}
+
+/// Decodes a `.bin` into a table using the `.txt` column names; columns the
+/// record does not store are omitted (see the module docs per table).
+///
+/// `Levels` decodes `levels.bin` only; the game keeps `DrlgType`, `LevelType`
+/// and the other DRLG columns in `leveldefs.bin`, which
+/// [`decode_levels_bin`] merges in.
+///
+/// Fails with `Invalid` unless the length is exactly `4 + count * record_size`.
+pub fn decode_bin(kind: ExcelTableKind, _version: ExcelVersion, bytes: &[u8]) -> Result<TxtTable> {
+    if kind == ExcelTableKind::ObjPreset {
+        return decode_objpreset(bytes);
+    }
+    layout(kind).decode(bytes)
+}
+
+fn decode_objpreset(bytes: &[u8]) -> Result<TxtTable> {
+    let count = record_count(bytes, OBJPRESET_SIZE)?;
+    let headers = vec!["Act".to_string(), "Id".to_string(), "ObjectsId".to_string()];
+    let mut rows = Vec::with_capacity(count);
+    let (chunks, _) = bytes.get(4..).unwrap_or(&[]).as_chunks::<4>();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let value = i32::from_le_bytes(*chunk);
+        rows.push(vec![
+            (i / 150).to_string(),
+            (i % 150).to_string(),
+            value.to_string(),
+        ]);
+    }
+    Ok(TxtTable::from_parts(headers, rows))
+}
+
+/// Decodes `levels.bin` and `leveldefs.bin` together into one table with the
+/// columns of `Levels.txt` that the two records store: everything
+/// [`ExcelTableKind::Levels`] yields plus `QuestFlag`, `Layer`, the sizes,
+/// `Depend`, `DrlgType`, `LevelType`, `Sub*`, `Vis0..7`, `Warp0..7`, light
+/// colour, `Portal`, `Position`, `SaveMonsters` and `LOSDraw`. Both files must
+/// hold the same number of records.
+pub fn decode_levels_bin(
+    version: ExcelVersion,
+    levels: &[u8],
+    leveldefs: &[u8],
+) -> Result<TxtTable> {
+    let main = decode_bin(ExcelTableKind::Levels, version, levels)?;
+    let defs = leveldefs_layout().decode(leveldefs)?;
+    if main.len() != defs.len() {
+        return Err(invalid(
+            "record count",
+            format!(
+                "levels.bin has {} records but leveldefs.bin has {}",
+                main.len(),
+                defs.len()
+            ),
+        ));
+    }
+    let mut headers: Vec<String> = main.headers().to_vec();
+    headers.extend(defs.headers().iter().cloned());
+    let rows = main
+        .rows()
+        .zip(defs.rows())
+        .map(|(a, b)| {
+            let mut row = a.cells().to_vec();
+            row.extend(b.cells().iter().cloned());
+            row
+        })
+        .collect();
+    Ok(TxtTable::from_parts(headers, rows))
+}
+
+/// The version whose record size fits the file.
+///
+/// The two versions share one layout, so a file that fits is reported as
+/// [`ExcelVersion::V113c`]; `None` when the length does not fit the record
+/// size at all.
+pub fn detect_version(kind: ExcelTableKind, bytes: &[u8]) -> Option<ExcelVersion> {
+    let fits = |v: ExcelVersion| record_count(bytes, record_size(kind, v)).is_ok();
+    [ExcelVersion::V113c, ExcelVersion::V114d]
+        .into_iter()
+        .find(|&v| fits(v))
+}
+
+#[cfg(test)]
+#[allow(clippy::panic, clippy::unwrap_used)]
+mod tests;
