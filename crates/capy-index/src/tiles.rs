@@ -427,7 +427,8 @@ fn luma(r: u8, g: u8, b: u8) -> f32 {
 /// the pixel itself, so the silhouette of a diamond tile is not an "edge".
 pub(crate) fn analyze(rgba: &[u8], w: u32, h: u32) -> Option<PixelStats> {
     let (w, h) = (w as usize, h as usize);
-    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+    let expected = w.checked_mul(h)?.checked_mul(4)?;
+    if w == 0 || h == 0 || rgba.len() < expected {
         return None;
     }
     // Luma plane with a one-pixel NaN border; transparent pixels are NaN too.
@@ -956,5 +957,102 @@ mod tests {
                 ("b.dt1#0/1/0/0".into(), "m2.ds1".into(), 2),
             ]
         );
+    }
+
+    #[test]
+    fn huge_dimensions_with_small_buffers_are_rejected() {
+        let buf = vec![255u8; 64];
+        for (w, h) in [
+            (u32::MAX, u32::MAX),
+            (u32::MAX, 1),
+            (1, u32::MAX),
+            (1 << 16, 1 << 16),
+            (0, u32::MAX),
+            (u32::MAX, 0),
+        ] {
+            assert!(analyze(&buf, w, h).is_none(), "{w}x{h}");
+            assert!(phash_pair(&buf, w, h, [0, 0, 0]).is_none(), "{w}x{h}");
+            assert!(thumbnail_png(&buf, w, h).is_none(), "{w}x{h}");
+            let origin = TileOrigin {
+                dt1_path: "a.dt1",
+                place: "P",
+                orientation: 0,
+                main: 0,
+                sub: 0,
+                variant: u32::MAX,
+                rarity: i32::MIN,
+            };
+            let r = record_from_rgba(&origin, &buf, w, h);
+            assert_eq!((r.phash, r.thumb), (None, None));
+        }
+    }
+
+    proptest::proptest! {
+        /// Tile images arrive with file-derived sizes; the buffer may be
+        /// shorter or longer than `w * h * 4`.
+        #[test]
+        fn pixel_pipeline_never_panics(
+            w in proptest::prop_oneof![0u32..80, proptest::num::u32::ANY],
+            h in proptest::prop_oneof![0u32..80, proptest::num::u32::ANY],
+            extra in -64i64..64,
+            seed in proptest::num::u32::ANY,
+            fill in proptest::array::uniform3(proptest::num::u8::ANY),
+        ) {
+            // A buffer near `w * h * 4` when that is small, else a tiny one.
+            let exact = u64::from(w).checked_mul(u64::from(h)).and_then(|n| n.checked_mul(4));
+            let len = if let Some(exact) = exact.filter(|&n| n <= 80 * 80 * 4) {
+                usize::try_from((exact as i64 + extra).max(0)).unwrap_or(0)
+            } else {
+                usize::try_from(extra.unsigned_abs()).unwrap_or(0)
+            };
+            let mut s = seed;
+            let buf: Vec<u8> = (0..len)
+                .map(|_| {
+                    s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    (s >> 24) as u8
+                })
+                .collect();
+            let stats = analyze(&buf, w, h);
+            if let Some(st) = stats {
+                proptest::prop_assert!((0.0..=1.0).contains(&st.transparency));
+            }
+            let _ = phash_pair(&buf, w, h, fill);
+            let _ = thumbnail_png(&buf, w, h);
+            let origin = TileOrigin {
+                dt1_path: "x.dt1",
+                place: "P",
+                orientation: (seed % 256) as u8,
+                main: 1,
+                sub: 2,
+                variant: seed,
+                rarity: 0,
+            };
+            let r = record_from_rgba(&origin, &buf, w, h);
+            proptest::prop_assert_eq!((r.width, r.height), (w, h));
+        }
+
+        #[test]
+        fn shrink_handles_any_small_image(w in 0u32..200, h in 0u32..200, v in proptest::num::u8::ANY) {
+            let img = GrayImage::from_pixel(w, h, image::Luma([v]));
+            let small = shrink(&img);
+            proptest::prop_assert!(small.width() <= HASH_SIDE && small.height() <= HASH_SIDE);
+        }
+
+        #[test]
+        fn union_box_is_total(
+            boxes in proptest::collection::vec(
+                (proptest::num::i32::ANY, proptest::num::i32::ANY, proptest::num::u32::ANY, proptest::num::u32::ANY),
+                0..8,
+            )
+        ) {
+            let _ = union_box(boxes.iter().map(|&(x, y, w, h)| {
+                (
+                    i64::from(x),
+                    i64::from(y) - i64::from(h) + 1,
+                    i64::from(x) + i64::from(w),
+                    i64::from(y) + 1,
+                )
+            }));
+        }
     }
 }

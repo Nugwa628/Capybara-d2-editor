@@ -213,7 +213,9 @@ impl LevelTables {
 
     fn lowest_lvl_type(&self, path: &GamePath) -> Option<&LvlType> {
         let (id, _) = self.dt1_links.get(path)?.first()?;
-        self.lvl_type_by_id.get(id).map(|&i| &self.lvl_types[i])
+        self.lvl_type_by_id
+            .get(id)
+            .and_then(|&i| self.lvl_types.get(i))
     }
 
     /// Place name and act of a DT1 from the lowest-id LvlType that loads it.
@@ -274,7 +276,10 @@ struct Processed {
 
 fn ds1_keys(ds1: &Ds1) -> Vec<((u8, u8, u8), u32)> {
     let mut counts: HashMap<(u8, u8, u8), u32> = HashMap::new();
-    let mut add = |key: (u8, u8, u8)| *counts.entry(key).or_insert(0) += 1;
+    let mut add = |key: (u8, u8, u8)| {
+        let n = counts.entry(key).or_insert(0);
+        *n = n.saturating_add(1);
+    };
     for floor in &ds1.floors {
         for cell in floor.as_slice() {
             if !cell.is_empty() {
@@ -557,7 +562,9 @@ fn list_entries(overlay: &Overlay, known: &KnownNames) -> Vec<Entry> {
         let Some(layer) = overlay.resolve(path) else {
             continue;
         };
-        let source = layers[layer.0].name().to_owned();
+        let Some(source) = layers.get(layer.0).map(|l| l.name().to_owned()) else {
+            continue;
+        };
         entries.push(Entry {
             path: path.clone(),
             ext,
@@ -961,15 +968,15 @@ impl Index {
         let entries: Vec<(GamePath, Option<Entry>)> = paths
             .into_iter()
             .map(|path| {
-                let entry = overlay.resolve(&path).map(|layer| {
-                    let source = layers[layer.0].name().to_owned();
-                    Entry {
+                let entry = overlay.resolve(&path).and_then(|layer| {
+                    let source = layers.get(layer.0)?.name().to_owned();
+                    Some(Entry {
                         path: path.clone(),
                         ext: "ds1",
                         layer,
                         src_tag: src_tag(&source),
                         source,
-                    }
+                    })
                 });
                 (path, entry)
             })
