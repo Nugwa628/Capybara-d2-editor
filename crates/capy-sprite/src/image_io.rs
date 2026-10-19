@@ -15,8 +15,8 @@ use crate::model::RgbaFrame;
 
 /// Largest image side or pixel count accepted from a file.
 const MAX_SIDE: usize = 1 << 14;
-/// Matches the largest sheet `export_sheet` writes (`MAX_SHEET_PIXELS`), so
-/// every exported sheet can be imported again.
+/// `MAX_SIDE` squared: the pixel cap is no tighter than the side cap, so no
+/// image accepted before is refused (it also equals `export_sheet`'s cap).
 const MAX_PIXELS: usize = 1 << 28;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
