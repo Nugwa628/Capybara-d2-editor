@@ -122,6 +122,10 @@ pub struct ObjectInfo {
     /// Per-component skin/armor token for DCC file names, e.g. `("TR", "LIT")`,
     /// from DS1Edit's obj.txt. Empty, or a component missing here, means `LIT`.
     pub skins: Vec<(String, String)>,
+    /// Default facing from DS1Edit's obj.txt `Direction` column (e.g. rogues
+    /// 7, chickens 6), which the reference uses as the user direction. None
+    /// when no obj.txt row applies; renderers then use direction 0.
+    pub direction: Option<u8>,
     /// SizeX/SizeY.
     pub size: (i32, i32),
     /// Xoffset/Yoffset.
@@ -155,6 +159,7 @@ impl ObjectInfo {
             order_flag: 0,
             parts: Vec::new(),
             skins: Vec::new(),
+            direction: None,
             size: (0, 0),
             offset: (0, 0),
             draw_effect: None,
@@ -271,6 +276,7 @@ struct EditVisual {
     class: String,
     parts: Vec<String>,
     skins: Vec<(String, String)>,
+    direction: Option<u8>,
 }
 
 #[derive(Debug, Default)]
@@ -577,6 +583,7 @@ fn parse_edit_table(bytes: &[u8]) -> EditTable {
                                 .then(|| ((*code).to_owned(), skin.to_ascii_uppercase()))
                         })
                         .collect(),
+                    direction: trimmed(row, "Direction").parse::<u8>().ok(),
                 })
             }
             _ => None,
@@ -1031,6 +1038,7 @@ impl ObjectCatalog {
                 info.parts = visual.parts.clone();
             }
             info.skins.clone_from(&visual.skins);
+            info.direction = visual.direction;
         }
 
         if let Some(row) = table_row {
@@ -1208,4 +1216,5 @@ fn apply_visual(info: &mut ObjectInfo, visual: &EditVisual) {
     info.weapon_class.clone_from(&visual.class);
     info.parts.clone_from(&visual.parts);
     info.skins.clone_from(&visual.skins);
+    info.direction = visual.direction;
 }

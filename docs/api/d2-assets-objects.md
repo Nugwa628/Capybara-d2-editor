@@ -29,6 +29,7 @@ pub struct ObjectInfo {
     pub order_flag: u8,               // Objects.txt OrderFlag of that mode (0/1/2); monsters 0
     pub parts: Vec<String>,           // enabled components (HD TR LG RA LA RH LH SH S1..S8)
     pub skins: Vec<(String, String)>, // per-component skin token from obj.txt, e.g. ("TR","LIT"); missing = "LIT"
+    pub direction: Option<u8>,        // default facing from obj.txt `Direction` (renderer default when no override)
     pub size: (i32, i32),             // SizeX/SizeY
     pub offset: (i32, i32),           // Xoffset/Yoffset
     pub draw_effect: Option<u8>,      // object-level transparency/blend if the table has one

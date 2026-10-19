@@ -273,7 +273,8 @@ impl PlacedObject {
 /// Options of [`ObjectSprites::place`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ObjectOptions {
-    /// User direction (0 = the editor's default); mapped to the file
+    /// Fallback user direction for objects with no obj.txt default
+    /// (`ObjectInfo::direction`) and no override; mapped to the file
     /// direction per COF.
     pub direction: u8,
     /// Animation tick, see [`frame_index`]. `None` = frame 0.
@@ -438,10 +439,18 @@ impl<'a> ObjectSprites<'a> {
                 .frame_overrides
                 .as_ref()
                 .and_then(|f| f.get(index).copied().flatten());
+            // Explicit override, else the object's own default facing from
+            // obj.txt (`ObjectInfo::direction`, as the reference does), else
+            // the caller's default.
             let direction = opts
                 .direction_overrides
                 .as_ref()
                 .and_then(|d| d.get(index).copied().flatten())
+                .or_else(|| {
+                    self.catalog
+                        .resolve(ds1.effective_act(), ds1.version, o)
+                        .direction
+                })
                 .unwrap_or(opts.direction);
             match self.frame_for(ds1, o, opts, forced, direction) {
                 Ok(frame) => placed.push(PlacedObject {
