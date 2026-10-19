@@ -13,8 +13,10 @@ use crate::browser::BrowserState;
 use crate::config::Config;
 use crate::doc::{MapDoc, RenderState, SourceCategory, SourceInfo, categorize_source};
 use crate::edit::state::EditState;
+use crate::history::HistoryState;
 use crate::index_task::{self, IndexState, IndexTask};
 use crate::paths::Paths;
+use crate::settings::SettingsUi;
 use crate::sprites::SpritesState;
 use crate::tasks::{self, CatalogData, SessionData, TaskEvent};
 
@@ -153,6 +155,10 @@ pub struct AppState {
     pub sprites: SpritesState,
     /// The asset browser, the Ctrl+K palette and the user's lists.
     pub browser: BrowserState,
+    /// Autosave, the History panel and milestones.
+    pub history: HistoryState,
+    /// The Settings window and "Add game install...".
+    pub settings: SettingsUi,
 }
 
 const MAX_LOG: usize = 2000;
@@ -160,6 +166,8 @@ const MAX_LOG: usize = 2000;
 impl AppState {
     pub fn new(paths: Paths, config: Config, profiles: Vec<Profile>) -> AppState {
         let (tx, rx) = channel();
+        let mut edit = EditState::default();
+        edit.scope = config.select_scope;
         AppState {
             paths,
             config,
@@ -188,9 +196,11 @@ impl AppState {
             scroll_accum: 0.0,
             request_fit: false,
             quit_requested: false,
-            edit: EditState::default(),
+            edit,
             sprites: SpritesState::default(),
             browser: BrowserState::default(),
+            history: HistoryState::default(),
+            settings: SettingsUi::default(),
         }
     }
 
@@ -271,6 +281,8 @@ impl AppState {
     /// Drain finished background work. Call once per frame.
     pub fn poll_tasks(&mut self) {
         self.poll_sprites();
+        self.poll_history();
+        self.poll_settings();
         let events: Vec<TaskEvent> = match self.rx.lock() {
             Ok(rx) => rx.try_iter().collect(),
             Err(_) => return,
@@ -357,6 +369,8 @@ impl AppState {
             self.tx.clone(),
         );
         self.start_index(&profile, overlay.clone());
+        self.start_auto_prune(&profile.id);
+        self.history.invalidate();
         self.session = Some(Session {
             generation,
             profile,

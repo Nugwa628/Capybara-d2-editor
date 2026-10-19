@@ -105,6 +105,12 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                     None => ui.label("Cell \u{2014}"),
                 };
             }
+            if let Some(at) = &state.history.last_autosave {
+                ui.separator();
+                ui.weak(format!("autosaved {at}")).on_hover_text(
+                    "The last autosave of maps with unsaved changes (History panel)",
+                );
+            }
         });
     });
     if cancel {

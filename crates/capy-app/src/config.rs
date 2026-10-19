@@ -3,12 +3,17 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use d2_assets::Profile;
 use serde::{Deserialize, Serialize};
 
-use crate::paths::Paths;
+use crate::edit::tools::SelectScope;
 
 pub const DEFAULT_GAMMA: f32 = 1.30;
+/// The gamma range the Settings dialog offers.
+pub const GAMMA_RANGE: std::ops::RangeInclusive<f32> = 0.5..=3.0;
+/// Default retention: newest Save/Autosave/BeforeRestore snapshots kept per map.
+pub const DEFAULT_KEEP_LAST: usize = 100;
+/// Longest autosave interval the Settings dialog offers (minutes).
+pub const MAX_AUTOSAVE_MINUTES: u32 = 240;
 pub const MAX_RECENT_MAPS: usize = 20;
 /// Default install locations probed on first run.
 pub const VANILLA_INSTALL: &str = r"C:\Program Files (x86)\Diablo II";
@@ -89,7 +94,16 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_profile: Option<String>,
     pub gamma: f32,
+    /// Minutes between autosaves of dirty maps; 0 turns autosave off.
     pub autosave_minutes: u32,
+    /// History retention: newest Save/Autosave/BeforeRestore snapshots kept
+    /// per map (checkpoints are never pruned).
+    pub keep_last: usize,
+    /// History retention: also drop those older than this many days; 0 = no
+    /// age limit.
+    pub max_age_days: u32,
+    /// The layers a selection tool looks at when the editor starts.
+    pub select_scope: SelectScope,
     /// Thumbnail edge of the Tiles browser in points (Ctrl+wheel).
     pub browser_thumb: f32,
     pub mode: AppMode,
@@ -105,6 +119,9 @@ impl Default for Config {
             last_profile: None,
             gamma: DEFAULT_GAMMA,
             autosave_minutes: 5,
+            keep_last: DEFAULT_KEEP_LAST,
+            max_age_days: 0,
+            select_scope: SelectScope::default(),
             browser_thumb: 64.0,
             mode: AppMode::default(),
             window: WindowConfig::default(),
@@ -148,6 +165,18 @@ impl Config {
             self.window.height = WindowConfig::default().height;
         }
         self.recent_maps.truncate(MAX_RECENT_MAPS);
+        self.autosave_minutes = self.autosave_minutes.min(MAX_AUTOSAVE_MINUTES);
+        if self.keep_last == 0 {
+            self.keep_last = 1; // keep_last = 0 would drop every save snapshot
+        }
+    }
+
+    /// The retention policy for `SnapshotStore::prune`.
+    pub fn retention(&self) -> capy_history::Retention {
+        capy_history::Retention {
+            keep_last: self.keep_last.max(1),
+            max_age_days: (self.max_age_days > 0).then_some(self.max_age_days),
+        }
     }
 
     /// Remember an LvlType/Def override for `ds1` in `profile`, replacing any
@@ -196,32 +225,11 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// First run: write `vanilla.toml` / `mxl.toml` for installs that exist at the
-/// default paths. Existing files are never overwritten. Returns the files
-/// written.
-pub fn seed_profiles(paths: &Paths, vanilla: &Path, mxl: &Path) -> Result<Vec<PathBuf>> {
-    let mut written = Vec::new();
-    let candidates = [
-        (vanilla, "vanilla", Profile::vanilla(vanilla)),
-        (mxl, "mxl", Profile::median_xl(mxl)),
-    ];
-    for (install, id, profile) in candidates {
-        if !install.is_dir() {
-            continue;
-        }
-        let file = paths.profiles.join(format!("{id}.toml"));
-        if file.exists() {
-            continue;
-        }
-        write_atomic(&file, profile.to_toml().as_bytes())?;
-        written.push(file);
-    }
-    Ok(written)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::Paths;
+    use d2_assets::Profile;
 
     #[test]
     fn defaults() {
@@ -317,7 +325,10 @@ mod tests {
         let vanilla = tmp.path().join("d2");
         std::fs::create_dir(&vanilla).expect("mkdir");
         let missing = tmp.path().join("no-mxl");
-        let written = seed_profiles(&paths, &vanilla, &missing).expect("seed");
+        let seed = |v: &Path, m: &Path| {
+            crate::installs::seed_profiles(&paths.profiles, &[v.to_path_buf()], &[m.to_path_buf()])
+        };
+        let written = seed(&vanilla, &missing).expect("seed");
         assert_eq!(written.len(), 1);
         assert!(paths.profiles.join("vanilla.toml").is_file());
         assert!(!paths.profiles.join("mxl.toml").exists());
@@ -325,10 +336,6 @@ mod tests {
         let profiles = Profile::load_dir(&paths.profiles).expect("load_dir");
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].id, "vanilla");
-        assert!(
-            seed_profiles(&paths, &vanilla, &missing)
-                .expect("again")
-                .is_empty()
-        );
+        assert!(seed(&vanilla, &missing).expect("again").is_empty());
     }
 }

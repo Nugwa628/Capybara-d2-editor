@@ -250,7 +250,7 @@ fn tools(ui: &mut Ui, state: &mut AppState) {
             }
             PaintTool::Replace => {
                 ui.checkbox(&mut e.replace_everywhere, "In every frame");
-                ui.weak("Click a colour: it becomes the primary (right: secondary).");
+                ui.weak("Click a colour to replace it with the primary (right-click: secondary)");
             }
             PaintTool::Picker => {
                 ui.weak("Left: primary colour, right: secondary.");
@@ -274,7 +274,7 @@ fn tools(ui: &mut Ui, state: &mut AppState) {
                 ui.weak("Drag from start to end. Ramp uses the primary colour's ramp.");
             }
             t if t.is_selection() || t == PaintTool::Move => {
-                ui.weak("Shift adds, Ctrl subtracts, both intersect.");
+                ui.weak("Shift adds, Ctrl subtracts, Shift+Ctrl intersects");
             }
             PaintTool::Offset => {
                 ui.weak("Drag to move the frame against the anchor.");

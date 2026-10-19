@@ -65,6 +65,26 @@
 //! tile-menu <key>                       # open the tile's context menu
 //! tiles-tab                             # bring the Tiles panel to the front
 //! ```
+//!
+//! History (the timeline index counts from 0 = newest, as the panel lists it;
+//! a name matches a checkpoint name or a label):
+//!
+//! ```text
+//! autosave-now                          # record dirty maps now; waits for the worker
+//! checkpoint before wall                # the rest of the line is the name
+//! assert-history 2 [autosave|save|checkpoint|before-restore]
+//! history-select before wall            # or: history-select 0
+//! assert-diff floor0 12                 # changed cells on a layer vs the selection
+//! show-snapshot on                      # draw the selected snapshot (read-only)
+//! restore before wall                   # BeforeRestore, then one undoable replace
+//! milestone first version               # gix commit of capybara\saves\
+//! assert-milestones 1
+//! prune 1                               # keep_last for this prune
+//! assert-changed 0                      # entries in the profile's CHANGED.txt
+//! setting gamma 1.6                     # gamma, autosave_minutes, keep_last,
+//!                                       # max_age_days, select_scope, layer.<kind>
+//! history-tab | settings open|close | add-install [folder] | close-dialogs
+//! ```
 
 use std::path::PathBuf;
 
@@ -190,7 +210,37 @@ pub enum Cmd {
     ThumbSize(f32),
     TileMenu(String),
     TilesTab,
+    AutosaveNow,
+    Checkpoint(String),
+    AssertHistory {
+        n: usize,
+        kind: Option<String>,
+    },
+    HistorySelect(String),
+    AssertDiff {
+        layer: LayerRef,
+        count: usize,
+    },
+    ShowSnapshot(bool),
+    Restore(String),
+    Milestone(String),
+    AssertMilestones(usize),
+    Prune(usize),
+    AssertChanged(usize),
+    Setting {
+        key: String,
+        value: String,
+    },
+    HistoryTab,
+    /// Open (true) or close the Settings window.
+    Settings(bool),
+    /// Open "Add game install..." (optionally for a folder); writes nothing.
+    AddInstall(Option<String>),
+    CloseDialogs,
 }
+
+/// The kinds `assert-history` accepts.
+pub const HISTORY_KINDS: [&str; 4] = ["save", "autosave", "checkpoint", "before-restore"];
 
 /// Colours of `paint-gradient`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -698,6 +748,112 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
             need(0, "no arguments")?;
             Cmd::TilesTab
         }
+        "autosave-now" => {
+            need(0, "no arguments")?;
+            Cmd::AutosaveNow
+        }
+        "checkpoint" => {
+            if rest.is_empty() {
+                return Err("checkpoint: expected <name>".to_owned());
+            }
+            Cmd::Checkpoint(rest.to_owned())
+        }
+        "assert-history" => {
+            if !(1..=2).contains(&args.len()) {
+                return Err(format!(
+                    "assert-history: expected <n> [{}]",
+                    HISTORY_KINDS.join("|")
+                ));
+            }
+            let kind = match args.get(1) {
+                Some(k) => {
+                    let k = k.to_ascii_lowercase();
+                    if !HISTORY_KINDS.contains(&k.as_str()) {
+                        return Err(format!(
+                            "assert-history: kind {k:?} must be one of {}",
+                            HISTORY_KINDS.join(", ")
+                        ));
+                    }
+                    Some(k)
+                }
+                None => None,
+            };
+            Cmd::AssertHistory {
+                n: parse_usize(args[0], "n")?,
+                kind,
+            }
+        }
+        "history-select" => {
+            if rest.is_empty() {
+                return Err("history-select: expected <index|name>".to_owned());
+            }
+            Cmd::HistorySelect(rest.to_owned())
+        }
+        "assert-diff" => {
+            need(2, "<layer> <count>")?;
+            Cmd::AssertDiff {
+                layer: parse_layer(args[0])?,
+                count: parse_usize(args[1], "count")?,
+            }
+        }
+        "show-snapshot" => {
+            need(1, "on|off")?;
+            Cmd::ShowSnapshot(parse_on(args[0])?)
+        }
+        "restore" => {
+            if rest.is_empty() {
+                return Err("restore: expected <index|name>".to_owned());
+            }
+            Cmd::Restore(rest.to_owned())
+        }
+        "milestone" => {
+            if rest.is_empty() {
+                return Err("milestone: expected <message>".to_owned());
+            }
+            Cmd::Milestone(rest.to_owned())
+        }
+        "assert-milestones" => {
+            need(1, "<n>")?;
+            Cmd::AssertMilestones(parse_usize(args[0], "n")?)
+        }
+        "prune" => {
+            need(1, "<keep_last>")?;
+            let keep = parse_usize(args[0], "keep_last")?;
+            if keep == 0 {
+                return Err("prune: keep_last must be at least 1".to_owned());
+            }
+            Cmd::Prune(keep)
+        }
+        "assert-changed" => {
+            need(1, "<n>")?;
+            Cmd::AssertChanged(parse_usize(args[0], "n")?)
+        }
+        "setting" => {
+            let Some((key, value)) = rest.split_once(char::is_whitespace) else {
+                return Err("setting: expected <key> <value>".to_owned());
+            };
+            Cmd::Setting {
+                key: key.to_owned(),
+                value: value.trim().to_owned(),
+            }
+        }
+        "history-tab" => {
+            need(0, "no arguments")?;
+            Cmd::HistoryTab
+        }
+        "settings" => {
+            need(1, "open|close")?;
+            match args[0].to_ascii_lowercase().as_str() {
+                "open" => Cmd::Settings(true),
+                "close" => Cmd::Settings(false),
+                other => return Err(format!("settings {other:?} must be open or close")),
+            }
+        }
+        "add-install" => Cmd::AddInstall((!rest.is_empty()).then(|| rest.to_owned())),
+        "close-dialogs" => {
+            need(0, "no arguments")?;
+            Cmd::CloseDialogs
+        }
         other => return Err(format!("unknown command {other:?}")),
     };
     Ok(Some(cmd))
@@ -1057,6 +1213,90 @@ mode map
             assert!(parse_line(bad).is_err(), "{bad:?} must be rejected");
         }
         assert_eq!(parse_line("#x"), Ok(None));
+    }
+
+    #[test]
+    fn history_commands_parse() {
+        let text = "\
+autosave-now
+checkpoint before wall
+assert-history 1 autosave
+assert-history 3
+history-select before wall
+history-select 0
+assert-diff floor0 12
+show-snapshot on
+restore before wall
+milestone first version
+assert-milestones 1
+prune 1
+assert-changed 0
+setting gamma 1.6
+history-tab
+settings open
+add-install C:\\Games\\Diablo II
+add-install
+close-dialogs
+";
+        let lines = parse_script(text).expect("parses");
+        let cmds: Vec<&Cmd> = lines.iter().map(|(_, c)| c).collect();
+        assert_eq!(cmds[0], &Cmd::AutosaveNow);
+        assert_eq!(cmds[1], &Cmd::Checkpoint("before wall".to_owned()));
+        assert_eq!(
+            cmds[2],
+            &Cmd::AssertHistory {
+                n: 1,
+                kind: Some("autosave".to_owned())
+            }
+        );
+        assert_eq!(cmds[3], &Cmd::AssertHistory { n: 3, kind: None });
+        assert_eq!(cmds[4], &Cmd::HistorySelect("before wall".to_owned()));
+        assert_eq!(cmds[5], &Cmd::HistorySelect("0".to_owned()));
+        assert_eq!(
+            cmds[6],
+            &Cmd::AssertDiff {
+                layer: LayerRef::Floor(0),
+                count: 12
+            }
+        );
+        assert_eq!(cmds[7], &Cmd::ShowSnapshot(true));
+        assert_eq!(cmds[8], &Cmd::Restore("before wall".to_owned()));
+        assert_eq!(cmds[9], &Cmd::Milestone("first version".to_owned()));
+        assert_eq!(cmds[10], &Cmd::AssertMilestones(1));
+        assert_eq!(cmds[11], &Cmd::Prune(1));
+        assert_eq!(cmds[12], &Cmd::AssertChanged(0));
+        assert_eq!(
+            cmds[13],
+            &Cmd::Setting {
+                key: "gamma".to_owned(),
+                value: "1.6".to_owned()
+            }
+        );
+        assert_eq!(cmds[14], &Cmd::HistoryTab);
+        assert_eq!(cmds[15], &Cmd::Settings(true));
+        assert_eq!(
+            cmds[16],
+            &Cmd::AddInstall(Some("C:\\Games\\Diablo II".to_owned()))
+        );
+        assert_eq!(cmds[17], &Cmd::AddInstall(None));
+        assert_eq!(cmds[18], &Cmd::CloseDialogs);
+        for bad in [
+            "checkpoint",
+            "assert-history",
+            "assert-history 1 milestone",
+            "assert-history x",
+            "assert-diff floor0",
+            "assert-diff roof 1",
+            "restore",
+            "milestone",
+            "prune 0",
+            "prune",
+            "setting gamma",
+            "settings maybe",
+            "autosave-now please",
+        ] {
+            assert!(parse_line(bad).is_err(), "{bad:?} must be rejected");
+        }
     }
 
     #[test]

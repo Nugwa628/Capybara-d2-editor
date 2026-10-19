@@ -206,6 +206,11 @@ pub struct MapDoc {
     pub view: View,
     /// False until the view has been fitted to the viewport once.
     pub fitted: bool,
+    /// The document revision last recorded by autosave.
+    pub autosaved_revision: Option<u64>,
+    /// While set, `ds1` is this history snapshot (shown read-only), not the
+    /// edited map.
+    pub snapshot_view: Option<capy_history::SnapshotId>,
 }
 
 impl MapDoc {
@@ -257,6 +262,8 @@ impl MapDoc {
             render: RenderStatus::default(),
             view: View::default(),
             fitted: false,
+            autosaved_revision: None,
+            snapshot_view: None,
         }
     }
 
@@ -267,6 +274,8 @@ impl MapDoc {
         if revision == self.synced_revision {
             return;
         }
+        // An edit ends a snapshot view: the map shows what was edited.
+        self.snapshot_view = None;
         self.synced_revision = revision;
         self.ds1 = Arc::new(self.edit.ds1().clone());
         self.rev += 1;
@@ -275,6 +284,33 @@ impl MapDoc {
         if !self.active_layer.exists_in(&self.ds1) {
             self.active_layer = LayerRef::Floor(0);
         }
+        let objects = self.ds1.objects.len();
+        self.object_sel.retain(|&i| i < objects);
+    }
+
+    /// Show a history snapshot in place of the map (read-only).
+    pub fn show_snapshot(&mut self, id: capy_history::SnapshotId, ds1: Arc<Ds1>) {
+        if self.snapshot_view == Some(id) {
+            return;
+        }
+        self.snapshot_view = Some(id);
+        self.ds1 = ds1;
+        self.after_view_change();
+    }
+
+    /// Back from a snapshot view to the edited map.
+    pub fn show_current(&mut self) {
+        if self.snapshot_view.take().is_none() {
+            return;
+        }
+        self.ds1 = Arc::new(self.edit.ds1().clone());
+        self.after_view_change();
+    }
+
+    fn after_view_change(&mut self) {
+        self.rev += 1;
+        let keys = layer_keys(&self.ds1);
+        self.hidden.retain(|k| keys.contains(k));
         let objects = self.ds1.objects.len();
         self.object_sel.retain(|&i| i < objects);
     }

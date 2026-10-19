@@ -64,11 +64,15 @@ pub fn prepare(paths: Paths) -> Prepared {
         })
         .unwrap_or(false);
     if first_run || !profile_files_exist {
-        match config::seed_profiles(
-            &paths,
+        // The default locations, plus the install path the Windows registry
+        // names (read-only).
+        let registry = crate::installs::registry_install_paths();
+        let (vanilla, mxl) = crate::installs::first_run_candidates(
             std::path::Path::new(config::VANILLA_INSTALL),
             std::path::Path::new(config::MXL_INSTALL),
-        ) {
+            &registry,
+        );
+        match crate::installs::seed_profiles(&paths.profiles, &vanilla, &mxl) {
             Ok(written) => {
                 for f in written {
                     notes.push((false, format!("Wrote default profile {}", f.display())));
@@ -171,6 +175,7 @@ pub fn run(startup: Prepared) -> AppExit {
             Update,
             (
                 poll_background,
+                autosave_tick,
                 hooks::run_hooks,
                 script_run::run_script,
                 track_window_size,
@@ -235,16 +240,19 @@ fn begin_startup_profile(
         .profile
         .clone()
         .or_else(|| state.config.last_profile.clone());
-    let pick = wanted
-        .filter(|id| state.profiles.iter().any(|p| &p.id == id))
-        .or_else(|| state.profiles.first().map(|p| p.id.clone()));
-    if let Some(id) = pick {
+    // First run (nothing wanted): vanilla before alphabetical order.
+    if let Some(id) = crate::installs::startup_profile(&state.profiles, wanted.as_deref()) {
         state.open_profile_by_id(&id);
     }
 }
 
 fn poll_background(mut state: ResMut<AppState>) {
     state.poll_tasks();
+}
+
+/// Autosave dirty maps to history every `autosave_minutes`.
+fn autosave_tick(time: Res<Time>, mut state: ResMut<AppState>) {
+    state.autosave_tick(time.delta());
 }
 
 fn ui_system(

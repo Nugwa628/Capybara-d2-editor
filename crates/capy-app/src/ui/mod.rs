@@ -5,6 +5,7 @@
 //! list, viewer, editor, converter and log; see [`sprites`]).
 
 mod dialogs;
+mod history;
 mod layers;
 mod log;
 mod map_tools;
@@ -13,6 +14,7 @@ mod maps;
 mod menu;
 mod palette;
 mod properties;
+mod settings;
 mod shortcuts;
 mod sprites;
 mod status;
@@ -45,6 +47,8 @@ pub enum Panel {
     Log,
     /// Optional: the View menu adds and removes it.
     SpritePreview,
+    /// Optional (in the default layout): snapshots, diff, milestones.
+    History,
 }
 
 impl Panel {
@@ -67,6 +71,7 @@ impl Panel {
             Panel::Properties => "Properties",
             Panel::Log => "Log",
             Panel::SpritePreview => "Sprite preview",
+            Panel::History => "History",
         }
     }
 }
@@ -115,7 +120,11 @@ pub fn default_layout() -> DockState<Panel> {
     let mut state = DockState::new(vec![Panel::Map]);
     let main = state.main_surface_mut();
     let [centre, _left] = main.split_left(NodeIndex::root(), 0.2, vec![Panel::Maps, Panel::Tiles]);
-    let [centre, _right] = main.split_right(centre, 0.78, vec![Panel::Layers, Panel::Properties]);
+    let [centre, _right] = main.split_right(
+        centre,
+        0.78,
+        vec![Panel::Layers, Panel::Properties, Panel::History],
+    );
     let [_centre, _bottom] = main.split_below(centre, 0.76, vec![Panel::Log]);
     state
 }
@@ -213,6 +222,34 @@ impl Dock {
         self.map.find_tab(&Panel::SpritePreview).is_some()
     }
 
+    pub fn has_history(&self) -> bool {
+        self.map.find_tab(&Panel::History).is_some()
+    }
+
+    /// Show or hide the History panel (View menu).
+    pub fn toggle_history(&mut self) {
+        match self.map.find_tab(&Panel::History) {
+            Some(location) => {
+                let _ = self.map.remove_tab(location);
+            }
+            None => self.show_history(),
+        }
+    }
+
+    /// Bring the History panel to the front, adding it next to Properties
+    /// when the layout has none.
+    pub fn show_history(&mut self) {
+        if self.map.find_tab(&Panel::History).is_none() {
+            if let Some(p) = self.map.find_tab(&Panel::Properties) {
+                self.map.set_focused_node_and_surface(p.node_path());
+            }
+            self.map.push_to_focused_leaf(Panel::History);
+        }
+        if let Some(location) = self.map.find_tab(&Panel::History) {
+            let _ = self.map.set_active_tab(location);
+        }
+    }
+
     /// Show or hide the Sprite preview panel (View menu).
     pub fn toggle_sprite_preview(&mut self) {
         match self.map.find_tab(&Panel::SpritePreview) {
@@ -266,11 +303,12 @@ impl TabViewer for Viewer<'_> {
             Panel::Properties => properties::show(ui, self.state),
             Panel::Log => log::show(ui, self.state),
             Panel::SpritePreview => sprites::preview::show(ui, self.state),
+            Panel::History => history::show(ui, self.state),
         }
     }
 
     fn is_closeable(&self, tab: &Panel) -> bool {
-        *tab == Panel::SpritePreview
+        matches!(tab, Panel::SpritePreview | Panel::History)
     }
 
     /// The Map panel is transparent so Bevy's scene shows through.
@@ -352,9 +390,12 @@ fn mode_tabs(ui: &mut Ui, state: &mut AppState) {
 pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     state.pixels_per_point = ctx.pixels_per_point();
     state.sync_docs();
+    state.history_frame();
     state.browser_tick(ctx);
     if !state.edit.modal_open()
         && !state.sprites.modal_open()
+        && !state.history.modal_open()
+        && !state.settings.modal_open()
         && state.browser.prompt.is_none()
         && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K))
     {
@@ -368,6 +409,9 @@ pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
         AppMode::Sprites => sprites::shortcuts(ctx, state),
     }
     focus_sprites_panel(state, dock);
+    if std::mem::take(&mut state.history.focus) {
+        dock.show_history();
+    }
     if std::mem::take(&mut state.browser.focus_tiles)
         && let Some(location) = dock.map.find_tab(&Panel::Tiles)
     {
@@ -412,6 +456,8 @@ pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     });
 
     dialogs::show_all(ctx, state);
+    history::dialogs(ctx, state);
+    settings::show(ctx, state);
     tiles::windows(ctx, state);
     palette::show(ctx, state);
     sprites::dialogs(ctx, state);

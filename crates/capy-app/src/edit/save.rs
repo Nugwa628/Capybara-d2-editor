@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use capy_history::{SavesDir, SnapshotId, SnapshotKind, SnapshotStore};
+use capy_history::{SavesDir, SnapshotId, SnapshotKind};
 use d2_assets::GamePath;
 use d2_formats::FormatError;
 use d2_formats::ds1::Ds1;
@@ -82,9 +82,9 @@ pub fn save_game_file(
         .save(game_path, bytes)
         .map_err(|e| format!("cannot write {game_path}: {e}"))?;
     let mut warnings = Vec::new();
-    let snapshot = match SnapshotStore::open(&paths.history, profile_id)
-        .and_then(|mut store| store.record(game_path, bytes, SnapshotKind::Save))
-    {
+    let snapshot = match crate::history::with_store(&paths.history, profile_id, |store| {
+        store.record(game_path, bytes, SnapshotKind::Save)
+    }) {
         Ok(s) => Some(s.id),
         Err(e) => {
             warnings.push(format!("saved, but the history snapshot failed: {e}"));
@@ -125,6 +125,7 @@ pub fn mark_packed(paths: &Paths, profile_id: &str) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use capy_history::SnapshotStore;
     use d2_formats::ds1::Cell;
 
     fn paths() -> (tempfile::TempDir, Paths) {

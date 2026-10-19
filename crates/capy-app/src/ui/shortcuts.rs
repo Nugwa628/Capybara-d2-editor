@@ -105,7 +105,11 @@ fn read(ctx: &egui::Context, paste_active: bool) -> Vec<Action> {
 }
 
 pub fn handle(ctx: &egui::Context, state: &mut AppState) {
-    if state.edit.modal_open() || ctx.text_edit_focused() {
+    if state.edit.modal_open()
+        || state.history.modal_open()
+        || state.settings.modal_open()
+        || ctx.text_edit_focused()
+    {
         return;
     }
     for action in read(ctx, state.edit.paste.is_some()) {

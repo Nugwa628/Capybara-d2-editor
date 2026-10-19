@@ -153,7 +153,8 @@ pub struct Mods {
 }
 
 impl Mods {
-    /// Selection combination: Shift adds, Ctrl subtracts, both intersect.
+    /// Selection combination: Shift adds, Ctrl subtracts, Shift+Ctrl intersects
+    /// (the Map editor maps them the same way).
     pub fn mask_op(self) -> MaskOp {
         match (self.shift, self.ctrl) {
             (true, true) => MaskOp::Intersect,
