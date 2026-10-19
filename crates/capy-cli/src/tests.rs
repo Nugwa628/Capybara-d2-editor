@@ -630,3 +630,17 @@ fn object_counts_and_result_line() {
         "objects: 2 drawn, 1 missing"
     );
 }
+
+#[test]
+fn help_after_a_verb_is_that_verbs_help() {
+    for args in [
+        &["render", "--help"][..],
+        &["render", "a.ds1", "-h"][..],
+        &["maps", "/?"][..],
+        &["index", "--HELP"][..],
+    ] {
+        let (code, out, _) = run_text(args);
+        assert_eq!(code, Some(0), "{args:?}");
+        assert!(!out.is_empty(), "{args:?} printed help");
+    }
+}

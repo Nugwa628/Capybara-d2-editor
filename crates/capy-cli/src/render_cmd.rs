@@ -193,6 +193,12 @@ fn object_catalog(
 ) -> Option<ObjectCatalog> {
     match ObjectCatalog::build(overlay, version) {
         Ok((catalog, warnings)) => {
+            // Vanilla never ships ObjPreset; the embedded DS1Edit obj.txt is
+            // the normal source there, so that note is not worth a warning.
+            let warnings: Vec<String> = warnings
+                .into_iter()
+                .filter(|w| !w.starts_with("no ObjPreset table"))
+                .collect();
             warn_limited(ctx, &warnings);
             Some(catalog)
         }

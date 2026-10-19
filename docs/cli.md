@@ -29,8 +29,9 @@ files in `capybara\cache\`. They read the editor's `capybara\config.toml`
 - Giving the same flag twice, or an unknown flag, is a usage error.
 - `--help`, `-h` and `/?` as the first argument work like `help`: they
   print the help and exit with 0 instead of starting the editor.
-  `--help render` shows the help of one verb. After a verb they are ordinary
-  flags, so `render --help` is a usage error that prints the verb's usage.
+  `--help render` shows the help of one verb, and so does a help flag
+  anywhere after a verb (`render --help`, `maps -h`): it prints that verb's
+  help and exits with 0.
 - Output goes to stdout. Errors go to stderr as `error: ...`, and warnings
   as `warning: ...`.
 

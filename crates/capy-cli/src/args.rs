@@ -77,6 +77,15 @@ pub fn parse(args: &[OsString]) -> Result<Option<Command>, UsageError> {
     if HELP_ALIASES.contains(&verb.as_str()) {
         return parse_help(rest).map(Some);
     }
+    // `render --help` (any help alias after a real verb) is that verb's help.
+    let is_verb = matches!(verb.as_str(), "render" | "index" | "maps" | "profiles");
+    let asks_help = rest.iter().any(|a| {
+        a.to_str()
+            .is_some_and(|t| HELP_ALIASES.contains(&t.to_ascii_lowercase().as_str()))
+    });
+    if is_verb && asks_help {
+        return parse_help(&args[..1]).map(Some);
+    }
     match verb.as_str() {
         "render" => parse_render(rest).map(|a| Some(Command::Render(a))),
         "index" => parse_index(rest).map(Some),
