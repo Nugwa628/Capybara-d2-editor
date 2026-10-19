@@ -113,6 +113,9 @@ pub struct ObjectInfo {
     pub order_flag: u8,
     /// Enabled components (HD TR LG RA LA RH LH SH S1..S8).
     pub parts: Vec<String>,
+    /// Per-component skin/armor token for DCC file names, e.g. `("TR", "LIT")`,
+    /// from DS1Edit's obj.txt. Empty, or a component missing here, means `LIT`.
+    pub skins: Vec<(String, String)>,
     /// SizeX/SizeY.
     pub size: (i32, i32),
     /// Xoffset/Yoffset.
@@ -145,6 +148,7 @@ impl ObjectInfo {
             weapon_class: "HTH".to_owned(),
             order_flag: 0,
             parts: Vec::new(),
+            skins: Vec::new(),
             size: (0, 0),
             offset: (0, 0),
             draw_effect: None,
@@ -239,6 +243,7 @@ struct EditVisual {
     mode: String,
     class: String,
     parts: Vec<String>,
+    skins: Vec<(String, String)>,
 }
 
 #[derive(Debug, Default)]
@@ -447,6 +452,14 @@ fn parse_edit_table(bytes: &[u8]) -> EditTable {
                         .iter()
                         .filter(|code| !trimmed(row, code).is_empty())
                         .map(|code| (*code).to_owned())
+                        .collect(),
+                    skins: PART_CODES
+                        .iter()
+                        .filter_map(|code| {
+                            let skin = trimmed(row, code);
+                            (!skin.is_empty())
+                                .then(|| ((*code).to_owned(), skin.to_ascii_uppercase()))
+                        })
                         .collect(),
                 })
             }
@@ -868,6 +881,7 @@ impl ObjectCatalog {
             if !visual.parts.is_empty() {
                 info.parts = visual.parts.clone();
             }
+            info.skins.clone_from(&visual.skins);
         }
 
         if let Some(row) = table_row {
@@ -1041,4 +1055,5 @@ fn apply_visual(info: &mut ObjectInfo, visual: &EditVisual) {
     info.mode.clone_from(&visual.mode);
     info.weapon_class.clone_from(&visual.class);
     info.parts.clone_from(&visual.parts);
+    info.skins.clone_from(&visual.skins);
 }

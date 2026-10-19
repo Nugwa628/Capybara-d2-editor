@@ -299,6 +299,13 @@ fn rogue_encampment_spot_check() {
     assert_eq!(cain.row, Some(385));
     assert_eq!(cain.class, ObjectClass::Object);
     assert!(cain.name.contains("cain"), "{:?}", cain.name);
+    // Skins come from obj.txt: every skinned component is an enabled part,
+    // and skin tokens are 3-letter codes such as LIT.
+    assert!(!cain.skins.is_empty(), "cain should carry obj.txt skins");
+    for (component, skin) in &cain.skins {
+        assert!(cain.parts.contains(component), "{component} not in parts");
+        assert_eq!(skin.len(), 3, "{component}={skin}");
+    }
     // Same answer through any DS1 version that remaps.
     assert_eq!(f.catalog.resolve(0, 6, &obj(2, 110)).row, Some(385));
     // Below version 6 the id is a direct row.

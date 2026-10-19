@@ -28,6 +28,7 @@ pub struct ObjectInfo {
     pub weapon_class: String,         // "HTH" unless the data says otherwise
     pub order_flag: u8,               // Objects.txt OrderFlag of that mode (0/1/2); monsters 0
     pub parts: Vec<String>,           // enabled components (HD TR LG RA LA RH LH SH S1..S8)
+    pub skins: Vec<(String, String)>, // per-component skin token from obj.txt, e.g. ("TR","LIT"); missing = "LIT"
     pub size: (i32, i32),             // SizeX/SizeY
     pub offset: (i32, i32),           // Xoffset/Yoffset
     pub draw_effect: Option<u8>,      // object-level transparency/blend if the table has one
@@ -49,4 +50,10 @@ impl ObjectCatalog {
     /// Every placeable (kind, id) for an act, for the object picker.
     pub fn placeable(&self, act: u8) -> Vec<ObjectInfo>;
 }
+// Notes: the game rewrites six act 3/5 type-1 presets into objects
+// (297→382, 366→404, 514→461, 537/538/539→476/475/474), so a type-1 DS1
+// object can resolve with `class: Object`. Vanilla rows 580-582 referenced by
+// the act×150 table do not exist in the 573-row Objects.txt (unresolved, as in
+// the game). Median XL type 1 needs monpreset/monstats/monstats2 `.bin`
+// decoders (TODO(excel-mon)).
 ```
