@@ -14,6 +14,9 @@ pub mod tbl;
 pub mod txt;
 
 #[cfg(test)]
+#[allow(clippy::panic, clippy::unwrap_used)]
+mod robustness;
+#[cfg(test)]
 mod testutil;
 
 pub use error::{FormatError, Result};
