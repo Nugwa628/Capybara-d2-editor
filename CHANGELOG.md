@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **P6 complete: Sprites mode.** Top-level Map Editor / Sprites tabs; DC6/DCC/COF
+  viewer (playback at AnimData speed, palettes, gamma, COF layers, box/anchor
+  overlay); converter (image import with quantize/dither/transparent protection,
+  frame/sheet/GIF/indexed-PNG/palette export, batch trees, save to game path);
+  palette-locked sprite editor (pencil, shapes, fill, gradient, shading, outline,
+  selections, frames, onion skin, DCC cell check); sprite preview box in the map
+  editor; single-exe CLI (`CapybaraMapEditor.exe render ...`).
 - **P2 complete.** Editing UI: box/lasso/tile-ID/identical selection, paint,
   erase, eyedropper, object move/delete, cross-map clipboard with conflict
   preview, move-to-layer with version upgrade, flags, resize, layer actions,

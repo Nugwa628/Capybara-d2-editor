@@ -1,6 +1,6 @@
 # Capybara Map Editor — Plan
 
-Status: **P0, P1 and P2 done** (2026-10-19). P3-P6 libraries done (search, history, sprites, CLI, objects); UI lane: P6 Sprites mode in progress, then P3 browser, P4 history UI, P5 object/NPC placement, release.
+Status: **P0, P1, P2 and P6 done** (2026-10-19). P3/P4/P5 libraries done; UI lane: P3 tile browser + Ctrl+K in progress, then P4 history UI, P5 object/NPC placement, release.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -137,6 +137,12 @@ Status: **P0, P1 and P2 done** (2026-10-19). P3-P6 libraries done (search, histo
 - Property tests: undo-all restores, redo-all reproduces, undo∘redo is identity at every step (thousands of random sequences incl. layer moves, paste, resize, version upgrades, objects, NPC paths); `NeedsVersion` is always the least sufficient version.
 - Edited maps load in the oracle and render as written: 22/22 maps (incl. v3/v12/v13/v15) at within_tolerance(16) >= 0.991.
 - App: scripted end-to-end edit (select, Wall 1 → Wall 3, paint, cross-region paste, save) produces a correct file in `capybara\saves\<profile>\`, CHANGED.txt lists it once, and a history snapshot exists.
+
+### P6 acceptance (2026-10-19)
+- Encoders: every DC6 (4,065) and DCC (47,939) in both installs re-encodes to identical frames; DCC output averages 1.3% larger than Blizzard's.
+- Converter: PNG export -> import (with sprite.json) -> encode -> decode is exact; sheet round trip; batch conversion of trees both ways with cancel.
+- Editor: palette lock (no opaque index 0, every pixel a palette index) and undo/redo laws hold under randomized operation sequences; DCC 4x4-cell limit check uses the decoder's own cell partition and is proven by an encode/decode round trip.
+- App: scripted end-to-end test exports a real DCC, re-imports and saves it to a game path (identical frames, CHANGED.txt, snapshot), edits it with outline and gradient (still palette-locked), and runs the single-exe CLI render.
 
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
