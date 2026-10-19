@@ -7,7 +7,18 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+d2-formats.workspace = true
+d2-assets.workspace = true
 thiserror.workspace = true
+rusqlite.workspace = true
+nucleo.workspace = true
+image_hasher.workspace = true
+image.workspace = true
+blake3.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
