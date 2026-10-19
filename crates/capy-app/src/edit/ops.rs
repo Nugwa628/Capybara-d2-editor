@@ -172,13 +172,18 @@ pub fn run(doc: &mut Document, selection: &Selection, op: &EditOp) -> OpResult {
             wrap(doc.set_object(*index, *object), |()| OpOutcome::Done)
         }
         EditOp::AddPathPoint { object, point, at } => {
-            wrap(doc.add_path_point(*object, *point, *at), |()| OpOutcome::Done)
-        }
-        EditOp::MovePathPoint { object, index, x, y } => {
-            wrap(doc.move_path_point(*object, *index, *x, *y), |()| {
+            wrap(doc.add_path_point(*object, *point, *at), |()| {
                 OpOutcome::Done
             })
         }
+        EditOp::MovePathPoint {
+            object,
+            index,
+            x,
+            y,
+        } => wrap(doc.move_path_point(*object, *index, *x, *y), |()| {
+            OpOutcome::Done
+        }),
         EditOp::SetPathAction {
             object,
             index,
@@ -187,7 +192,9 @@ pub fn run(doc: &mut Document, selection: &Selection, op: &EditOp) -> OpResult {
             OpOutcome::Done
         }),
         EditOp::DeletePathPoints { object, indices } => {
-            wrap(doc.delete_path_points(*object, indices), |()| OpOutcome::Done)
+            wrap(doc.delete_path_points(*object, indices), |()| {
+                OpOutcome::Done
+            })
         }
     }
 }

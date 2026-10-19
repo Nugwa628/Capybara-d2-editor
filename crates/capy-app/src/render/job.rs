@@ -120,7 +120,9 @@ fn object_anim(
             delta: 256,
         };
     };
-    let info = src.catalog.resolve(ds1.effective_act(), ds1.version, object);
+    let info = src
+        .catalog
+        .resolve(ds1.effective_act(), ds1.version, object);
     let direction = info.direction.unwrap_or(0);
     let opts = ObjectOptions::default();
     let count = first.frames_per_direction.max(1);
@@ -464,7 +466,11 @@ mod tests {
         };
         let hidden_first = build_map(input(vis, None), None).expect("build");
         // The atlas already holds the shadow entry although it is not drawn.
-        let shadow_in_atlas = hidden_first.layout.rects.keys().any(AtlasKey::is_shadow_tile);
+        let shadow_in_atlas = hidden_first
+            .layout
+            .rects
+            .keys()
+            .any(AtlasKey::is_shadow_tile);
         assert!(shadow_in_atlas);
         let shown = build_map(
             input(Visibility::default(), Some(hidden_first.layout.clone())),

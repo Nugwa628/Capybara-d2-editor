@@ -764,8 +764,22 @@ fn sync_scene(
         if !zoom_changed && frames == pr.frames {
             continue;
         }
-        let runs = scene::build_piece(&entries, &pr.piece, &layout, div, &|r| tiles.geometry(r), tick);
-        install_runs(&mut commands, &mut meshes, &class_mats, id, &mut pr.slots, runs);
+        let runs = scene::build_piece(
+            &entries,
+            &pr.piece,
+            &layout,
+            div,
+            &|r| tiles.geometry(r),
+            tick,
+        );
+        install_runs(
+            &mut commands,
+            &mut meshes,
+            &class_mats,
+            id,
+            &mut pr.slots,
+            runs,
+        );
         pr.frames = frames;
         changed = true;
     }

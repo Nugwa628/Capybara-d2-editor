@@ -171,10 +171,7 @@ mod tests {
         let plain = scoped_queries(&parse_query("grass").expect("q"), Scope::MapTileSet, &dt1s);
         assert_eq!(
             plain[0].filters,
-            vec![
-                Filter::Type(AssetKind::Tile),
-                Filter::AnyFile(dt1s.clone())
-            ]
+            vec![Filter::Type(AssetKind::Tile), Filter::AnyFile(dt1s.clone())]
         );
         // No map: nothing to search.
         assert!(scoped_queries(&q, Scope::MapTileSet, &[]).is_empty());

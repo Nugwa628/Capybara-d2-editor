@@ -124,7 +124,10 @@ pub const SNAPSHOT_READ_ONLY: &str = "Viewing a snapshot: turn it off to edit";
 
 /// True (after a toast) when the active map shows a history snapshot.
 pub fn refuse_in_snapshot(state: &mut AppState) -> bool {
-    if state.active_doc().is_some_and(|d| d.snapshot_view.is_some()) {
+    if state
+        .active_doc()
+        .is_some_and(|d| d.snapshot_view.is_some())
+    {
         state.notify(SNAPSHOT_READ_ONLY);
         return true;
     }
@@ -290,10 +293,7 @@ mod tests {
         assert_eq!(state.docs[0].edit.revision(), revision, "nothing changed");
         assert!(state.edit.paste.is_none());
         assert!(
-            state
-                .toasts
-                .iter()
-                .any(|t| t.text == SNAPSHOT_READ_ONLY),
+            state.toasts.iter().any(|t| t.text == SNAPSHOT_READ_ONLY),
             "the user is told why"
         );
         // Non-editing keys still work: tools, grid, deselect.

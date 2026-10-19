@@ -273,9 +273,15 @@ fn place_objects_edit_an_npc_path_save_and_match_the_cpu_render() {
     assert_eq!(saved.objects.len(), n + 2);
     assert_eq!(saved.objects[..n], orig.objects[..]);
     let t = saved.objects[torch_index];
-    assert_eq!((t.kind, t.id, t.x, t.y), (2, torch.ds1_id, torch_at.0, torch_at.1));
+    assert_eq!(
+        (t.kind, t.id, t.x, t.y),
+        (2, torch.ds1_id, torch_at.0, torch_at.1)
+    );
     let p = saved.objects[npc_index];
-    assert_eq!((p.kind, p.id, p.x, p.y), (1, npc.ds1_id, npc_at.0, npc_at.1));
+    assert_eq!(
+        (p.kind, p.id, p.x, p.y),
+        (1, npc.ds1_id, npc_at.0, npc_at.1)
+    );
     let new_paths: Vec<_> = saved
         .npc_paths
         .iter()
@@ -309,11 +315,16 @@ fn place_objects_edit_an_npc_path_save_and_match_the_cpu_render() {
         .status()
         .expect("start the app");
     assert!(status.success(), "map-only run exited with {status}");
-    let gpu = black_to_transparent(RgbaImage::from_png(&std::fs::read(&gpu_file).unwrap()).unwrap());
+    let gpu =
+        black_to_transparent(RgbaImage::from_png(&std::fs::read(&gpu_file).unwrap()).unwrap());
 
     let overlay = profile.open(&capy.join("saves")).unwrap();
     let saved_bytes = overlay.read_bytes(&path).unwrap().unwrap();
-    assert_eq!(saved_bytes, std::fs::read(&saved_file).unwrap(), "the overlay reads the save");
+    assert_eq!(
+        saved_bytes,
+        std::fs::read(&saved_file).unwrap(),
+        "the overlay reads the save"
+    );
     let (maps, _) = MapCatalog::build(&overlay, version, std::slice::from_ref(&path)).unwrap();
     let info = maps.resolve_explicit(&path, lvl_type, Some(def)).unwrap();
     let (tiles, _) = TileSet::load(&overlay, &info.dt1_files).unwrap();
@@ -339,7 +350,11 @@ fn place_objects_edit_an_npc_path_save_and_match_the_cpu_render() {
             cpu.missing_objects
         );
     }
-    std::fs::write(shots.join("saved_map_only_cpu.png"), cpu.image.to_png().unwrap()).unwrap();
+    std::fs::write(
+        shots.join("saved_map_only_cpu.png"),
+        cpu.image.to_png().unwrap(),
+    )
+    .unwrap();
     let size_ok = (gpu.width, gpu.height) == (cpu.image.width, cpu.image.height);
     let d16 = compare_images(&gpu, &cpu.image, 16, 4);
     let d0 = compare_images(&gpu, &cpu.image, 0, 0);
@@ -347,7 +362,11 @@ fn place_objects_edit_an_npc_path_save_and_match_the_cpu_render() {
         "saved towne1 at 1:{ZOOM}: {}x{} tol0 {:.4} tol16 {:.4} shift {:?}",
         gpu.width, gpu.height, d0.within_tolerance, d16.within_tolerance, d16.best_shift
     );
-    assert!(size_ok, "canvas {}x{} vs {}x{}", gpu.width, gpu.height, cpu.image.width, cpu.image.height);
+    assert!(
+        size_ok,
+        "canvas {}x{} vs {}x{}",
+        gpu.width, gpu.height, cpu.image.width, cpu.image.height
+    );
     assert!(
         d16.within_tolerance >= MIN_FRACTION,
         "GPU vs CPU within_tolerance(16) = {}",

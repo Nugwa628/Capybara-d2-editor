@@ -113,7 +113,11 @@ fn cpu_render(
     let sprites = objects.map(|c| ObjectSprites::new(overlay, c));
     let out = render_with_objects(&ds1, &tiles, sprites.as_ref(), &palette, &opts).unwrap();
     let drawn = ds1.objects.len() - out.missing_objects.len();
-    (out.image, out.missing.len(), if objects.is_some() { drawn } else { 0 })
+    (
+        out.image,
+        out.missing.len(),
+        if objects.is_some() { drawn } else { 0 },
+    )
 }
 
 /// Black pixels of the GPU image are background (the map-only shot has no

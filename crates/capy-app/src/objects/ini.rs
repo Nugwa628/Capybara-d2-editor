@@ -114,7 +114,12 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let file = tmp.path().join("config.toml");
         let mut config = Config::default();
-        config.set_override("other", "data\\global\\tiles\\act1\\town\\towne1.ds1", 9, None);
+        config.set_override(
+            "other",
+            "data\\global\\tiles\\act1\\town\\towne1.ds1",
+            9,
+            None,
+        );
         let mut cat = catalog();
         let files = vec![
             (
@@ -138,14 +143,17 @@ mod tests {
         assert_eq!(report.applied, 2);
         assert_eq!(report.unknown, 1);
         assert_eq!(report.warnings.len(), 1);
-        assert!(report.warnings[0].starts_with("act1.ini: line 3"), "{:?}", report.warnings);
+        assert!(
+            report.warnings[0].starts_with("act1.ini: line 3"),
+            "{:?}",
+            report.warnings
+        );
         assert!(report.summary().contains("4 mapping(s) from 2 file(s)"));
 
         // The catalog uses them...
         let towne1 = GamePath::new("data\\global\\tiles\\act1\\town\\towne1.ds1");
         assert!(
-            cat.overrides()
-                .contains(&(towne1.clone(), 1, Some(7))),
+            cat.overrides().contains(&(towne1.clone(), 1, Some(7))),
             "the later line wins: {:?}",
             cat.overrides()
         );
@@ -176,7 +184,12 @@ mod tests {
     fn nothing_to_import_changes_nothing() {
         let mut config = Config::default();
         let mut cat = catalog();
-        let report = import(&mut config, &mut cat, "vanilla", &[("e.ini".into(), String::new())]);
+        let report = import(
+            &mut config,
+            &mut cat,
+            "vanilla",
+            &[("e.ini".into(), String::new())],
+        );
         assert_eq!(report.entries, 0);
         assert_eq!(report.applied, 0);
         assert!(config.overrides.is_empty());

@@ -114,9 +114,18 @@ pub fn pieces(entries: &[SceneEntry]) -> Vec<Piece> {
 pub fn blend_parts(blend: Blend) -> (SpriteBake, BlendClass) {
     match blend {
         Blend::Normal => (SpriteBake::Opaque, BlendClass::Premultiplied),
-        Blend::Alpha25 => (SpriteBake::Tinted(weight_byte(0.25)), BlendClass::Premultiplied),
-        Blend::Alpha50 => (SpriteBake::Tinted(weight_byte(0.5)), BlendClass::Premultiplied),
-        Blend::Alpha75 => (SpriteBake::Tinted(weight_byte(0.75)), BlendClass::Premultiplied),
+        Blend::Alpha25 => (
+            SpriteBake::Tinted(weight_byte(0.25)),
+            BlendClass::Premultiplied,
+        ),
+        Blend::Alpha50 => (
+            SpriteBake::Tinted(weight_byte(0.5)),
+            BlendClass::Premultiplied,
+        ),
+        Blend::Alpha75 => (
+            SpriteBake::Tinted(weight_byte(0.75)),
+            BlendClass::Premultiplied,
+        ),
         // out = dst * level / 32: a black silhouette of coverage 1 - level/32.
         Blend::Darken(level) => (
             SpriteBake::Silhouette(weight_byte(1.0 - f32::from(level.min(32)) / 32.0)),
@@ -301,7 +310,12 @@ pub fn object_boxes(entries: &[SceneEntry], tick: Option<u32>) -> Vec<(usize, [i
             let r = [d.origin.0, d.origin.1, d.origin.0 + w, d.origin.1 + h];
             bounds = Some(match bounds {
                 None => r,
-                Some(b) => [b[0].min(r[0]), b[1].min(r[1]), b[2].max(r[2]), b[3].max(r[3])],
+                Some(b) => [
+                    b[0].min(r[0]),
+                    b[1].min(r[1]),
+                    b[2].max(r[2]),
+                    b[3].max(r[3]),
+                ],
             });
         }
         if let Some(b) = bounds {
@@ -615,8 +629,14 @@ mod tests {
             anim: Arc::new(anim),
         })];
         let p = &pieces(&entries)[0];
-        assert_eq!(piece_frames(&entries, p, Some(2)), piece_frames(&entries, p, Some(3)));
-        assert_ne!(piece_frames(&entries, p, Some(3)), piece_frames(&entries, p, Some(4)));
+        assert_eq!(
+            piece_frames(&entries, p, Some(2)),
+            piece_frames(&entries, p, Some(3))
+        );
+        assert_ne!(
+            piece_frames(&entries, p, Some(3)),
+            piece_frames(&entries, p, Some(4))
+        );
     }
 
     #[test]

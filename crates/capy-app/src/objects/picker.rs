@@ -130,7 +130,10 @@ mod tests {
         assert_eq!(filter(&it, "type2"), vec![0, 2, 4]);
         assert_eq!(filter(&it, "2:12"), vec![2]);
         assert_eq!(filter(&it, "fa"), vec![3], "token FA");
-        assert!(filter(&it, "torch akara").is_empty(), "all words must match");
+        assert!(
+            filter(&it, "torch akara").is_empty(),
+            "all words must match"
+        );
     }
 
     #[test]

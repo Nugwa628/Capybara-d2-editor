@@ -8,11 +8,14 @@ use std::sync::{Arc, Mutex};
 use d2_assets::Overlay;
 use d2_assets::objects::ObjectCatalog;
 
+/// What the build thread sends: the tables and their warnings.
+type Built = Result<(ObjectCatalog, Vec<String>), String>;
+
 pub enum CatalogSlot {
     None,
     Building {
         epoch: u64,
-        rx: Mutex<Receiver<Result<(ObjectCatalog, Vec<String>), String>>>,
+        rx: Mutex<Receiver<Built>>,
     },
     Ready {
         epoch: u64,
@@ -83,7 +86,7 @@ impl CatalogSlot {
             return None;
         };
         let epoch = *epoch;
-        let got = rx.lock().ok().and_then(|r| r.try_recv().ok());
+        let got = rx.get_mut().ok().and_then(|r| r.try_recv().ok());
         match got {
             Some(Ok((catalog, warnings))) => {
                 *self = CatalogSlot::Ready {

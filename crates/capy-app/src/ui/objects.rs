@@ -106,9 +106,10 @@ fn properties(ui: &mut Ui, state: &mut AppState, index: usize) {
         .map(|c| c.resolve(act, version, &current));
 
     // The edit buffer follows the selection and the document.
-    let fresh = state.objects.props.is_none_or(|p| {
-        p.doc != doc_id || p.index != object_index || p.original != current
-    });
+    let fresh = state
+        .objects
+        .props
+        .is_none_or(|p| p.doc != doc_id || p.index != object_index || p.original != current);
     if fresh {
         state.objects.props = Some(PropsEdit {
             doc: doc_id,
@@ -242,7 +243,10 @@ fn path_section(ui: &mut Ui, state: &mut AppState, index: usize, object: usize) 
         .show(ui, |ui| {
             for (i, p) in points.iter().enumerate() {
                 let selected = state.objects.path.selected == Some(i);
-                if ui.selectable_label(selected, format!("{}", i + 1)).clicked() {
+                if ui
+                    .selectable_label(selected, format!("{}", i + 1))
+                    .clicked()
+                {
                     state.objects.path.selected = Some(i);
                 }
                 ui.monospace(format!("{:>4} {:>4}", p.x, p.y));
@@ -255,7 +259,11 @@ fn path_section(ui: &mut Ui, state: &mut AppState, index: usize, object: usize) 
                         action,
                     });
                 }
-                if ui.small_button("x").on_hover_text("Delete this point").clicked() {
+                if ui
+                    .small_button("x")
+                    .on_hover_text("Delete this point")
+                    .clicked()
+                {
                     op = Some(EditOp::DeletePathPoints {
                         object,
                         indices: vec![i],
@@ -361,7 +369,8 @@ fn preview(ui: &mut Ui, state: &mut AppState, info: &ObjectInfo, act: u8) {
             .act(act, Some(&overlay), epoch)
             .with_gamma(gamma);
         let direction = info.direction.unwrap_or(0);
-        let built = crate::sprites::preview::build_frames(&overlay, &catalog, info, direction, &palette);
+        let built =
+            crate::sprites::preview::build_frames(&overlay, &catalog, info, direction, &palette);
         state.objects.preview = Some(match built {
             Ok((_, frames, delta)) => PickerPreview {
                 key,
@@ -370,13 +379,13 @@ fn preview(ui: &mut Ui, state: &mut AppState, info: &ObjectInfo, act: u8) {
                     .enumerate()
                     .map(|(f, raw)| {
                         let (w, h, rgba, offset) = raw?;
-                        rgba_texture(ui.ctx(), &format!("picker-{f}"), w, h, &rgba).map(
-                            |handle| Tex {
+                        rgba_texture(ui.ctx(), &format!("picker-{f}"), w, h, &rgba).map(|handle| {
+                            Tex {
                                 handle,
                                 offset,
                                 size: (w, h),
-                            },
-                        )
+                            }
+                        })
                     })
                     .collect(),
                 delta: delta.filter(|d| *d != 0).unwrap_or(256),

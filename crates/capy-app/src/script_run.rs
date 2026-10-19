@@ -1080,9 +1080,9 @@ fn history_step(
 
 /// The one selected object of the active map, for the path commands.
 fn script_object(state: &AppState, what: &str) -> Result<(usize, usize), String> {
-    state.single_object().ok_or_else(|| {
-        format!("{what}: select exactly one object first (select-object <index>)")
-    })
+    state
+        .single_object()
+        .ok_or_else(|| format!("{what}: select exactly one object first (select-object <index>)"))
 }
 
 /// Runs an object / NPC path command; `None` for every other command.
@@ -1164,21 +1164,23 @@ fn objects_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
                 Err(format!("assert-objects {n}: the map has {actual}"))
             }
         }
-        Cmd::PathAdd { x, y, action } => script_object(state, "path-add").and_then(|(_, object)| {
-            exec(
-                state,
-                EditOp::AddPathPoint {
-                    object,
-                    point: d2_formats::ds1::PathPoint {
-                        x: *x,
-                        y: *y,
-                        action: *action,
+        Cmd::PathAdd { x, y, action } => {
+            script_object(state, "path-add").and_then(|(_, object)| {
+                exec(
+                    state,
+                    EditOp::AddPathPoint {
+                        object,
+                        point: d2_formats::ds1::PathPoint {
+                            x: *x,
+                            y: *y,
+                            action: *action,
+                        },
+                        at: None,
                     },
-                    at: None,
-                },
-                "path-add",
-            )
-        }),
+                    "path-add",
+                )
+            })
+        }
         Cmd::PathMove { index: i, x, y } => {
             script_object(state, "path-move").and_then(|(_, object)| {
                 exec(
@@ -1339,8 +1341,10 @@ fn poll_shot(commands: &mut Commands, state: &mut AppState, mut shot: Shot) -> S
     let drawn = state.config.mode == AppMode::Sprites
         || state.active_doc().is_none_or(|d| {
             d.fitted
-                && (matches!(d.render.state, RenderState::Failed(_) | RenderState::ProfileClosed)
-                    || (d.render.state == RenderState::Ready && state.objects_settled(d)))
+                && (matches!(
+                    d.render.state,
+                    RenderState::Failed(_) | RenderState::ProfileClosed
+                ) || (d.render.state == RenderState::Ready && state.objects_settled(d)))
         });
     if !drawn {
         shot.drawn_since = None;
@@ -1348,7 +1352,9 @@ fn poll_shot(commands: &mut Commands, state: &mut AppState, mut shot: Shot) -> S
         shot.drawn_since = Some(Instant::now());
     }
     let settled = shot.started.elapsed().as_secs_f32() >= SETTLE_SECS
-        && shot.drawn_since.is_some_and(|t| t.elapsed().as_secs_f32() >= SETTLE_SECS / 2.0)
+        && shot
+            .drawn_since
+            .is_some_and(|t| t.elapsed().as_secs_f32() >= SETTLE_SECS / 2.0)
         && shot.frames >= 30;
     if drawn && settled {
         if let Some(dir) = shot.file.parent() {

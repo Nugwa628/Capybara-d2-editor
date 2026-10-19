@@ -22,8 +22,8 @@ use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{
-    AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState,
-    RenderPipelineDescriptor, SpecializedMeshPipelineError,
+    AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, RenderPipelineDescriptor,
+    SpecializedMeshPipelineError,
 };
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{

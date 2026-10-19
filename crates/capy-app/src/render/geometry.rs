@@ -8,9 +8,9 @@
 //! material, one draw call, so the GPU rasterises triangles in index order and
 //! blends them in that order. No depth or z sorting is involved.
 
-use capy_render::{DrawItem, MissingTile, TileGeometry};
 #[cfg(test)]
 use capy_render::TileRef;
+use capy_render::{DrawItem, MissingTile, TileGeometry};
 
 #[cfg(test)]
 use super::atlas::AtlasLayout;

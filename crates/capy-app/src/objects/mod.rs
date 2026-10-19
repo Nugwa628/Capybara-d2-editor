@@ -271,9 +271,10 @@ impl AppState {
         let mut texts = Vec::new();
         let mut unreadable = Vec::new();
         for f in files {
-            let name = f
-                .file_name()
-                .map_or_else(|| f.display().to_string(), |n| n.to_string_lossy().into_owned());
+            let name = f.file_name().map_or_else(
+                || f.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
             match std::fs::read(f) {
                 // DS1Edit's files are plain ASCII; anything else is read leniently.
                 Ok(bytes) => texts.push((name, String::from_utf8_lossy(&bytes).into_owned())),
@@ -312,7 +313,11 @@ mod tests {
         assert_eq!(tick_at(1e12), u32::MAX);
         assert_eq!(shown_tick(false, None, 9.0), None);
         assert_eq!(shown_tick(true, None, 2.0), Some(50));
-        assert_eq!(shown_tick(false, Some(7), 2.0), Some(7), "a pinned tick wins");
+        assert_eq!(
+            shown_tick(false, Some(7), 2.0),
+            Some(7),
+            "a pinned tick wins"
+        );
         assert_eq!(shown_tick(true, Some(7), 2.0), Some(7));
     }
 }

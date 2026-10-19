@@ -14,13 +14,7 @@ use d2_formats::ds1::PathPoint;
 /// Actions a path point can carry. DS1 v15+ stores 1..; the meaning of the
 /// values the game uses is not documented (`docs/specs/ds1.md` only says
 /// that files below v15 read action 1).
-pub const ACTIONS: [(i32, &str); 5] = [
-    (1, "1 (default)"),
-    (2, "2"),
-    (3, "3"),
-    (4, "4"),
-    (5, "5"),
-];
+pub const ACTIONS: [(i32, &str); 5] = [(1, "1 (default)"), (2, "2"), (3, "3"), (4, "4"), (5, "5")];
 
 /// The label of an action for combos.
 pub fn action_label(action: i32) -> String {
@@ -147,9 +141,7 @@ impl PathTool {
 
     /// Where node `index` is drawn while dragged, else `None`.
     pub fn dragged(&self, index: usize) -> Option<(i32, i32)> {
-        self.drag
-            .filter(|d| d.point == index)
-            .map(|d| d.current)
+        self.drag.filter(|d| d.point == index).map(|d| d.current)
     }
 }
 

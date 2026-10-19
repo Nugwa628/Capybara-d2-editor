@@ -125,8 +125,8 @@ fn run_job(req: JobRequest, objects: Option<&ObjectSource<'_>>) -> JobResult {
 fn run_guarded(req: JobRequest, objects: Option<&ObjectSource<'_>>) -> JobResult {
     let (doc, ticket, div, tick) = (req.doc, req.ticket, req.div, req.tick);
     let (key, profile) = (req.key.clone(), req.profile.clone());
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_job(req, objects)))
-        .unwrap_or_else(|_| JobResult {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_job(req, objects))).unwrap_or_else(
+        |_| JobResult {
             doc,
             ticket,
             div,
@@ -136,7 +136,8 @@ fn run_guarded(req: JobRequest, objects: Option<&ObjectSource<'_>>) -> JobResult
             tiles: None,
             warnings: Vec::new(),
             outcome: Err("map build panicked".to_owned()),
-        })
+        },
+    )
 }
 
 fn worker_loop(rx: Receiver<JobRequest>, tx: Sender<JobResult>) {
