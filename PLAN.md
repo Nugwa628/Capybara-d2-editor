@@ -14,7 +14,7 @@ Status: **P0 in progress** (2026-10-19). Step 0 bootstrap done: workspace skelet
   ```
   CapybaraMapEditor.exe
   capybara\
-    config.toml                  settings + game profiles
+    config.toml                  settings
     saves\<profile>\data\global\tiles\...\*.ds1
                                  edited maps, mirroring game paths exactly
     saves\<profile>\CHANGED.txt  game-relative paths changed since the last "mark as packed"
