@@ -5,6 +5,15 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **P0 complete.** Acceptance (vanilla 1.14d + Median XL): every DS1 round-trips
+  byte-identically (2,276 + 2,424), every DT1 parses (six unreferenced 4.1 files
+  excepted), every known name resolves, `.bin` equals `.txt`, every Median XL
+  LvlTypes/LvlPrest reference resolves.
+- `d2-formats`: palettes (`pal.dat`, PL2), DT1 tiles, DC6, DCC, COF, AnimData.
+- `d2-assets`: known-names harvest, `load_excel` (`.bin`/`.txt` by game version).
+- `capy-history`: atomic saves with `CHANGED.txt` and mark-as-packed, deduplicated
+  snapshot store with retention, gix milestones; crash-safe (kill test).
+- `scripts/oracle_renders.py`: reference renders for the P1 oracle test.
 - `d2-assets`: read-only MPQ reader (v1-v4 headers, encryption and FIX_KEY,
   implode, zlib, bzip2), loose-folder and stub CASC sources, an N-layer
   overlay, TOML game profiles (Vanilla, Median XL), a known-names container
