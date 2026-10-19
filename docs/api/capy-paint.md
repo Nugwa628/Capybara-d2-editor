@@ -80,8 +80,13 @@ impl PaintSession {
     pub fn into_frames(self) -> Vec<Vec<d2_formats::IndexedImage>>;
     pub fn palette(&self) -> &d2_formats::palette::Palette;
     pub fn ramps(&self) -> &Ramps;
-    /// Swap palette (e.g. another act); pixels keep their indices.
+    /// Swap palette (e.g. another act); pixels keep their indices. Not
+    /// undoable; the session is dirty until the next `mark_saved`.
     pub fn set_palette(&mut self, palette: d2_formats::palette::Palette);
+    /// Display-only swap (preview under another act): same palette/ramps
+    /// change and `revision` bump as `set_palette`, but never dirties the
+    /// session and records no history. A pending `set_palette` stays dirty.
+    pub fn set_display_palette(&mut self, palette: d2_formats::palette::Palette);
 
     // history
     pub fn undo(&mut self) -> bool; pub fn redo(&mut self) -> bool;
@@ -129,7 +134,16 @@ impl PaintSession {
     pub fn mirror_direction(&mut self, src: usize, dst: usize) -> Result<()>;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)] pub struct CellViolation { pub frame: FrameRef, pub cell_x: u32, pub cell_y: u32, pub colors: usize }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CellViolation {
+    pub frame: FrameRef,
+    pub cell_x: u32, pub cell_y: u32,      // column / row in the direction's 4x4 grid
+    pub colors: usize,                     // distinct values, transparent counts as one
+    /// The cell's pixels in frame-image coordinates, (x0, y0, x1, y1), end
+    /// exclusive. Exactly the decoder's cell (`d2_formats::dcc::cell_spans`):
+    /// 1..=5 pixels per side (partial first cell, merged trailing sliver).
+    pub rect: (u32, u32, u32, u32),
+}
 /// DCC stores each 4x4 cell with at most 4 distinct pixel values (see docs/specs/dc6-dcc.md); list cells over the limit.
 pub fn dcc_cell_violations(frames: &[Vec<d2_formats::IndexedImage>]) -> Vec<CellViolation>;
 /// Reduce offending cells to 4 colours (merge nearest by RGB distance); returns how many cells changed.

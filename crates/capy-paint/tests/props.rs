@@ -517,6 +517,23 @@ fn dirty_tracking() {
     assert!(s.is_dirty());
     s.mark_saved();
     assert!(!s.is_dirty());
+    // A display-only swap never dirties and records nothing, but still moves
+    // the revision so palette caches refresh.
+    let (r, undo, redo) = (s.revision(), s.undo_label().map(str::to_owned), s.can_redo());
+    let mut other = test_palette();
+    other.colors[3] = [1, 2, 3];
+    s.set_display_palette(other.clone());
+    assert!(!s.is_dirty());
+    assert_eq!(s.palette(), &other);
+    assert_eq!(s.ramps().ramp_of(3), capy_paint::Ramps::build(&other).ramp_of(3));
+    assert!(s.revision() > r);
+    assert_eq!(s.undo_label().map(str::to_owned), undo);
+    assert_eq!(s.can_redo(), redo);
+    // It does not clear a pending real palette change either.
+    s.set_palette(test_palette());
+    s.set_display_palette(other);
+    assert!(s.is_dirty());
+    s.mark_saved();
     // Revision moves on every change, including undo and redo.
     let r = s.revision();
     s.undo();
