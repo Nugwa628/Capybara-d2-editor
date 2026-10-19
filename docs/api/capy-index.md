@@ -66,7 +66,8 @@ CREATE TABLE used_in(asset_id INTEGER NOT NULL, ds1_path TEXT NOT NULL, cells IN
 CREATE VIRTUAL TABLE assets_fts USING fts5(gen_name, path, class, color, texture,
   content='assets', content_rowid='id', tokenize="unicode61 tokenchars '_\\'");
 ```
-`user.db` (schema_version 1; migrations forward-only, never dropped):
+`user.db` (schema_version 2; migrations forward-only, never dropped; 1 → 2
+adds `sprite_palettes`, see "Sprite palette memory"):
 ```sql
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE aliases(profile TEXT NOT NULL, key TEXT NOT NULL, alias TEXT NOT NULL, PRIMARY KEY(profile, key));
@@ -79,6 +80,10 @@ CREATE TABLE recents(profile TEXT NOT NULL, key TEXT NOT NULL, last_used_unix_ms
   PRIMARY KEY(profile, key));
 CREATE TABLE saved_searches(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, query TEXT NOT NULL,
   position INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0);
+-- schema 2
+CREATE TABLE sprite_palettes(profile TEXT NOT NULL, key TEXT NOT NULL, palette TEXT NOT NULL,
+  updated_unix_ms INTEGER NOT NULL, PRIMARY KEY(profile, key));
+CREATE INDEX sprite_palettes_by_time ON sprite_palettes(profile, updated_unix_ms);
 ```
 
 ## Rust API
@@ -273,3 +278,11 @@ impl UserDb {
     pub fn folder_palette(&self, profile: &str, key: &str) -> Result<Option<String>>;
 }
 ```
+As implemented: keys are stored lower-cased (Unicode `to_lowercase`) with
+`/` turned into `\`, so `Data/Global/UI/x.DC6` and `data\global\ui\x.dc6` are
+one entry and both separators work in every call. Labels are trimmed and
+stored as given; a blank label forgets like `None`. Every write is strictly
+newer than the profile's earlier writes (as `record_use`), so "most recent"
+is deterministic. `folder_palette` matches the key's direct parent only (not
+subfolders), counts the file's own entry, and treats a bare file name as the
+"no folder" folder.

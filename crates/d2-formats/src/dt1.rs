@@ -1,5 +1,7 @@
-//! DT1 tile files (`data\global\tiles\**\*.dt1`). Read-only: there is no
-//! writer and there never will be.
+//! DT1 tile files (`data\global\tiles\**\*.dt1`). There is no general writer:
+//! the one way to produce a DT1 is [`crate::remap::remap_indices`], which
+//! rewrites the pixel literals of an existing file in place (palette index
+//! remapping) and leaves every other byte alone.
 //!
 //! ```text
 //! 0x000 i32   version major (7; the only value the game checks)
@@ -157,54 +159,80 @@ fn truncated(offset: usize, needed: usize) -> FormatError {
     }
 }
 
+/// Where [`Dt1::parse`] found each structure, for in-place patching.
+/// `block_headers` and `block_data` hold one absolute file offset per block,
+/// in the order of `dt1.tiles.iter().flat_map(|t| &t.blocks)`.
+#[derive(Debug, Default)]
+pub(crate) struct Layout {
+    pub tile_headers: Vec<usize>,
+    pub block_headers: Vec<usize>,
+    pub block_data: Vec<usize>,
+}
+
+/// Length of the file header, tile header and sub-block header.
+pub(crate) const HEADER_LENS: (usize, usize, usize) =
+    (HEADER_LEN, TILE_HEADER_LEN, BLOCK_HEADER_LEN);
+
 impl Dt1 {
     pub fn parse(bytes: &[u8]) -> Result<Dt1> {
-        if bytes.len() < HEADER_LEN {
-            return Err(truncated(bytes.len(), HEADER_LEN - bytes.len()));
-        }
-        let major = i32_at(bytes, 0).ok_or_else(|| truncated(0, 4))?;
-        let flags = i32_at(bytes, 4).ok_or_else(|| truncated(4, 4))?;
-        if major != 7 {
-            return Err(FormatError::UnsupportedVersion {
-                format: FORMAT,
-                version: i64::from(major),
-            });
-        }
-        let count = i32_at(bytes, 268).ok_or_else(|| truncated(268, 4))?;
-        let table = i32_at(bytes, 272).ok_or_else(|| truncated(272, 4))?;
-        let count = usize::try_from(count)
-            .map_err(|_| invalid("tile count", 268, format!("negative count {count}")))?;
-        let table = usize::try_from(table)
-            .map_err(|_| invalid("tile table offset", 272, format!("negative offset {table}")))?;
-        if table > bytes.len() || count > (bytes.len() - table) / TILE_HEADER_LEN {
-            return Err(invalid(
-                "tile count",
-                268,
-                format!(
-                    "{count} tile headers at {table:#x} do not fit in {} bytes",
-                    bytes.len()
-                ),
-            ));
-        }
-        let budget = bytes.len().saturating_add(DATA_SLACK);
-        let mut copied = 0usize;
-        let mut tiles = Vec::with_capacity(count);
-        for i in 0..count {
-            tiles.push(parse_tile(
-                bytes,
-                table + i * TILE_HEADER_LEN,
-                &mut copied,
-                budget,
-            )?);
-        }
-        Ok(Dt1 {
-            version: (major, flags),
-            tiles,
-        })
+        parse_located(bytes).map(|(dt1, _)| dt1)
     }
 }
 
-fn parse_tile(bytes: &[u8], at: usize, copied: &mut usize, budget: usize) -> Result<Tile> {
+/// [`Dt1::parse`] plus the file offset of every header and block.
+pub(crate) fn parse_located(bytes: &[u8]) -> Result<(Dt1, Layout)> {
+    if bytes.len() < HEADER_LEN {
+        return Err(truncated(bytes.len(), HEADER_LEN - bytes.len()));
+    }
+    let major = i32_at(bytes, 0).ok_or_else(|| truncated(0, 4))?;
+    let flags = i32_at(bytes, 4).ok_or_else(|| truncated(4, 4))?;
+    if major != 7 {
+        return Err(FormatError::UnsupportedVersion {
+            format: FORMAT,
+            version: i64::from(major),
+        });
+    }
+    let count = i32_at(bytes, 268).ok_or_else(|| truncated(268, 4))?;
+    let table = i32_at(bytes, 272).ok_or_else(|| truncated(272, 4))?;
+    let count = usize::try_from(count)
+        .map_err(|_| invalid("tile count", 268, format!("negative count {count}")))?;
+    let table = usize::try_from(table)
+        .map_err(|_| invalid("tile table offset", 272, format!("negative offset {table}")))?;
+    if table > bytes.len() || count > (bytes.len() - table) / TILE_HEADER_LEN {
+        return Err(invalid(
+            "tile count",
+            268,
+            format!(
+                "{count} tile headers at {table:#x} do not fit in {} bytes",
+                bytes.len()
+            ),
+        ));
+    }
+    let budget = bytes.len().saturating_add(DATA_SLACK);
+    let mut copied = 0usize;
+    let mut tiles = Vec::with_capacity(count);
+    let mut layout = Layout::default();
+    for i in 0..count {
+        let at = table + i * TILE_HEADER_LEN;
+        layout.tile_headers.push(at);
+        tiles.push(parse_tile(bytes, at, &mut copied, budget, &mut layout)?);
+    }
+    Ok((
+        Dt1 {
+            version: (major, flags),
+            tiles,
+        },
+        layout,
+    ))
+}
+
+fn parse_tile(
+    bytes: &[u8],
+    at: usize,
+    copied: &mut usize,
+    budget: usize,
+    layout: &mut Layout,
+) -> Result<Tile> {
     let h = slice_at(bytes, at, TILE_HEADER_LEN).ok_or_else(|| truncated(at, TILE_HEADER_LEN))?;
     let i32f = |o: usize| i32_at(h, o).unwrap_or(0);
     let mut subtile_flags = [0u8; 25];
@@ -266,6 +294,8 @@ fn parse_tile(bytes: &[u8], at: usize, copied: &mut usize, budget: usize) -> Res
                 "sub-block headers and data exceed the file length by more than the allowed slack",
             ));
         }
+        layout.block_headers.push(hdr_at);
+        layout.block_data.push(data_at);
         let raw_format = i16_at(hdr, 8).unwrap_or(0);
         blocks.push(Block {
             x: i16_at(hdr, 0).unwrap_or(0),

@@ -353,7 +353,7 @@ impl Tile {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dt1 { pub version: (i32, i32), pub tiles: Vec<Tile> }
-impl Dt1 { pub fn parse(bytes: &[u8]) -> Result<Dt1>; }   // no writer, ever
+impl Dt1 { pub fn parse(bytes: &[u8]) -> Result<Dt1>; }   // no general writer; only remap::remap_indices patches pixels in place (P7)
 
 // ───────────── dc6.rs / dcc.rs / cof.rs / animdata.rs (wave 2) ─────────────
 pub struct Dc6 { pub version: i32, pub flags: u32, pub encoding: u32, pub directions: u32, pub frames_per_direction: u32, pub frames: Vec<Dc6Frame> }
@@ -436,3 +436,27 @@ pub fn index_histogram(kind: SpriteKind, bytes: &[u8]) -> Result<[u64; 256]>;
 /// Files `parse` rejects (including the six DT1 4.1 files) are errors.
 pub fn remap_indices(kind: SpriteKind, bytes: &[u8], table: &IndexTable) -> Result<Vec<u8>>;
 ```
+As implemented:
+- `SpriteKind` derives `Clone, Copy, Debug, PartialEq, Eq, Hash`;
+  `from_path` takes the extension of the last path segment (`\` or `/`).
+- Table errors are `FormatError::Invalid { format: "remap", what: "index table", offset: <index> }`
+  and are reported before the file is parsed.
+- Histogram: DT1/DC6 count the literal bytes of every block/frame stream once
+  per block/frame that draws them (tiles sharing sub-block data count it
+  twice; DC6 literals a frame clips away still count). Isometric DT1 blocks
+  that are not exactly 256 bytes draw nothing and count nothing. DCC counts
+  the opaque pixels of the decoded frames, so its index-0 count is 0.
+- DT1/DC6 data shared by several tiles/frames is patched once. Bytes no
+  table entry, tile or block points at (padding, DC6 slack, unreferenced
+  frame records, trailing data) are untouched.
+- A damaged DT1/DC6 whose pixel literals overlap one of its own headers or
+  RLE control bytes is `FormatError::Invalid { what: "pixel data" }` when
+  the table would change such a byte (the identity table still returns it
+  unchanged). No shipped file does this.
+- DCC: the re-encoded file is decoded again and must give exactly the mapped
+  frames, otherwise `FormatError::Invalid { what: "re-encoded frames" }`.
+- Full corpora (vanilla + Median XL, `CAPY_FULL_CORPUS=1`): 643/655 DT1
+  (the 12 others are the 4.1 files, six per install) and 4065/4065 DC6 are
+  byte-identical under the identity table and change only pixel bytes under
+  an act5 → act1 style table and a random table; 47,939/47,939 DCC decode to
+  the mapped frames.
