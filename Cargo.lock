@@ -1705,6 +1705,7 @@ dependencies = [
  "d2-assets",
  "d2-formats",
  "egui_dock",
+ "image",
  "rfd",
  "serde",
  "serde_json",

@@ -5,7 +5,9 @@ use capy_render::objects::frame_index;
 
 use super::{paint_checker, rgba_texture};
 use crate::config::AppMode;
-use crate::sprites::preview::{Built, PreviewKey, build_frames, cof_path, file_direction};
+use capy_render::file_direction;
+
+use crate::sprites::preview::{Built, PreviewKey, build_frames, cof_path};
 use crate::sprites::viewer::Tex;
 use crate::state::AppState;
 
@@ -72,10 +74,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     };
     if state.sprites.preview.key.as_ref() != Some(&key) {
         let built = match build_frames(&overlay, &catalog, &info, key.direction, &palette) {
-            Ok((cof, frames, delta)) => Built {
+            Ok((directions, frames, delta)) => Built {
                 info: info.clone(),
                 cof_path: cof_path(&info),
-                directions: cof.directions,
+                directions,
                 frames: frames
                     .into_iter()
                     .enumerate()

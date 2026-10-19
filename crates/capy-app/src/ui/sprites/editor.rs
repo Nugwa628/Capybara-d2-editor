@@ -591,17 +591,16 @@ fn dcc_check(ui: &mut Ui, state: &mut AppState) {
         && let Some(e) = editor(state)
     {
         e.go_to(v.frame.dir, v.frame.frame);
-        if let Some(r) = e.cell_rect(&v) {
-            // Centre the view on the cell.
-            if let Some(f) = e.frame() {
-                let c = Vec2::new((r.0 + r.2) as f32 / 2.0, (r.1 + r.3) as f32 / 2.0);
-                let half = Vec2::new(f.width as f32, f.height as f32) / 2.0;
-                e.pan = (half - c) * e.zoom;
-            }
-            let mut m = memory(ui);
-            m.highlight = Some((v.frame.dir, v.frame.frame, r));
-            set_memory(ui, m);
+        let r = crate::sprites::editor::cell_rect(&v);
+        // Centre the view on the cell.
+        if let Some(f) = e.frame() {
+            let c = Vec2::new((r.0 + r.2) as f32 / 2.0, (r.1 + r.3) as f32 / 2.0);
+            let half = Vec2::new(f.width as f32, f.height as f32) / 2.0;
+            e.pan = (half - c) * e.zoom;
         }
+        let mut m = memory(ui);
+        m.highlight = Some((v.frame.dir, v.frame.frame, r));
+        set_memory(ui, m);
     }
 }
 

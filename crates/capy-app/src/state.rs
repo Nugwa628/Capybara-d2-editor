@@ -9,6 +9,7 @@ use bevy_egui::egui;
 use d2_assets::{GamePath, LayerId, MapCatalog, Overlay, Profile};
 use d2_formats::ds1::Ds1;
 
+use crate::browser::BrowserState;
 use crate::config::Config;
 use crate::doc::{MapDoc, RenderState, SourceCategory, SourceInfo, categorize_source};
 use crate::edit::state::EditState;
@@ -150,6 +151,8 @@ pub struct AppState {
     pub edit: EditState,
     /// Sprites mode: viewer, converter, editor, and the map's sprite preview.
     pub sprites: SpritesState,
+    /// The asset browser, the Ctrl+K palette and the user's lists.
+    pub browser: BrowserState,
 }
 
 const MAX_LOG: usize = 2000;
@@ -187,6 +190,7 @@ impl AppState {
             quit_requested: false,
             edit: EditState::default(),
             sprites: SpritesState::default(),
+            browser: BrowserState::default(),
         }
     }
 

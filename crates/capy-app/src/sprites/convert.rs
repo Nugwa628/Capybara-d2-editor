@@ -533,6 +533,27 @@ impl BatchTask {
     }
 }
 
+/// The one-line ending of a batch for the Converter: "Cancelled ..." when
+/// the user stopped it (partial counts), "Done ..." otherwise.
+pub fn batch_outcome(report: &BatchReport, secs: f32) -> String {
+    let counts = format!(
+        "{} converted, {} skipped, {} failed",
+        report.converted,
+        report.skipped,
+        report.failed.len()
+    );
+    if report.cancelled {
+        let how_far = report
+            .log
+            .last()
+            .filter(|l| l.starts_with("cancelled"))
+            .map_or_else(String::new, |l| format!(" ({l})"));
+        format!("Cancelled after {secs:.1}s{how_far}: {counts}")
+    } else {
+        format!("Done in {secs:.1}s: {counts}")
+    }
+}
+
 /// The log lines of a finished batch.
 pub fn report_lines(report: &BatchReport) -> Vec<String> {
     let mut out = vec![format!(
@@ -556,6 +577,21 @@ pub fn report_lines(report: &BatchReport) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::sprites::palette::grey_palette;
+
+    #[test]
+    fn a_cancelled_batch_says_cancelled_not_done() {
+        let mut report = BatchReport {
+            converted: 3,
+            log: vec!["cancelled after 3 of 10 items".to_owned()],
+            cancelled: true,
+            ..BatchReport::default()
+        };
+        let text = batch_outcome(&report, 1.0);
+        assert!(text.starts_with("Cancelled"), "{text}");
+        assert!(text.contains("3 of 10") && text.contains("3 converted"), "{text}");
+        report.cancelled = false;
+        assert!(batch_outcome(&report, 1.0).starts_with("Done"));
+    }
 
     #[test]
     fn frame_layouts_must_match_the_file_count() {

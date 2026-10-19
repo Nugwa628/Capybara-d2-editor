@@ -496,12 +496,8 @@ impl EditorState {
         if *self.session.palette() == palette {
             return;
         }
-        let was_dirty = self.session.is_dirty();
         self.cancel_gesture();
-        self.session.set_palette(palette);
-        if !was_dirty {
-            self.session.mark_saved();
-        }
+        self.session.set_display_palette(palette);
     }
 
     // ───────── gestures ─────────
@@ -1083,41 +1079,6 @@ impl EditorState {
         let r = reduce_dcc_cells(&mut self.session);
         self.run(r)
     }
-
-    /// Frame-pixel rectangle `(x0, y0, x1, y1)` (end exclusive) of a cell.
-    pub fn cell_rect(&self, v: &CellViolation) -> Option<(i32, i32, i32, i32)> {
-        let frames = self.session.frames().get(v.frame.dir)?;
-        let img = frames.get(v.frame.frame)?;
-        let (mut ox, mut oy) = (i32::MAX, i32::MAX);
-        for f in frames {
-            if let Some((x0, y0)) = opaque_min(f) {
-                ox = ox.min(x0);
-                oy = oy.min(y0);
-            }
-        }
-        if ox == i32::MAX {
-            return None;
-        }
-        let x0 = ox + v.cell_x as i32 * 4 - img.offset_x;
-        let y0 = oy + v.cell_y as i32 * 4 - img.offset_y;
-        Some((x0.max(0), y0.max(0), x0 + 4, y0 + 4))
-    }
-}
-
-/// Top-left opaque pixel in anchor space.
-fn opaque_min(img: &IndexedImage) -> Option<(i32, i32)> {
-    let w = img.width as usize;
-    if w == 0 {
-        return None;
-    }
-    let (mut x0, mut y0) = (usize::MAX, usize::MAX);
-    for (i, &a) in img.alpha.iter().enumerate() {
-        if a != 0 {
-            x0 = x0.min(i % w);
-            y0 = y0.min(i / w);
-        }
-    }
-    (x0 != usize::MAX).then(|| (img.offset_x + x0 as i32, img.offset_y + y0 as i32))
 }
 
 /// The pixels of a line from `a` to `b`, both ends included (Bresenham).
@@ -1145,6 +1106,15 @@ pub fn line_points(a: Pt, b: Pt) -> Vec<Pt> {
         }
     }
     out
+}
+
+/// Frame-pixel rectangle `(x0, y0, x1, y1)` (end exclusive) of a DCC cell:
+/// exactly the decoder's cell, which can be 1 to 5 pixels per side (a
+/// partial first cell, a merged trailing sliver).
+pub fn cell_rect(v: &CellViolation) -> (i32, i32, i32, i32) {
+    let (x0, y0, x1, y1) = v.rect;
+    let i = |n: u32| i32::try_from(n).unwrap_or(i32::MAX);
+    (i(x0), i(y0), i(x1), i(y1))
 }
 
 #[cfg(test)]
@@ -1360,9 +1330,36 @@ mod tests {
         }
         assert!(!e.violations().is_empty());
         let v = e.violations()[0].clone();
-        assert!(e.cell_rect(&v).is_some());
+        let (x0, y0, x1, y1) = cell_rect(&v);
+        assert!(x1 > x0 && y1 > y0);
         assert!(e.reduce_all().expect("reduce") > 0);
         assert!(e.violations().is_empty());
+    }
+
+    /// A 5-pixel-wide frame box is one decoder cell (the trailing 1-pixel
+    /// sliver merges into it): the highlight must span all 5 columns, not 4.
+    #[test]
+    fn cell_rect_follows_the_decoder_cell_for_a_five_wide_cell() {
+        let mut img = IndexedImage::new(5, 4, 0, 0);
+        for x in 0..5u32 {
+            img.pixels[x as usize] = 100 + x as u8;
+            img.alpha[x as usize] = 255;
+        }
+        let sprite = Sprite {
+            directions: vec![vec![img]],
+        };
+        let mut e = EditorState::new(
+            sprite,
+            SpriteFormat::Dcc,
+            SpriteSource::Imported("t".into()),
+            palette(),
+        )
+        .expect("editor");
+        let v = e.violations().to_vec();
+        assert_eq!(v.len(), 1, "{v:?}");
+        let (x0, y0, x1, y1) = cell_rect(&v[0]);
+        assert_eq!((x0, x1), (0, 5), "5 wide, not the 4x4 guess");
+        assert_eq!((y0, y1), (0, 1), "the opaque box is one row high");
     }
 
     #[test]

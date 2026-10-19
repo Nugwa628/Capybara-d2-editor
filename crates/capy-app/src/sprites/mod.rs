@@ -116,6 +116,9 @@ pub struct ConverterState {
     pub target: Target,
     /// Open an import in the editor too.
     pub edit_after_import: bool,
+    /// How the last batch ended ("Done: ..." or "Cancelled ..."), and
+    /// whether it was cancelled.
+    pub batch_outcome: Option<(bool, String)>,
 }
 
 impl Default for ConverterState {
@@ -126,6 +129,7 @@ impl Default for ConverterState {
             batch_task: None,
             target: Target::Viewer,
             edit_after_import: false,
+            batch_outcome: None,
         }
     }
 }
@@ -795,6 +799,7 @@ impl AppState {
                     }
                 );
                 self.sprites.converter.batch_task = Some(task);
+                self.sprites.converter.batch_outcome = None;
                 self.info(text);
             }
             Err(e) => self.error(format!("Batch: {e}")),
@@ -822,7 +827,13 @@ impl AppState {
                     for line in convert::report_lines(&report) {
                         self.info(line);
                     }
-                    self.info(format!("Batch finished in {secs:.1}s"));
+                    let outcome = convert::batch_outcome(&report, secs);
+                    if report.cancelled {
+                        self.warn(format!("{outcome}; files already written stay"));
+                    } else {
+                        self.info(outcome.clone());
+                    }
+                    self.sprites.converter.batch_outcome = Some((report.cancelled, outcome));
                     if !report.failed.is_empty() {
                         self.error(format!(
                             "Batch: {} file(s) failed (see the Log)",
@@ -830,10 +841,10 @@ impl AppState {
                         ));
                     }
                 }
-                Err(e) if e.contains("cancelled") => {
-                    self.warn("Batch cancelled; files already written stay")
+                Err(e) => {
+                    self.sprites.converter.batch_outcome = Some((false, format!("Failed: {e}")));
+                    self.error(format!("Batch failed: {e}"));
                 }
-                Err(e) => self.error(format!("Batch failed: {e}")),
             }
         }
     }
@@ -854,11 +865,8 @@ impl AppState {
             Purpose::ImportFolder => {
                 if let Some(dir) = paths.first() {
                     let palette = self.sprite_palette();
-                    let mut opts = self.sprites.converter.import.matching.quantize();
-                    if dir.join("sprite.json").is_file() {
-                        // Real alpha: no colour key (see `convert::build_import`).
-                        opts.transparent_rgb = None;
-                    }
+                    // With sprite.json the library turns colour keying off.
+                    let opts = self.sprites.converter.import.matching.quantize();
                     match capy_sprite::import_frames(dir, &palette, &opts) {
                         Ok((sprite, meta)) => {
                             let format =

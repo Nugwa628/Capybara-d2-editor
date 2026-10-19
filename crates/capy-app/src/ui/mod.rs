@@ -11,6 +11,7 @@ mod map_tools;
 mod map_view;
 mod maps;
 mod menu;
+mod palette;
 mod properties;
 mod shortcuts;
 mod sprites;
@@ -30,6 +31,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::AppMode;
 use crate::state::AppState;
+
+pub use map_tools::cancel_gesture as cancel_map_gesture;
+pub use thumbs::tile_key as tile_key_for;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Panel {
@@ -348,11 +352,24 @@ fn mode_tabs(ui: &mut Ui, state: &mut AppState) {
 pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     state.pixels_per_point = ctx.pixels_per_point();
     state.sync_docs();
+    state.browser_tick(ctx);
+    if !state.edit.modal_open()
+        && !state.sprites.modal_open()
+        && state.browser.prompt.is_none()
+        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K))
+    {
+        state.toggle_palette();
+    }
     match state.config.mode {
         AppMode::Map => shortcuts::handle(ctx, state),
         AppMode::Sprites => sprites::shortcuts(ctx, state),
     }
     focus_sprites_panel(state, dock);
+    if std::mem::take(&mut state.browser.focus_tiles)
+        && let Some(location) = dock.map.find_tab(&Panel::Tiles)
+    {
+        let _ = dock.map.set_active_tab(location);
+    }
     let mut root = root_ui(ctx);
 
     egui::Panel::top("mode_tabs").show(&mut root, |ui| {
@@ -392,6 +409,8 @@ pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     });
 
     dialogs::show_all(ctx, state);
+    tiles::windows(ctx, state);
+    palette::show(ctx, state);
     sprites::dialogs(ctx, state);
     toasts::show(ctx, state);
 }
