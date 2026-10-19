@@ -13,6 +13,11 @@ All notable changes to this project are documented here.
   trip on all vanilla and Median XL maps), `.txt` tables, compiled excel
   `.bin` decoder (LvlTypes, LvlPrest, LvlWarp, Objects, ObjPreset, Levels),
   typed LvlTypes/LvlPrest/Levels views, `.tbl` string tables.
+- `d2-assets` wave 2: `KnownNames::harvest` (listfiles, seed, LvlTypes/LvlPrest
+  file columns and every DS1's tileset references, to a fixed point, keeping only
+  names that resolve), `tables::load_excel` (`.bin`/`.txt` per game version),
+  `GameVersion::excel`, and the P0 acceptance tests (DS1 round trip, names resolve,
+  `.bin` vs `.txt`, Median XL references).
 - `scripts/extract_fixtures.py`: independent Python MPQ extractor used to
   cross-check the Rust reader.
 - `docs/specs/`: reference guides cross-checked against the reference source.
