@@ -197,9 +197,7 @@ data\global\chars\am\cof\amtnhth.cof
 data\global\chars\ne\cof\newlhth.cof
 data\global\chars\ne\hd\nehdlitnuhth.dcc
 data\global\chars\so\cof\sonustf.cof
-data\global\chars\so\tr\sotrmedwl1hs.dcc
 data\global\monsters\an\cof\annuhth.cof
-data\global\monsters\an\hd\anhdnuhth.dcc
 data\global\objects\25\s1\25s1litnuhth.dcc
 data\global\tiles\act1\barracks\barracks.dt1
 data\global\tiles\act1\barracks\gargtrap.dt1

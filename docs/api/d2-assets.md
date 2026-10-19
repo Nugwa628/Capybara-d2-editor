@@ -183,7 +183,13 @@ impl Profile {
 #[derive(Clone, Debug, Default)]
 pub struct KnownNames { /* BTreeSet<GamePath> */ }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct HarvestStats { pub from_listfiles: usize, pub from_seed: usize, pub from_tables: usize, pub from_ds1: usize, pub from_cof: usize, pub rounds: usize }
+pub struct HarvestStats {
+    pub from_listfiles: usize, pub from_seed: usize, pub from_tables: usize,
+    pub from_ds1: usize, pub from_cof: usize,   // names each source contributed first
+    pub rounds: usize,                          // passes, including the final empty one
+    pub unresolved: usize,                      // distinct candidates that resolved nowhere (dropped)
+    pub warnings: Vec<String>,                  // tables/DS1s that failed to parse (skipped)
+}
 impl KnownNames {
     pub fn new() -> KnownNames;
     /// Embedded well-known paths (assets/known-names/seed.txt via include_str!).
@@ -194,8 +200,9 @@ impl KnownNames {
     pub fn len(&self) -> usize;
     pub fn is_empty(&self) -> bool;
     pub fn iter(&self) -> impl Iterator<Item = &GamePath>;
-    /// wave 2: listfiles + seed + names referenced by the excel tables and by
-    /// every DS1/COF found, repeated until no new names appear.
+    /// listfiles + seed + names referenced by the excel tables and by every
+    /// DS1 found (COF: later), repeated until no new names appear. Keeps only
+    /// names that resolve in the overlay.
     pub fn harvest(overlay: &Overlay, version: GameVersion) -> Result<(KnownNames, HarvestStats)>;
     pub fn load(path: &std::path::Path) -> Result<KnownNames>; // one name per line
     pub fn save(&self, path: &std::path::Path) -> Result<()>;
@@ -205,5 +212,8 @@ impl KnownNames {
 /// 1.13c profiles read `<stem>.bin` first (the 1.13c loader's default), then
 /// `<stem>.txt`; 1.14d profiles read `.txt` first, then `.bin`. Levels from
 /// .bin needs both levels.bin and leveldefs.bin (`excel::decode_levels_bin`).
+/// The form is chosen by priority across the whole overlay, not per layer.
+/// A preferred form that exists but fails to decode is an error (no silent
+/// fallback); an absent form falls back to the other.
 pub fn load_excel(overlay: &Overlay, kind: d2_formats::excel::ExcelTableKind, version: GameVersion) -> Result<d2_formats::txt::TxtTable>;
 ```
