@@ -156,12 +156,10 @@ fn worker_loop(rx: Receiver<JobRequest>, tx: Sender<JobResult>) {
         };
         // One sprite cache for as long as the jobs share overlay and tables.
         let overlay = req.overlay.clone();
-        let animdata = job::load_animdata(&overlay);
         let sprites = ObjectSprites::new(&overlay, &catalog);
         let source = ObjectSource {
             sprites: &sprites,
             catalog: &catalog,
-            animdata: animdata.as_ref(),
         };
         let mut current = req;
         loop {

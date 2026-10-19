@@ -16,8 +16,8 @@ pub const DEFAULT_KEEP_LAST: usize = 100;
 pub const MAX_AUTOSAVE_MINUTES: u32 = 240;
 pub const MAX_RECENT_MAPS: usize = 20;
 /// Default install locations probed on first run.
-pub const VANILLA_INSTALL: &str = r"C:\Program Files (x86)\Diablo II";
-pub const MXL_INSTALL: &str = r"C:\games\median-xl";
+pub const VANILLA_INSTALL: &str = d2_assets::installs::DEFAULT_VANILLA_INSTALL;
+pub const MXL_INSTALL: &str = d2_assets::installs::DEFAULT_MXL_INSTALL;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

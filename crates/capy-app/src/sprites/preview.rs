@@ -3,7 +3,7 @@
 //! object catalog (game tables) is `AppState::object_catalog`; the frames
 //! are built when the selection or direction changes.
 
-use capy_render::objects::{ObjectOptions, ObjectSprites};
+use capy_render::objects::ObjectSprites;
 use d2_assets::objects::{ObjectCatalog, ObjectInfo, SpriteBase};
 use d2_assets::{GamePath, Overlay};
 use d2_formats::palette::Palette;
@@ -93,38 +93,21 @@ pub fn build_frames(
     direction: u8,
     palette: &Palette,
 ) -> Result<(u8, Vec<RawFrame>, Option<u32>), String> {
-    let path = cof_path(info).ok_or_else(|| format!("{} has no sprite", info.name))?;
+    cof_path(info).ok_or_else(|| format!("{} has no sprite", info.name))?;
     let sprites = ObjectSprites::new(overlay, catalog);
-    let opts = ObjectOptions::default();
-    let first = sprites
-        .frame_of_info(info, &opts, Some(0), direction)
+    // capy-render's delta rule: FrameDelta, else the AnimData speed, else 256.
+    let (frames, delta) = sprites
+        .frames_of_info(info, direction)
         .map_err(|r| r.to_string())?;
-    let count = first.frames_per_direction.max(1);
-    let mut frames = Vec::with_capacity(usize::from(count));
     let raw = |frame: &capy_render::ObjectFrame| {
         frame
             .composite(palette)
             .map(|(img, offset)| (img.width, img.height, img.pixels, offset))
     };
-    frames.push(raw(&first));
-    for f in 1..count {
-        let frame = sprites
-            .frame_of_info(info, &opts, Some(f), direction)
-            .map_err(|r| r.to_string())?;
-        frames.push(raw(&frame));
-    }
-    // Objects animate at their FrameDelta; monsters at the AnimData speed.
-    let delta = info.frame_delta.or_else(|| {
-        let anim = overlay
-            .read_bytes(&GamePath::new("data\\global\\animdata.d2"))
-            .ok()
-            .flatten()
-            .and_then(|b| d2_formats::animdata::AnimData::parse(&b).ok())?;
-        let key = path.file_name().to_owned();
-        anim.get(&key).map(|r| r.speed)
-    });
+    let directions = frames.first().map_or(1, |f| f.directions.max(1));
+    let raw_frames = frames.iter().map(|f| raw(f)).collect();
     // The COF's direction count, for the direction picker.
-    Ok((first.directions.max(1), frames, delta))
+    Ok((directions, raw_frames, Some(delta)))
 }
 
 #[cfg(test)]

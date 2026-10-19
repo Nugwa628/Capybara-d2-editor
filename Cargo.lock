@@ -1712,7 +1712,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
- "windows-registry",
  "windows-sys 0.61.2",
  "winit",
  "winresource",

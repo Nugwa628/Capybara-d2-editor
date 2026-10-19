@@ -11,7 +11,7 @@ use bevy_egui::{
 };
 use d2_assets::Profile;
 
-use crate::config::{self, Config};
+use crate::config::Config;
 use crate::hooks::{self, DebugHooks};
 use crate::paths::Paths;
 use crate::render::{MapCamera, MapRender, RenderPlugin};
@@ -58,21 +58,10 @@ pub fn prepare(paths: Paths) -> Prepared {
         }
     };
 
-    let profile_files_exist = std::fs::read_dir(&paths.profiles)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .any(|e| e.path().extension().is_some_and(|x| x == "toml"))
-        })
-        .unwrap_or(false);
-    if first_run || !profile_files_exist {
+    if first_run || !d2_assets::installs::has_profile_files(&paths.profiles) {
         // The default locations, plus the install path the Windows registry
         // names (read-only).
-        let registry = crate::installs::registry_install_paths();
-        let (vanilla, mxl) = crate::installs::first_run_candidates(
-            std::path::Path::new(config::VANILLA_INSTALL),
-            std::path::Path::new(config::MXL_INSTALL),
-            &registry,
-        );
+        let (vanilla, mxl) = d2_assets::installs::InstallSearch::system().candidates();
         match crate::installs::seed_profiles(&paths.profiles, &vanilla, &mxl) {
             Ok(written) => {
                 for f in written {

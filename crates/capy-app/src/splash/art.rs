@@ -311,7 +311,7 @@ pub fn door_frame(
             img.data[j..j + 3].copy_from_slice(&rgb);
         }
     }
-    for p in img.data.chunks_exact_mut(4) {
+    for p in img.data.as_chunks_mut::<4>().0 {
         p[3] = 255; // drawn on black: everything is opaque
     }
     Ok(img)

@@ -54,7 +54,6 @@ egui_dock = { workspace = true, features = ["serde"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
-windows-registry.workspace = true
 
 # The exe icon and version resource (see build.rs). Only Windows hosts can
 # compile resources; elsewhere the build script does nothing.

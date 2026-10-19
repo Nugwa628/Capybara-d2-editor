@@ -68,8 +68,13 @@ fn decode_entry(bytes: &[u8]) -> Option<RgbaImage> {
     for y in 0..height {
         let src = &pixels[(height - 1 - y) * width * 4..][..width * 4];
         let dst = &mut data[y * width * 4..][..width * 4];
-        for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
-            d.copy_from_slice(&[s[2], s[1], s[0], s[3]]);
+        for (d, s) in dst
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(src.as_chunks::<4>().0)
+        {
+            *d = [s[2], s[1], s[0], s[3]];
         }
     }
     Some(RgbaImage {
