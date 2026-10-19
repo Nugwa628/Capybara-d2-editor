@@ -5,6 +5,11 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **P3 complete.** Tiles panel asset browser (virtualized thumbnails, Ctrl+wheel
+  size, map/profile/sprite scopes, set tile as brush), Ctrl+K command palette with
+  filter tokens and inline query errors, recents, favorite groups with drag
+  reorder, pinned saved searches, aliases, tags, notes, find-similar and used-in.
+- README, user guide and CLI reference.
 - **P6 complete: Sprites mode.** Top-level Map Editor / Sprites tabs; DC6/DCC/COF
   viewer (playback at AnimData speed, palettes, gamma, COF layers, box/anchor
   overlay); converter (image import with quantize/dither/transparent protection,

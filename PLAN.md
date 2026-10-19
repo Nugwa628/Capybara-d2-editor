@@ -1,6 +1,6 @@
 # Capybara Map Editor — Plan
 
-Status: **P0, P1, P2 and P6 done** (2026-10-19). P3/P4/P5 libraries done; UI lane: P3 tile browser + Ctrl+K in progress, then P4 history UI, P5 object/NPC placement, release.
+Status: **P0, P1, P2, P3 and P6 done** (2026-10-19). P4/P5 libraries done; UI lane: P4 history UI in progress, then P5 object/NPC placement in the map view, release.
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -143,6 +143,10 @@ Status: **P0, P1, P2 and P6 done** (2026-10-19). P3/P4/P5 libraries done; UI lan
 - Converter: PNG export -> import (with sprite.json) -> encode -> decode is exact; sheet round trip; batch conversion of trees both ways with cancel.
 - Editor: palette lock (no opaque index 0, every pixel a palette index) and undo/redo laws hold under randomized operation sequences; DCC 4x4-cell limit check uses the decoder's own cell partition and is proven by an encode/decode round trip.
 - App: scripted end-to-end test exports a real DCC, re-imports and saves it to a game path (identical frames, CHANGED.txt, snapshot), edits it with outline and gradient (still palette-locked), and runs the single-exe CLI render.
+
+### P3 acceptance (2026-10-19)
+- Index search: 26/26 table-driven queries over the Median XL index (index, generated name, colour, tag, alias, source file, used-in, similar, mirrored, src, type) return the expected asset in the top 5.
+- App: scripted end-to-end test on Median XL searches `color:green type:floor file:whimsyfloor.dt1`, uses the hit as the paint brush, paints, and checks recents, favorite, alias and the saved cell; alias search returns it first.
 
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
