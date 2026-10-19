@@ -24,7 +24,10 @@ use d2_formats::ds1::Ds1;
 use d2_formats::palette::Palette;
 
 use crate::error::{RenderError, Result};
-use crate::order::{DrawItem, DrawPass, MissingTile, Visibility, draw_list};
+use crate::objects::{MissingObject, ObjectOptions, ObjectSprites};
+use crate::order::{
+    DrawEntry, DrawItem, DrawPass, MissingTile, ObjectDrawItem, Visibility, draw_list_with_objects,
+};
 use crate::tileset::{TILE_H, TILE_W, TileClass, TileGeometry, TileSet};
 
 /// Sprite blend modes keyed on COF `trans_b` (`preview.c:291-380`): 25/50/75%
@@ -38,6 +41,12 @@ pub enum Blend {
     Additive,
     Multiply,
     Screen,
+    /// DS1Edit's projected object shadow (`a5_draw_shadow_sprite`,
+    /// `ui/compat.h:151`): the sprite as a black silhouette with coverage
+    /// `1 - level/32`, so `out = dst * level / 32`. `level` is D2's darkness
+    /// level, 10 for opaque layers and 28 for transparent ones
+    /// (`preview.c:2259`). The source colour is ignored.
+    Darken(u8),
 }
 
 impl Blend {
@@ -49,6 +58,10 @@ impl Blend {
             Blend::Alpha25 => 0.25,
             Blend::Alpha50 => 0.5,
             Blend::Alpha75 => 0.75,
+            Blend::Darken(level) => {
+                let weight = 1.0 - f32::from(level.min(32)) / 32.0;
+                return tinted(dst, [0, 0, 0], weight);
+            }
             Blend::Additive => {
                 return [
                     dst[0].saturating_add(src[0]),
@@ -72,31 +85,37 @@ impl Blend {
         if weight >= 1.0 {
             return [src[0], src[1], src[2], 255];
         }
-        // The reference tints the sprite with (f, f, f, f) (`preview.c:182`)
-        // but its blender is (ALPHA, INVERSE_ALPHA), so the tint scales the
-        // colour as well as the coverage: out = d * (1 - f) + s * f * f. That
-        // is a straight "over" of colour `s * f` with coverage `f` (measured on
-        // the shadow pixels of the oracle: 0.5 d + 0.25 s). Over an opaque
-        // pixel the result stays opaque; DS1Edit's own canvas drops to alpha
-        // 0.75 there, a blender artefact we do not reproduce.
-        // The tint is stored as a byte, so the weight is quantised: 0.5 is 128/255.
-        let weight = (weight * 255.0 + 0.5).floor() / 255.0;
-        let da = f32::from(dst[3]) / 255.0;
-        let out_a = weight + da * (1.0 - weight);
-        if out_a <= 0.0 {
-            return dst;
-        }
-        let mix = |s: u8, d: u8| -> u8 {
-            let v = (f32::from(s) * weight * weight + f32::from(d) * da * (1.0 - weight)) / out_a;
-            v.round().clamp(0.0, 255.0) as u8
-        };
-        [
-            mix(src[0], dst[0]),
-            mix(src[1], dst[1]),
-            mix(src[2], dst[2]),
-            (out_a * 255.0).round().clamp(0.0, 255.0) as u8,
-        ]
+        tinted(dst, src, weight)
     }
+}
+
+/// A draw tinted with `(w, w, w, w)` under the blender `(ALPHA, INVERSE_ALPHA)`.
+///
+/// The reference tints the sprite with (f, f, f, f) (`preview.c:182`)
+/// but its blender is (ALPHA, INVERSE_ALPHA), so the tint scales the
+/// colour as well as the coverage: out = d * (1 - f) + s * f * f. That
+/// is a straight "over" of colour `s * f` with coverage `f` (measured on
+/// the shadow pixels of the oracle: 0.5 d + 0.25 s). Over an opaque
+/// pixel the result stays opaque; DS1Edit's own canvas drops to alpha
+/// 0.75 there, a blender artefact we do not reproduce.
+/// The tint is stored as a byte, so the weight is quantised: 0.5 is 128/255.
+fn tinted(dst: [u8; 4], src: [u8; 3], weight: f32) -> [u8; 4] {
+    let weight = (weight * 255.0 + 0.5).floor() / 255.0;
+    let da = f32::from(dst[3]) / 255.0;
+    let out_a = weight + da * (1.0 - weight);
+    if out_a <= 0.0 {
+        return dst;
+    }
+    let mix = |s: u8, d: u8| -> u8 {
+        let v = (f32::from(s) * weight * weight + f32::from(d) * da * (1.0 - weight)) / out_a;
+        v.round().clamp(0.0, 255.0) as u8
+    };
+    [
+        mix(src[0], dst[0]),
+        mix(src[1], dst[1]),
+        mix(src[2], dst[2]),
+        (out_a * 255.0).round().clamp(0.0, 255.0) as u8,
+    ]
 }
 
 /// How DT1 shadow tiles are blended: DS1Edit's default shadow mode is 3,
@@ -112,6 +131,17 @@ pub struct RenderOptions {
     pub gamma: f32,
     pub visibility: Visibility,
     pub background: [u8; 4],
+    /// Animation tick of object sprites (the editor's 25 Hz counter): the
+    /// frame shown is `tick * frame_delta / 256 mod frame_count`. `None` shows
+    /// frame 0. Only used by [`render_with_objects`].
+    pub animation_tick: Option<u32>,
+    /// User direction of object and monster sprites (0 = the editor's
+    /// default), mapped through the editor's direction tables.
+    pub object_direction: u8,
+    /// Per-object frame pins, see [`ObjectOptions::frame_overrides`].
+    pub object_frames: Option<std::sync::Arc<[Option<u8>]>>,
+    /// Per-object user directions, see [`ObjectOptions::direction_overrides`].
+    pub object_directions: Option<std::sync::Arc<[Option<u8>]>>,
 }
 
 impl Default for RenderOptions {
@@ -121,6 +151,10 @@ impl Default for RenderOptions {
             gamma: 1.30,
             visibility: Visibility::default(),
             background: [0, 0, 0, 0],
+            animation_tick: None,
+            object_direction: 0,
+            object_frames: None,
+            object_directions: None,
         }
     }
 }
@@ -159,7 +193,7 @@ impl RgbaImage {
         Some([p[0], p[1], p[2], p[3]])
     }
 
-    fn set(&mut self, x: u32, y: u32, color: [u8; 4]) {
+    pub(crate) fn set(&mut self, x: u32, y: u32, color: [u8; 4]) {
         if x >= self.width || y >= self.height {
             return;
         }
@@ -236,6 +270,8 @@ impl RgbaImage {
 pub struct RenderOutput {
     pub image: RgbaImage,
     pub missing: Vec<MissingTile>,
+    /// Objects that drew nothing (empty for [`render`]).
+    pub missing_objects: Vec<MissingObject>,
     /// Map-space position (in output pixels, i.e. already divided by the zoom)
     /// of the image's pixel (0, 0): the cell `(x, y)` has its top corner at
     /// `((x - y) * 80 / div, (x + y) * 40 / div) - origin` in the image.
@@ -360,13 +396,41 @@ pub fn render(
     palette: &Palette,
     opts: &RenderOptions,
 ) -> Result<RenderOutput> {
+    render_with_objects(ds1, tiles, None, palette, opts)
+}
+
+/// [`render`] plus the objects and monsters of the DS1 when `objects` is
+/// given and `opts.visibility.objects` is set. The canvas is still the
+/// tiles' rectangle, as in the reference (`preview.c:3405-3520`): sprites that
+/// overhang it are clipped.
+pub fn render_with_objects(
+    ds1: &Ds1,
+    tiles: &TileSet,
+    objects: Option<&ObjectSprites<'_>>,
+    palette: &Palette,
+    opts: &RenderOptions,
+) -> Result<RenderOutput> {
     let div = opts.zoom_div.clamp(1, 16);
     let div_i = i32::try_from(div).unwrap_or(1);
-    let (items, missing) = draw_list(ds1, tiles, &opts.visibility)?;
+    let object_opts = ObjectOptions {
+        direction: opts.object_direction,
+        animation_tick: opts.animation_tick,
+        frame_overrides: opts.object_frames.clone(),
+        direction_overrides: opts.object_directions.clone(),
+    };
+    let list = draw_list_with_objects(
+        ds1,
+        tiles,
+        &opts.visibility,
+        objects.map(|o| (o, &object_opts)),
+    )?;
+    let missing = list.missing;
+    let missing_objects = list.missing_objects;
     let Some((min_x, min_y, max_x, max_y)) = reference_bounds(ds1, tiles, div) else {
         return Ok(RenderOutput {
             image: RgbaImage::filled(1, 1, opts.background),
             missing,
+            missing_objects,
             origin: (0, 0),
             warnings: Vec::new(),
         });
@@ -381,22 +445,30 @@ pub fn render(
     let mut canvas = RgbaImage::filled(width.max(1), height.max(1), opts.background);
     let pal = palette.with_gamma(opts.gamma);
     let mut warnings = Vec::new();
-    for item in &items {
-        if let Err(e) = draw_item(
-            &mut canvas,
-            item,
-            tiles,
-            &pal,
-            (min_x, min_y),
-            div_i,
-            blend_for(item.pass),
-        ) {
-            warnings.push(format!("{:?} at ({}, {}): {e}", item.layer, item.x, item.y));
+    for entry in &list.entries {
+        match entry {
+            DrawEntry::Tile(item) => {
+                if let Err(e) = draw_item(
+                    &mut canvas,
+                    item,
+                    tiles,
+                    &pal,
+                    (min_x, min_y),
+                    div_i,
+                    blend_for(item.pass),
+                ) {
+                    warnings.push(format!("{:?} at ({}, {}): {e}", item.layer, item.x, item.y));
+                }
+            }
+            DrawEntry::Object(item) => {
+                draw_object(&mut canvas, item, &pal, (min_x, min_y), div_i);
+            }
         }
     }
     Ok(RenderOutput {
         image: canvas,
         missing,
+        missing_objects,
         origin: (min_x, min_y),
         warnings,
     })
@@ -426,27 +498,111 @@ fn draw_item(
     // Destination position of the bitmap's (0, 0).
     let ox = mx - origin.0;
     let oy = my + geom.bitmap_top(div) - origin.1;
-    blit(canvas, &image, pal, ox, oy, div, blend);
+    blit(
+        canvas,
+        &image,
+        (image.offset_x, image.offset_y),
+        pal,
+        ox,
+        oy,
+        div,
+        blend,
+    );
     Ok(())
+}
+
+/// Draws one object item. The sprite layers are separate bitmaps in the
+/// reference (`preview.c:2091-2185`), each point-sampled at `1/div` with its
+/// own truncated offset:
+///
+/// ```text
+/// dx = dx0 - x0 + xoffset / div + lay.off_x / div
+/// dy = dy0 - y0 + yoffset / div + lay.off_y / div
+/// ```
+///
+/// (the stretch path, `stretch_sprite = YES`, the default; at 1:1 this is the
+/// plain sum). `lay.off_*` is [`FrameLayer::box_origin`]. Shadow items draw
+/// only the layers with a shadow level, as black silhouettes.
+fn draw_object(
+    canvas: &mut RgbaImage,
+    item: &ObjectDrawItem,
+    pal: &Palette,
+    origin: (i32, i32),
+    div: i32,
+) {
+    let (dx0, dy0) = crate::objects::object_anchor(item.x, item.y, div);
+    let shadow_pass = item.pass == DrawPass::ObjectShadows;
+    for layer in &item.frame.layers {
+        let blend = if shadow_pass {
+            match layer.shadow {
+                Some(level) => Blend::Darken(level),
+                None => continue,
+            }
+        } else {
+            layer.blend
+        };
+        let ox = dx0 - origin.0 + item.frame.offset.0 / div + layer.box_origin.0 / div;
+        let oy = dy0 - origin.1 + item.frame.offset.1 / div + layer.box_origin.1 / div;
+        // The reference bitmap starts at the direction box corner, so source
+        // columns are counted from there.
+        let off = (
+            layer.image.offset_x - layer.box_origin.0,
+            layer.image.offset_y - layer.box_origin.1,
+        );
+        blit_sprite(canvas, &layer.image, off, pal, ox, oy, div, blend);
+    }
 }
 
 /// Draws `image` (bitmap-space crop, see [`TileSet::image`]) whose bitmap
 /// origin lands on canvas pixel `(ox, oy)`, point-sampling every `div`th
 /// source pixel as the reference's scaled draw does.
+#[expect(clippy::too_many_arguments)]
 fn blit(
     canvas: &mut RgbaImage,
     image: &IndexedImage,
+    offset: (i32, i32),
     pal: &Palette,
     ox: i32,
     oy: i32,
     div: i32,
     blend: Blend,
 ) {
+    blit_pixels(canvas, image, offset, pal, ox, oy, div, blend, false);
+}
+
+/// [`blit`] for sprites: palette index 0 is transparent as well as alpha 0
+/// (`compose_cof_frame`).
+#[expect(clippy::too_many_arguments)]
+fn blit_sprite(
+    canvas: &mut RgbaImage,
+    image: &IndexedImage,
+    offset: (i32, i32),
+    pal: &Palette,
+    ox: i32,
+    oy: i32,
+    div: i32,
+    blend: Blend,
+) {
+    blit_pixels(canvas, image, offset, pal, ox, oy, div, blend, true);
+}
+
+#[expect(clippy::too_many_arguments)]
+fn blit_pixels(
+    canvas: &mut RgbaImage,
+    image: &IndexedImage,
+    offset: (i32, i32),
+    pal: &Palette,
+    ox: i32,
+    oy: i32,
+    div: i32,
+    blend: Blend,
+    skip_index_zero: bool,
+) {
     let div = div.max(1);
     let half = div / 2;
     let (w, h) = (image.width as usize, image.height as usize);
     for j in 0..h {
-        let v = image.offset_y + i32::try_from(j).unwrap_or(0);
+        let v = offset.1 + i32::try_from(j).unwrap_or(0);
         if v.rem_euclid(div) != half {
             continue;
         }
@@ -455,7 +611,7 @@ fn blit(
             continue;
         }
         for i in 0..w {
-            let u = image.offset_x + i32::try_from(i).unwrap_or(0);
+            let u = offset.0 + i32::try_from(i).unwrap_or(0);
             if u.rem_euclid(div) != half {
                 continue;
             }
@@ -469,6 +625,9 @@ fn blit(
                 continue;
             }
             let index = image.pixels.get(k).copied().unwrap_or(0);
+            if skip_index_zero && index == 0 {
+                continue;
+            }
             let rgb = pal.colors[usize::from(index)];
             let (Ok(dx), Ok(dy)) = (u32::try_from(dx), u32::try_from(dy)) else {
                 continue;
