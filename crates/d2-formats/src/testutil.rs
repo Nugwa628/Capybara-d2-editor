@@ -47,3 +47,13 @@ pub fn find_files(base: &Path, ext: &str) -> Vec<PathBuf> {
     out.sort();
     out
 }
+
+/// Deterministic 1-in-`every` sample of `files`, or all of them when the env
+/// var `CAPY_FULL_CORPUS` is set. Keeps routine `cargo test` runs fast; the
+/// lead runs the full corpus before closing a phase.
+pub fn sample(files: Vec<PathBuf>, every: usize) -> Vec<PathBuf> {
+    if std::env::var_os("CAPY_FULL_CORPUS").is_some() || every <= 1 {
+        return files;
+    }
+    files.into_iter().step_by(every).collect()
+}

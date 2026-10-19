@@ -765,7 +765,7 @@ fn corpus_dcc_files_decode() {
             println!("skipped: extracted/{profile} missing");
             continue;
         };
-        for p in testutil::find_files(&root, "dcc") {
+        for p in testutil::sample(testutil::find_files(&root, "dcc"), 20) {
             paths.push((profile, root.clone(), p));
         }
     }

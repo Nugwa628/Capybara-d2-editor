@@ -51,6 +51,13 @@ egui = "=0.36.2"
 [profile.dev.package."*"]
 opt-level = 2
 
+# The corpus tests decode gigabytes of game data; keep them fast in dev.
+[profile.dev.package.d2-formats]
+opt-level = 2
+
+[profile.dev.package.d2-assets]
+opt-level = 2
+
 [profile.release]
 lto = "thin"
 strip = true
