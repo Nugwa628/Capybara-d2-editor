@@ -169,6 +169,81 @@ fn ds1_round_trip_is_byte_identical() {
     }
 }
 
+// ------------------------------------------------- 1b. every DT1 parses
+
+/// DT1 files that do not parse, with the reason. These six act1 files carry
+/// version 4.1 (`04 00 00 00 01 00 00 00`) instead of 7.6: an undocumented
+/// early tile format that neither Siramy's reader nor the reference reads
+/// (`docs/guides/dt1-tile-format.md`, "Six files nobody's tool can read").
+/// No LvlTypes File slot names them, so the game never loads them; the test
+/// below asserts that, so the exception cannot hide a tile set that matters.
+const DT1_PARSE_EXCEPTIONS: &[&str] = &[
+    r"data\global\tiles\act1\barracks\barracks.dt1",
+    r"data\global\tiles\act1\barracks\gargtrap.dt1",
+    r"data\global\tiles\act1\catacomb\catacombs.dt1",
+    r"data\global\tiles\act1\cathedrl\cathedrl.dt1",
+    r"data\global\tiles\act1\court\court.dt1",
+    r"data\global\tiles\act1\outdoors\outdoor1.dt1",
+];
+
+#[test]
+fn every_dt1_parses() {
+    for (label, fx) in both() {
+        let dt1: Vec<GamePath> = fx
+            .names
+            .iter()
+            .filter(|p| p.extension() == Some("dt1"))
+            .cloned()
+            .collect();
+        let results = parallel(&dt1, |path| -> Result<usize, String> {
+            let bytes = fx
+                .overlay
+                .read_bytes(path)
+                .map_err(|e| format!("read: {e}"))?
+                .ok_or("resolves but cannot be read")?;
+            let parsed = d2_formats::dt1::Dt1::parse(&bytes).map_err(|e| format!("parse: {e}"))?;
+            Ok(parsed.tiles.len())
+        });
+        let mut tiles = 0;
+        let mut failed: Vec<String> = Vec::new();
+        for (path, result) in dt1.iter().zip(results) {
+            match result {
+                Ok(n) => tiles += n,
+                Err(e) if DT1_PARSE_EXCEPTIONS.contains(&path.as_str()) => {
+                    assert!(
+                        e.contains("version"),
+                        "{label}: {path} is an allowed 4.1 file but failed differently: {e}"
+                    );
+                }
+                Err(e) => failed.push(format!("{path}: {e}")),
+            }
+        }
+        println!(
+            "{label}: {} dt1 files, {tiles} tiles, {} unexpected failures",
+            dt1.len(),
+            failed.len()
+        );
+        assert!(failed.is_empty(), "{label}: {failed:#?}");
+        assert!(!dt1.is_empty(), "{label}: no dt1 harvested");
+
+        // The exceptions must not be tile sets the game loads.
+        let lvltypes =
+            load_excel(&fx.overlay, ExcelTableKind::LvlTypes, fx.version).expect("LvlTypes loads");
+        let referenced: BTreeSet<GamePath> = tables::lvl_types(&lvltypes)
+            .expect("LvlTypes parses")
+            .iter()
+            .flat_map(|lt| lt.files.iter().flatten())
+            .filter_map(|f| GamePath::from_tile_ref(f))
+            .collect();
+        for name in DT1_PARSE_EXCEPTIONS {
+            assert!(
+                !referenced.contains(&GamePath::new(name)),
+                "{label}: {name} is referenced by LvlTypes but cannot be parsed"
+            );
+        }
+    }
+}
+
 // ------------------------------------------------- 2. known names resolve
 
 #[test]
