@@ -1852,6 +1852,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "capy-cli"
+version = "0.1.0"
+dependencies = [
+ "capy-index",
+ "capy-render",
+ "d2-assets",
+ "d2-formats",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "capy-edit"
 version = "0.1.0"
 dependencies = [
