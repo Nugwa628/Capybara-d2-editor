@@ -4,6 +4,7 @@ use bevy_egui::egui::{self, Ui};
 use d2_assets::GamePath;
 
 use super::Dock;
+use crate::config::AppMode;
 use crate::state::AppState;
 
 pub fn show(ui: &mut Ui, state: &mut AppState, dock: &mut Dock) {
@@ -70,9 +71,10 @@ fn file_menu(ui: &mut Ui, state: &mut AppState) {
 }
 
 fn view_menu(ui: &mut Ui, state: &mut AppState, dock: &mut Dock) {
+    let map_mode = state.config.mode == AppMode::Map;
     if ui
         .add_enabled(
-            state.active.is_some(),
+            map_mode && state.active.is_some(),
             egui::Button::new("Fit map to window"),
         )
         .clicked()
@@ -80,8 +82,19 @@ fn view_menu(ui: &mut Ui, state: &mut AppState, dock: &mut Dock) {
         state.request_fit = true;
         ui.close();
     }
+    let mut preview = dock.has_sprite_preview();
+    if ui
+        .add_enabled(
+            map_mode,
+            egui::Checkbox::new(&mut preview, "Sprite preview"),
+        )
+        .changed()
+    {
+        dock.toggle_sprite_preview();
+        ui.close();
+    }
     if ui.button("Reset panel layout").clicked() {
-        dock.reset();
+        dock.reset(state.config.mode);
         ui.close();
     }
 }

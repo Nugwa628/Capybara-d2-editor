@@ -6,7 +6,9 @@ use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
-use d2_assets::{GamePath, KnownNames, Overlay, Profile, SourceFingerprint, SourceKind};
+use d2_assets::{
+    GamePath, GameVersion, KnownNames, MapCatalog, Overlay, Profile, SourceFingerprint, SourceKind,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::paths::Paths;
@@ -24,10 +26,27 @@ pub struct SessionData {
     pub elapsed: Duration,
 }
 
+/// The map catalog and what it took to build.
+pub struct CatalogData {
+    pub catalog: Box<MapCatalog>,
+    pub warnings: Vec<String>,
+    pub elapsed: Duration,
+}
+
 pub enum TaskEvent {
     Stage {
         generation: u64,
         text: String,
+    },
+    /// The map catalog of the session opened by request `generation`.
+    Catalog {
+        generation: u64,
+        result: Result<CatalogData, String>,
+    },
+    /// Progress of the asset index task.
+    Index {
+        generation: u64,
+        event: crate::index_task::IndexEvent,
     },
     Finished {
         generation: u64,
@@ -182,6 +201,46 @@ pub fn spawn_open(generation: u64, profile: Profile, paths: Paths, tx: Sender<Ta
         });
     if let Err(e) = spawned {
         let _ = tx.send(TaskEvent::Finished {
+            generation,
+            result: Err(format!("cannot start background thread: {e}")),
+        });
+    }
+}
+
+/// Build the [`MapCatalog`] of an opened profile on a worker thread, then apply
+/// the user's saved overrides. The result arrives as [`TaskEvent::Catalog`].
+pub fn spawn_catalog(
+    generation: u64,
+    overlay: Arc<Overlay>,
+    version: GameVersion,
+    ds1s: Vec<GamePath>,
+    overrides: Vec<(GamePath, u32, Option<u32>)>,
+    tx: Sender<TaskEvent>,
+) {
+    let thread_tx = tx.clone();
+    let spawned = std::thread::Builder::new()
+        .name("map-catalog".to_owned())
+        .spawn(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let started = Instant::now();
+                MapCatalog::build(&overlay, version, &ds1s)
+                    .map(|(mut catalog, warnings)| {
+                        for (ds1, lvl_type, def) in overrides {
+                            catalog.set_override(ds1, lvl_type, def);
+                        }
+                        CatalogData {
+                            catalog: Box::new(catalog),
+                            warnings,
+                            elapsed: started.elapsed(),
+                        }
+                    })
+                    .map_err(|e| e.to_string())
+            }));
+            let result = outcome.unwrap_or_else(|_| Err("catalog task panicked".to_owned()));
+            let _ = thread_tx.send(TaskEvent::Catalog { generation, result });
+        });
+    if let Err(e) = spawned {
+        let _ = tx.send(TaskEvent::Catalog {
             generation,
             result: Err(format!("cannot start background thread: {e}")),
         });

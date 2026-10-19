@@ -50,6 +50,8 @@ pub struct Paths {
     pub root: PathBuf,
     pub config_file: PathBuf,
     pub layout_file: PathBuf,
+    /// Dock layout of the Sprites mode (the Map Editor's is `layout_file`).
+    pub sprites_layout_file: PathBuf,
     pub profiles: PathBuf,
     pub saves: PathBuf,
     pub history: PathBuf,
@@ -75,6 +77,7 @@ impl Paths {
         Paths {
             config_file: root.join("config.toml"),
             layout_file: root.join("layout.json"),
+            sprites_layout_file: root.join("layout-sprites.json"),
             profiles: root.join("profiles"),
             saves: root.join("saves"),
             history: root.join("history"),

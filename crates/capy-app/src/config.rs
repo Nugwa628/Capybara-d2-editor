@@ -53,6 +53,27 @@ impl Default for LayerVisibility {
     }
 }
 
+/// Top-level editor mode (the tab strip above the dock).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AppMode {
+    #[default]
+    Map,
+    Sprites,
+}
+
+/// A user-picked LvlType/Def for one map, persisted per profile. This is what
+/// `MapCatalog::set_override` is fed with when a profile opens.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MapOverride {
+    pub profile: String,
+    /// Canonical game path of the DS1.
+    pub ds1: String,
+    pub lvl_type: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub def: Option<u32>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecentMap {
     pub profile: String,
@@ -69,9 +90,11 @@ pub struct Config {
     pub last_profile: Option<String>,
     pub gamma: f32,
     pub autosave_minutes: u32,
+    pub mode: AppMode,
     pub window: WindowConfig,
     pub layer_visibility: LayerVisibility,
     pub recent_maps: Vec<RecentMap>,
+    pub overrides: Vec<MapOverride>,
 }
 
 impl Default for Config {
@@ -80,9 +103,11 @@ impl Default for Config {
             last_profile: None,
             gamma: DEFAULT_GAMMA,
             autosave_minutes: 5,
+            mode: AppMode::default(),
             window: WindowConfig::default(),
             layer_visibility: LayerVisibility::default(),
             recent_maps: Vec::new(),
+            overrides: Vec::new(),
         }
     }
 }
@@ -120,6 +145,28 @@ impl Config {
             self.window.height = WindowConfig::default().height;
         }
         self.recent_maps.truncate(MAX_RECENT_MAPS);
+    }
+
+    /// Remember an LvlType/Def override for `ds1` in `profile`, replacing any
+    /// earlier one for the same map.
+    pub fn set_override(&mut self, profile: &str, ds1: &str, lvl_type: u32, def: Option<u32>) {
+        self.clear_override(profile, ds1);
+        self.overrides.push(MapOverride {
+            profile: profile.to_owned(),
+            ds1: ds1.to_owned(),
+            lvl_type,
+            def,
+        });
+    }
+
+    pub fn clear_override(&mut self, profile: &str, ds1: &str) {
+        self.overrides
+            .retain(|o| !(o.profile == profile && o.ds1 == ds1));
+    }
+
+    /// The overrides of one profile.
+    pub fn overrides_for<'a>(&'a self, profile: &'a str) -> impl Iterator<Item = &'a MapOverride> {
+        self.overrides.iter().filter(move |o| o.profile == profile)
     }
 
     /// Move (profile, path) to the front of the recent list.
@@ -200,6 +247,30 @@ mod tests {
         c.save(&file).expect("save");
         let back = Config::load(&file).expect("load");
         assert_eq!(back, c);
+    }
+
+    #[test]
+    fn overrides_persist_per_profile_and_replace() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file = tmp.path().join("config.toml");
+        let mut c = Config::default();
+        c.set_override("mxl", r"data\global\tiles\a.ds1", 5, Some(12));
+        c.set_override("vanilla", r"data\global\tiles\a.ds1", 1, None);
+        c.set_override("mxl", r"data\global\tiles\a.ds1", 7, None); // replaces
+        c.mode = AppMode::Sprites;
+        c.push_recent("mxl", "x"); // arrays of tables must coexist
+        c.save(&file).expect("save");
+        let back = Config::load(&file).expect("load");
+        assert_eq!(back, c);
+        let mxl: Vec<_> = back.overrides_for("mxl").collect();
+        assert_eq!(mxl.len(), 1);
+        assert_eq!((mxl[0].lvl_type, mxl[0].def), (7, None));
+        assert_eq!(back.overrides_for("vanilla").count(), 1);
+        assert_eq!(back.mode, AppMode::Sprites);
+        let mut back = back;
+        back.clear_override("mxl", r"data\global\tiles\a.ds1");
+        assert_eq!(back.overrides_for("mxl").count(), 0);
+        assert_eq!(back.overrides_for("vanilla").count(), 1);
     }
 
     #[test]
