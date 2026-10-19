@@ -198,6 +198,14 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
     - export of frames + `sprite.json` (exact offsets for re-import) and of sprite sheets;
     - batch conversion of directory trees in both directions, from the GUI and the exe's CLI.
   - Output: "Save to game path" writes to `capybara\saves\<profile>\<game path>` and appends CHANGED.txt; "Export to…" and batch conversion write to a folder the user picks.
+  - **Sprite editor** (user scope, 2026-10-19): a lightweight, palette-locked "mini-GIMP" (`capy-paint` engine, UI in `capy-app`). Every pixel stays a real palette index. Tools:
+    - pencil and eraser with brush sizes; line, rectangle and ellipse; fill; replace colour; picker;
+    - **gradient** (linear/radial, two colours or a ramp, Bayer or Floyd-Steinberg dither), **shading brush** (steps along the pixel's own colour ramp), **outline** (fixed or auto-darker colour, inside/outside, 1-8 px), stray-pixel clean-up;
+    - selections (rectangle, ellipse, lasso, magic wand; grow/shrink/invert) with move, cut, copy, paste (incl. RGBA images from the clipboard, palette-mapped), flip, rotate 90;
+    - frames (insert, duplicate, delete, reorder), mirror a direction, offsets, canvas resize, onion skin, unlimited undo;
+    - DCC 4x4-cell colour-limit check with auto-reduce;
+    - export of palette (.gpl/.act/.pal), indexed PNG for GIMP/Photoshop round trips, animated GIF.
+  - **Later (noted by the user):** "turn" a sprite into all 16 directions inside the app to build a complete DCC from one view. Also later: COF and AnimData metadata editors, D2R `.sprite`, image-to-DT1 tile maker (see `docs/research/sprite-tools-survey.md`).
   - **Test:** every DC6 and DCC in both corpora re-encodes to the same frames (decode, encode, decode); a PNG import/export round trip preserves pixels and offsets; batch conversion of a sample tree both ways.
 - **P5 Extras.** Objects and NPC paths, animated DCC/DC6, a headless render CLI, and an importer for the legacy `assets/*.ini` files. (No MPQ writing; the user packs by hand.)
   - Stretch goal: offline CLIP text-to-image tile search. **Deferred by the user (2026-10-19)**; feasibility and plan in `docs/research/clip-search.md` (opt-in model download into `capybara\cache\clip\`, gated by a one-day quality check).
