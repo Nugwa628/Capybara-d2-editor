@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **P2 complete.** Editing UI: box/lasso/tile-ID/identical selection, paint,
+  erase, eyedropper, object move/delete, cross-map clipboard with conflict
+  preview, move-to-layer with version upgrade, flags, resize, layer actions,
+  undo/redo, dirty tracking, save to `capybara\saves` with CHANGED.txt and
+  history snapshots, mark-as-packed; `CAPY_SCRIPT` automation hook.
+- Objects and NPCs render in DS1Edit's order with shadows and blends; Median XL
+  NPC tables decode (100% resolved).
 - **P1 complete.** Textured Bevy map view (single draw call per map, premultiplied
   atlas, reference shadow blend, DS1Edit zoom grid) matching the CPU renderer on
   all 18 oracle maps; background asset index with progress bar and cache.
