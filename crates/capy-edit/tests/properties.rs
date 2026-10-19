@@ -1082,10 +1082,14 @@ fn gen_request(rng: &mut Rng, ds: &Ds1) -> (&'static str, Request) {
                 Box::new(move |d| {
                     let preview = d.preview_paste(&clip, at, mode);
                     let r = d.paste(&clip, at, mode).map(|_| ());
-                    if let Err(EditError::NeedsVersion { required, .. }) = &r {
-                        assert_eq!(preview.needs_version, Some(*required));
-                    } else {
-                        assert_eq!(preview.needs_version, None);
+                    match &r {
+                        Err(EditError::NeedsVersion { required, .. }) => {
+                            assert_eq!(preview.needs_version, Some(*required));
+                        }
+                        // Anchor conflicts are checked before the version, so
+                        // the preview may still name one.
+                        Err(EditError::Format(_)) if !preview.warnings.is_empty() => {}
+                        _ => assert_eq!(preview.needs_version, None),
                     }
                     r
                 }),
