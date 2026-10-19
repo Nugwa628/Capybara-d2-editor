@@ -6,6 +6,7 @@ members = [
     "crates/capy-index",
     "crates/capy-edit",
     "crates/capy-history",
+    "crates/capy-render",
     "crates/capy-app",
 ]
 
@@ -30,6 +31,7 @@ d2-assets = { path = "crates/d2-assets" }
 capy-index = { path = "crates/capy-index" }
 capy-edit = { path = "crates/capy-edit" }
 capy-history = { path = "crates/capy-history" }
+capy-render = { path = "crates/capy-render" }
 thiserror = "2"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
@@ -46,6 +48,7 @@ image_hasher = "3.1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 blake3 = { version = "1", default-features = false, features = ["pure"] }
 gix = { version = "0.89", default-features = false, features = ["sha1"] }
+png = "0.18"
 
 # UI stack, pinned together: bevy_egui 0.43.1 and egui_dock 0.21.1 both
 # require egui 0.36.2. `cargo tree -d` showed a single egui with this set.
@@ -67,6 +70,9 @@ opt-level = 2
 
 # Pixel analysis, hashing and PNG encoding over tens of thousands of tiles.
 [profile.dev.package.capy-index]
+opt-level = 2
+
+[profile.dev.package.capy-render]
 opt-level = 2
 
 [profile.release]

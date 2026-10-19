@@ -1893,6 +1893,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "capy-render"
+version = "0.1.0"
+dependencies = [
+ "d2-assets",
+ "d2-formats",
+ "png",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "cc"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
