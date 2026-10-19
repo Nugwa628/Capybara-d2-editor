@@ -278,6 +278,19 @@ step 1).
 | No GPU (`WGPU_BACKEND=metal`) | **silent exit 101**, panic text only on stderr (fixed since: error box + crash.log, see 5b) |
 | Static-CRT build (open issues 2 and 4) | OK, 11 min 52 s, no warnings, 60,383,232 bytes; imports system DLLs only (no `VCRUNTIME140`, no `api-ms-win-crt-*`); 0 registry paths left; GUI screenshot identical in content, CLI `render` PNG byte-identical to the default build |
 
+## Results of the release build (2026-10-19, main at 5b3f01b)
+
+| Check | Result |
+|---|---|
+| `scripts/build-release.ps1` | full build 7.9 min, exit 0 |
+| Exe | `CapybarasD2Editor.exe`, 61,089,792 bytes (58.3 MiB), PE32+ x86-64, GUI subsystem |
+| Imports | system DLLs only; no VCRUNTIME, MSVCP, ucrtbase or api-ms-win-crt (static CRT) |
+| Builder paths | none of the 12 patterns (user folder, repository, cargo, rustup) |
+| Version info | ProductName and FileDescription "Capybara's D2 Editor", 0.1.0, OriginalFilename `CapybarasD2Editor.exe`; capybara icon |
+| Zip | `dist\CapybarasD2Editor-0.1.0-win64.zip`, 21,409,439 bytes, 7 entries |
+| CLI from the unzipped folder, no `capybara\` yet | `profiles list` seeds vanilla and mxl, exit 0; `render towne1 --zoom 1:4` 1960x980, 0 missing tiles, 42 objects drawn, exit 0 |
+| GUI from the unzipped folder | loading screen frame renders (door, capybara, gold title); towne1 opens with 84 object sprites, catalog ready in 2.1 s |
+
 ## Open issues
 
 Ranked; each says whether it is a build/packaging change or a source change.
@@ -286,7 +299,8 @@ Ranked; each says whether it is a build/packaging change or a source change.
    round): a panic hook writes `capybara\crash.log` and shows a native
    message box (section 5b). Still open: a `capybara\log.txt` for Bevy's
    log in release.
-2. **VCRUNTIME140.dll dependency (packaging).** A clean Windows install
+2. **VCRUNTIME140.dll dependency (packaging).** Done: `scripts/build-release.ps1`
+   builds with a static CRT and checks the imports (results below). A clean Windows install
    without the Visual C++ 2015-2022 redistributable cannot start the exe.
    Recommended: build with a static CRT. This was tested in the dry run
    (together with issue 4's remap) and works:
@@ -301,11 +315,13 @@ Ranked; each says whether it is a build/packaging change or a source change.
    repository root's `.cargo\config.toml` is a gitignored, machine-local
    file today, so the lead has to choose where. Otherwise the README must
    name the redistributable as a requirement.
-3. **The CLI cannot be used before the GUI has run once (source/docs).** The
+3. **The CLI cannot be used before the GUI has run once (source/docs).** Done:
+   the CLI seeds the default profiles through `d2_assets::installs`. The
    CLI never seeds `capybara\profiles\`. Either seed the default profiles
    from the CLI too (sharing `installs::seed_profiles`), or say in
    `docs/cli.md` and the README that the editor must be started once first.
-4. **Build-machine paths in the exe (packaging).** `strip = true` removes
+4. **Build-machine paths in the exe (packaging).** Done: the script remaps the
+   repository, cargo and rustup paths and checks the exe for 12 path patterns. `strip = true` removes
    symbols but not panic locations: the exe holds 2,636 copies of
    `C:\Users\<name>\.cargo\registry\src\...`, which leak the builder's
    Windows user name. `trim-paths` is still unstable in Cargo 1.99; use
@@ -327,5 +343,5 @@ Ranked; each says whether it is a build/packaging change or a source change.
    this is cosmetic, but the WAL could be checkpointed or truncated on
    start.
 9. **Release CLI output can trail the prompt (known, documented).** See
-   `docs/cli.md`; PLAN.md still has the open decision about also shipping a
-   console-subsystem `capy.exe`.
+   `docs/cli.md`. Decided (user, 2026-10-19): one exe only, no console
+   `capy.exe`.

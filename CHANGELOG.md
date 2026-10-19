@@ -4,7 +4,23 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Renamed to **Capybara's D2 Editor**; the exe is `CapybarasD2Editor.exe`
+  (the data folder stays `capybara\`).
+
 ### Added
+- Capybara program icon and version information in the exe; window and
+  taskbar icon.
+- Loading screen: Diablo II's door-opening animation from your game files
+  with the capybara in the doorway and the program name on the plate
+  (Settings > Start-up > Show loading screen; click or Esc skips it).
+- Crash reporting: `capybara\crash.log` and an error box instead of a silent
+  exit (for example when no GPU driver is available).
+- The command line works on a fresh folder: it finds the installs and writes
+  the default profiles itself.
+- `scripts/build-release.ps1`: static-CRT release build (no Visual C++
+  runtime needed), checks for leaked build paths, release zip with licenses
+  and docs.
 - **P5 complete.** Objects and NPCs drawn in the map view (DS1Edit order and
   blends, matches the CPU renderer on all 18 oracle maps), animation at 25 Hz
   (View > Animate objects), object placement picker with animated preview,
