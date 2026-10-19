@@ -48,6 +48,11 @@ pub enum TaskEvent {
         generation: u64,
         event: crate::index_task::IndexEvent,
     },
+    /// `Index::refresh_saves` finished after a save.
+    SavesRefreshed {
+        generation: u64,
+        result: Result<String, String>,
+    },
     Finished {
         generation: u64,
         result: Result<SessionData, String>,

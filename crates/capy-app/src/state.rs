@@ -11,6 +11,7 @@ use d2_formats::ds1::Ds1;
 
 use crate::config::Config;
 use crate::doc::{MapDoc, RenderState, SourceCategory, SourceInfo, categorize_source};
+use crate::edit::state::EditState;
 use crate::index_task::{self, IndexState, IndexTask};
 use crate::paths::Paths;
 use crate::tasks::{self, CatalogData, SessionData, TaskEvent};
@@ -139,6 +140,9 @@ pub struct AppState {
     /// Set by the UI; the app shell clears it after handling.
     pub request_fit: bool,
     pub quit_requested: bool,
+    /// Tools, clipboard, dialogs: everything about editing that is not one
+    /// document's own state.
+    pub edit: EditState,
 }
 
 const MAX_LOG: usize = 2000;
@@ -174,6 +178,7 @@ impl AppState {
             scroll_accum: 0.0,
             request_fit: false,
             quit_requested: false,
+            edit: EditState::default(),
         }
     }
 
@@ -277,6 +282,15 @@ impl AppState {
                         self.log_index_transition(&before);
                     }
                 }
+                TaskEvent::SavesRefreshed { generation, result } => {
+                    if self.session.as_ref().map(|s| s.generation) != Some(generation) {
+                        continue;
+                    }
+                    match result {
+                        Ok(text) => self.info(text),
+                        Err(e) => self.warn(format!("Asset index: cannot refresh saves: {e}")),
+                    }
+                }
                 TaskEvent::Finished { generation, result } => {
                     if self.loading.as_ref().map(|l| l.generation) != Some(generation) {
                         continue; // superseded by a newer request
@@ -336,6 +350,7 @@ impl AppState {
             summary,
         });
         self.session_epoch += 1;
+        self.refresh_changed();
         self.maps_list = MapsList {
             filter: std::mem::take(&mut self.maps_list.filter),
             ..MapsList::default()
@@ -517,6 +532,26 @@ impl AppState {
             }
             _ => {}
         }
+    }
+
+    /// After a save: bring the index's view of the profile's saved maps up
+    /// to date on a worker thread. Skipped while the index is building or not
+    /// built (a build reads the saves anyway).
+    pub fn start_saves_refresh(&mut self) {
+        if self.index_disabled || !matches!(self.index.state, IndexState::Ready(_)) {
+            return;
+        }
+        let Some(session) = &self.session else { return };
+        let generation = session.generation;
+        let tx = self.tx.clone();
+        index_task::spawn_refresh(
+            self.paths.cache.clone(),
+            session.profile.clone(),
+            session.overlay.clone(),
+            move |result| {
+                let _ = tx.send(TaskEvent::SavesRefreshed { generation, result });
+            },
+        );
     }
 
     /// The Cancel button of the status bar.

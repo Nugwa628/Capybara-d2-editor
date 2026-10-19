@@ -4,16 +4,21 @@
 //! separately): **Map Editor** (the panels below) and **Sprites** (a
 //! placeholder until P6).
 
+mod dialogs;
 mod layers;
 mod log;
+mod map_tools;
 mod map_view;
 mod maps;
 mod menu;
 mod properties;
+mod shortcuts;
 mod sprites;
 mod status;
+mod thumbs;
 mod tiles;
 mod toasts;
+mod toolbar;
 
 use std::path::Path;
 
@@ -324,6 +329,10 @@ fn mode_tabs(ui: &mut Ui, state: &mut AppState) {
 /// Draw the whole UI for this frame.
 pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     state.pixels_per_point = ctx.pixels_per_point();
+    state.sync_docs();
+    if state.config.mode == AppMode::Map {
+        shortcuts::handle(ctx, state);
+    }
     let mut root = root_ui(ctx);
 
     egui::Panel::top("mode_tabs").show(&mut root, |ui| {
@@ -362,6 +371,7 @@ pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
         }
     });
 
+    dialogs::show_all(ctx, state);
     toasts::show(ctx, state);
 }
 

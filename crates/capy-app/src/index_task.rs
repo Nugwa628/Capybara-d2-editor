@@ -236,6 +236,33 @@ pub fn spawn(
     }
 }
 
+/// After a save: `Index::refresh_saves` on a worker thread. `send` gets a
+/// one-line result or the error text.
+pub fn spawn_refresh(
+    cache_dir: PathBuf,
+    profile: Profile,
+    overlay: Arc<Overlay>,
+    send: impl FnOnce(Result<String, String>) + Send + 'static,
+) {
+    let spawned = std::thread::Builder::new()
+        .name(format!("index-saves-{}", profile.id))
+        .spawn(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut index = Index::open(&cache_dir).map_err(|e| e.to_string())?;
+                let report = index
+                    .refresh_saves(&profile, &overlay)
+                    .map_err(|e| e.to_string())?;
+                Ok(format!(
+                    "Asset index: saved maps refreshed ({} files, {} ms)",
+                    report.files, report.millis
+                ))
+            }));
+            send(outcome.unwrap_or_else(|_| Err("the refresh panicked".to_owned())));
+        });
+    // A thread that cannot start only means a slightly stale index.
+    drop(spawned);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

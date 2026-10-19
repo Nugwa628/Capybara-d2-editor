@@ -4,6 +4,8 @@
 
 use bevy_egui::egui::{self, Color32, Key, PointerButton, Pos2, Sense, Stroke, Ui, Vec2};
 
+use super::map_tools::{self, ViewFrame};
+use super::toolbar;
 use crate::iso::{self, View, ZOOM_STEPS};
 use crate::state::AppState;
 
@@ -14,6 +16,7 @@ const NOTCH: f32 = 40.0;
 
 pub fn show(ui: &mut Ui, state: &mut AppState) {
     tab_strip(ui, state);
+    toolbar::show(ui, state);
 
     let size = ui.available_size().max(Vec2::splat(1.0));
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
@@ -129,6 +132,21 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     };
     state.hover_cell = hover_cell;
 
+    // Editing: the active tool's gestures, then the overlays under the
+    // hover outline.
+    let frame = state.active_doc().map(|doc| ViewFrame {
+        rect,
+        ppp,
+        view: doc.view,
+    });
+    if let Some(frame) = frame {
+        map_tools::handle_input(ui, state, &frame, &response, panning);
+        map_tools::paint_overlays(ui, state, &frame);
+        if response.hovered() && !space && !panning {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
+    }
+
     // Overlay: hovered cell outline and zoom label.
     if let Some(doc) = state.active_doc() {
         let painter = ui.painter_at(rect);
@@ -194,6 +212,6 @@ fn tab_strip(ui: &mut Ui, state: &mut AppState) {
         state.active = Some(i);
     }
     if let Some(i) = close {
-        state.close_doc(i);
+        state.request_close(i);
     }
 }

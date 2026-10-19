@@ -3,7 +3,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use capy_render::Visibility;
+use capy_edit::{Document, LayerRef, Selection};
+use capy_render::{TileSet, Visibility};
 use d2_assets::{GamePath, MapInfo};
 use d2_formats::ds1::Ds1;
 
@@ -34,6 +35,25 @@ impl LayerKey {
             LayerKey::Wall(_) => LayerKind::Wall,
             LayerKey::Shadow => LayerKind::Shadow,
             LayerKey::Tag => LayerKind::Tag,
+        }
+    }
+
+    /// The editing model's name for this layer.
+    pub fn to_ref(self) -> LayerRef {
+        match self {
+            LayerKey::Floor(i) => LayerRef::Floor(u8::try_from(i).unwrap_or(u8::MAX)),
+            LayerKey::Wall(i) => LayerRef::Wall(u8::try_from(i).unwrap_or(u8::MAX)),
+            LayerKey::Shadow => LayerRef::Shadow,
+            LayerKey::Tag => LayerRef::Tag,
+        }
+    }
+
+    pub fn from_ref(layer: LayerRef) -> LayerKey {
+        match layer {
+            LayerRef::Floor(i) => LayerKey::Floor(usize::from(i)),
+            LayerRef::Wall(i) => LayerKey::Wall(usize::from(i)),
+            LayerRef::Shadow => LayerKey::Shadow,
+            LayerRef::Tag => LayerKey::Tag,
         }
     }
 
@@ -149,14 +169,31 @@ impl RenderStatus {
     }
 }
 
+/// Display name of a layer reference ("Wall 3").
+pub fn layer_label(layer: LayerRef) -> String {
+    LayerKey::from_ref(layer).label()
+}
+
 pub struct MapDoc {
     pub id: u64,
     pub profile_id: String,
     pub path: GamePath,
     pub source: SourceInfo,
+    /// The editing model: the DS1 plus its undo history.
+    pub edit: Document,
+    /// A copy of `edit.ds1()` for the render worker, refreshed by
+    /// [`MapDoc::sync`] whenever the document's revision moved.
     pub ds1: Arc<Ds1>,
+    /// The document revision `ds1` was copied at.
+    pub synced_revision: u64,
     /// Bumped whenever the geometry must be rebuilt.
     pub rev: u64,
+    pub selection: Selection,
+    /// Indices into `ds1.objects` of the selected objects.
+    pub object_sel: Vec<usize>,
+    pub active_layer: LayerRef,
+    /// The parsed DT1 set the map was last drawn with (thumbnails).
+    pub tiles: Option<Arc<TileSet>>,
     pub hidden: BTreeSet<LayerKey>,
     pub objects_visible: bool,
     /// Roof tiles (orientation 15), drawn by default.
@@ -169,8 +206,6 @@ pub struct MapDoc {
     pub view: View,
     /// False until the view has been fitted to the viewport once.
     pub fitted: bool,
-    /// Placeholder until capy-edit/capy-history land.
-    pub dirty: bool,
 }
 
 impl MapDoc {
@@ -194,13 +229,26 @@ impl MapDoc {
                 hidden.insert(key);
             }
         }
+        let edit = Document::new(ds1.clone());
+        let synced_revision = edit.revision();
+        let active_layer = if ds1.walls.is_empty() {
+            LayerRef::Floor(0)
+        } else {
+            LayerRef::Wall(0)
+        };
         MapDoc {
             id,
             profile_id,
             path,
             source,
+            edit,
             ds1: Arc::new(ds1),
+            synced_revision,
             rev: 1,
+            selection: Selection::new(),
+            object_sel: Vec::new(),
+            active_layer,
+            tiles: None,
             hidden,
             objects_visible: defaults.objects,
             roofs_visible: true,
@@ -209,8 +257,38 @@ impl MapDoc {
             render: RenderStatus::default(),
             view: View::default(),
             fitted: false,
-            dirty: false,
         }
+    }
+
+    /// Copy the edited model for the renderer when it changed, and repair
+    /// state that named things the edit removed. Cheap when nothing moved.
+    pub fn sync(&mut self) {
+        let revision = self.edit.revision();
+        if revision == self.synced_revision {
+            return;
+        }
+        self.synced_revision = revision;
+        self.ds1 = Arc::new(self.edit.ds1().clone());
+        self.rev += 1;
+        let keys = layer_keys(&self.ds1);
+        self.hidden.retain(|k| keys.contains(k));
+        if !self.active_layer.exists_in(&self.ds1) {
+            self.active_layer = LayerRef::Floor(0);
+        }
+        let objects = self.ds1.objects.len();
+        self.object_sel.retain(|&i| i < objects);
+    }
+
+    /// Tell the document where it came from, for the clipboard's source
+    /// record and the act / LvlType warnings of a paste.
+    pub fn sync_clip_context(&mut self) {
+        let lvl_type = self.info.as_ref().and_then(|i| i.lvl_type);
+        self.edit
+            .set_clip_context(Some(self.path.to_string()), lvl_type);
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.edit.is_dirty()
     }
 
     pub fn keys(&self) -> Vec<LayerKey> {
@@ -250,7 +328,7 @@ impl MapDoc {
     /// File name for the tab, with the dirty marker.
     pub fn title(&self) -> String {
         let name = self.path.file_name();
-        if self.dirty {
+        if self.is_dirty() {
             format!("\u{25CF} {name}")
         } else {
             name.to_owned()
