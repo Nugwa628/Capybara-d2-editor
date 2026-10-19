@@ -97,7 +97,6 @@ fn check_anchors(
 ) -> Result<()> {
     let mut positions: Vec<(i32, i32)> = ds1.objects.iter().map(|o| (o.x, o.y)).collect();
     let mut moved = BTreeSet::new();
-    let mut destinations = BTreeSet::new();
     for &(i, before, after) in moves {
         if (before.x, before.y) == (after.x, after.y) {
             continue;
@@ -105,9 +104,50 @@ fn check_anchors(
         if let Some(p) = positions.get_mut(i) {
             *p = (after.x, after.y);
             moved.insert(i);
-            destinations.insert((after.x, after.y));
         }
     }
+    match anchor_conflicts(&positions, &moved, paths_after, moved_paths)
+        .into_iter()
+        .next()
+    {
+        Some(detail) => Err(invalid(detail)),
+        None => Ok(()),
+    }
+}
+
+/// One message per sub-tile where appending `objects` (indices from
+/// `ds1.objects.len()` on, as `add_object` and `paste` number them) would put
+/// an NPC path anchor in doubt, worded as for [`check_anchors`]. Empty when
+/// the placement is fine.
+pub(crate) fn placement_conflicts(ds1: &Ds1, objects: &[Object]) -> Vec<String> {
+    let positions: Vec<(i32, i32)> = ds1
+        .objects
+        .iter()
+        .chain(objects)
+        .map(|o| (o.x, o.y))
+        .collect();
+    let placed: BTreeSet<usize> = (ds1.objects.len()..positions.len()).collect();
+    anchor_conflicts(&positions, &placed, &ds1.npc_paths, &BTreeSet::new())
+}
+
+/// The anchor check shared by moves and placements. `positions` are every
+/// object's sub-tile after the edit, `placed` the objects that moved there
+/// (or are new), `paths_after` the path list after the edit and
+/// `moved_paths` the indices in it that moved with the objects. A
+/// destination is checked only when it holds an object or a path that did
+/// not move; it is reported when it would hold two objects and a path, or
+/// two paths. Returns one message per such sub-tile, in sub-tile order.
+fn anchor_conflicts(
+    positions: &[(i32, i32)],
+    placed: &BTreeSet<usize>,
+    paths_after: &[NpcPath],
+    moved_paths: &BTreeSet<usize>,
+) -> Vec<String> {
+    let destinations: BTreeSet<(i32, i32)> = placed
+        .iter()
+        .filter_map(|&i| positions.get(i).copied())
+        .collect();
+    let mut conflicts = Vec::new();
     for (x, y) in destinations {
         let objects: Vec<usize> = (0..positions.len())
             .filter(|&i| positions[i] == (x, y))
@@ -115,12 +155,12 @@ fn check_anchors(
         let paths: Vec<usize> = (0..paths_after.len())
             .filter(|&k| (paths_after[k].x, paths_after[k].y) == (x, y))
             .collect();
-        let resident = objects.iter().copied().find(|i| !moved.contains(i));
+        let resident = objects.iter().copied().find(|i| !placed.contains(i));
         let resident_path = paths.iter().any(|k| !moved_paths.contains(k));
         if resident.is_none() && !resident_path {
             continue;
         }
-        let Some(mover) = objects.iter().copied().find(|i| moved.contains(i)) else {
+        let Some(mover) = objects.iter().copied().find(|i| placed.contains(i)) else {
             continue;
         };
         let brings_path = paths.iter().any(|k| moved_paths.contains(k));
@@ -155,17 +195,25 @@ fn check_anchors(
             }
             _ => continue,
         };
-        return Err(invalid(format!(
+        conflicts.push(format!(
             "{detail}; NPC paths are keyed by sub-tile, so the path would be ambiguous"
-        )));
+        ));
     }
-    Ok(())
+    conflicts
 }
 
 impl Document {
     /// Appends `object` and returns its index. `NeedsVersion` for a file below
     /// version 2 (no objects) or, for an object with flags, below version 6.
+    ///
+    /// `Format(Invalid)` (and nothing changes) when the object would make an
+    /// NPC path anchor ambiguous: its sub-tile holds an object with a path, or
+    /// two paths. Joining an object without a path, or a stray path with no
+    /// object (the new object takes it over), is allowed.
     pub fn add_object(&mut self, object: Object) -> Result<usize> {
+        if let Some(detail) = placement_conflicts(&self.ds1, &[object]).into_iter().next() {
+            return Err(invalid(detail));
+        }
         if let Some(e) = objects_need(&self.ds1, &[object]) {
             return Err(e);
         }

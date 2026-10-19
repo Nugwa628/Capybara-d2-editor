@@ -132,10 +132,10 @@ impl Document {
     pub fn copy(&self, selection: &Selection) -> Clipboard;
     pub fn cut(&mut self, selection: &Selection) -> Result<Clipboard>;
     pub fn preview_paste(&self, clip: &Clipboard, at: (i32, i32), mode: PasteMode) -> PastePreview;
-    pub fn paste(&mut self, clip: &Clipboard, at: (i32, i32), mode: PasteMode) -> Result<PastePreview>;
+    pub fn paste(&mut self, clip: &Clipboard, at: (i32, i32), mode: PasteMode) -> Result<PastePreview>; // Format(Invalid) on an ambiguous path anchor (below)
 
     // objects (index into ds1.objects)
-    pub fn add_object(&mut self, object: d2_formats::ds1::Object) -> Result<usize>;
+    pub fn add_object(&mut self, object: d2_formats::ds1::Object) -> Result<usize>;  // Format(Invalid) on an ambiguous path anchor (below)
     pub fn move_objects(&mut self, indices: &[usize], dx: i32, dy: i32) -> Result<()>; // Format(Invalid) on an ambiguous path anchor (below)
     pub fn delete_objects(&mut self, indices: &[usize]) -> Result<()>;           // NPC paths anchored on them move to undo data
     /// Replace one object's type/id/flags/position (position change moves its anchored path).
@@ -206,7 +206,8 @@ pub struct PastePreview {
     pub out_of_bounds: usize,             // clip cells that fall outside the map (dropped)
     pub layers_to_add: Vec<LayerRef>,
     pub needs_version: Option<i32>,        // the `required` that `paste` would return
-    pub warnings: Vec<String>,            // e.g. different act / LvlType: tiles may not exist in this map's DT1 set
+    pub warnings: Vec<String>,            // e.g. different act / LvlType: tiles may not exist in this map's DT1 set;
+                                          // one entry per ambiguous NPC path anchor (paste refuses those)
 }
 
 // ───────────── diff.rs ─────────────
@@ -269,5 +270,10 @@ one sub-tile) leave the path's owner undecidable.
   an already ambiguous path (the first path anchored there) so it can be
   cleaned up, and `delete_objects` removes paths anchored only on the deleted
   objects.
-- `paste` and `add_object` do not check anchors: a pasted or added object may
-  land on a pathed object's sub-tile.
+- `add_object` and `paste` refuse the same way (`Format(Invalid)` with the
+  same wording, nothing changes) when a new object would land on a sub-tile
+  holding an object with a path, or two paths, or when two pasted objects
+  would land together on a path. Joining objects without a path, and taking
+  over a stray path, stay allowed. `PastePreview::warnings` lists each such
+  sub-tile (one message per sub-tile, the same text `paste` fails with). As
+  with moves, the anchor check comes before `NeedsVersion`.

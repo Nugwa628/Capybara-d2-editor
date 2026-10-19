@@ -67,7 +67,9 @@ pub struct PastePreview {
     /// Layers that will be created, including intermediate indices.
     pub layers_to_add: Vec<LayerRef>,
     pub needs_version: Option<i32>,
-    /// E.g. different act / LvlType: tiles may not exist in this map's DT1 set.
+    /// E.g. different act / LvlType: tiles may not exist in this map's DT1
+    /// set. Also one entry per sub-tile where a pasted object would make an
+    /// NPC path anchor ambiguous; `paste` refuses those with the same text.
     pub warnings: Vec<String>,
 }
 

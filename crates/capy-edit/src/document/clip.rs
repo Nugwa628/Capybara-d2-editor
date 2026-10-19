@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use d2_formats::ds1::{Ds1, Object};
 
 use super::Document;
-use super::objects::{removal_steps, version_needed};
+use super::objects::{placement_conflicts, removal_steps, version_needed};
 use crate::clipboard::{ClipSource, Clipboard, PasteConflict, PasteMode, PastePreview};
-use crate::error::{EditError, Result};
+use crate::error::{EditError, Result, invalid};
 use crate::layer::{CellValue, LayerRef};
 use crate::layer_ops;
 use crate::patch::{CellEdit, Patch, Step};
@@ -76,6 +76,9 @@ fn layer_is_empty(ds1: &Ds1, layer: LayerRef) -> bool {
 
 struct PastePlan {
     preview: PastePreview,
+    /// Sub-tiles where a pasted object would make an NPC path anchor
+    /// ambiguous (also listed in `preview.warnings`); `paste` refuses these.
+    anchor_conflicts: Vec<String>,
     edits: Vec<(LayerRef, Vec<CellEdit>)>,
     objects: Vec<Object>,
 }
@@ -175,6 +178,12 @@ impl Document {
     /// cannot store (`required` is the lowest version the map can be upgraded
     /// to that takes the paste, the same as `PastePreview::needs_version`);
     /// when nothing would change it succeeds and records nothing.
+    ///
+    /// `Format(Invalid)` (and nothing changes) when a pasted object would make
+    /// an NPC path anchor ambiguous: it lands on the sub-tile of an object
+    /// with a path, on two paths, or together with another pasted object on a
+    /// path. The preview lists each such sub-tile in `warnings`. This is
+    /// checked before the version.
     pub fn paste(
         &mut self,
         clip: &Clipboard,
@@ -182,6 +191,9 @@ impl Document {
         mode: PasteMode,
     ) -> Result<PastePreview> {
         let plan = self.plan_paste(clip, at, mode);
+        if let Some(detail) = plan.anchor_conflicts.first() {
+            return Err(invalid(detail.clone()));
+        }
         if let Some(required) = plan.preview.needs_version {
             return Err(EditError::NeedsVersion {
                 current: self.ds1.version,
@@ -321,6 +333,8 @@ impl Document {
                 "{dropped} clipboard object(s) fall outside the map and were dropped"
             ));
         }
+        let anchor_conflicts = placement_conflicts(ds1, &objects);
+        preview.warnings.extend(anchor_conflicts.iter().cloned());
         if let Some(required) = version_needed(ds1, &objects) {
             needs = needs.max(Some(required));
         }
@@ -339,6 +353,7 @@ impl Document {
         preview.needs_version = needs;
         PastePlan {
             preview,
+            anchor_conflicts,
             edits,
             objects,
         }
