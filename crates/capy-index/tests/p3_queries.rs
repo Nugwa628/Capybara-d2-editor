@@ -4,15 +4,17 @@
 //! The expected keys were picked from the data, not from the search results:
 //! each row says which fact about the game files makes the asset the right
 //! answer. Skipped (`skipped: <dir> missing`) when the install is absent;
-//! `CAPY_MXL_DIR` overrides the default location. Takes about 30 s in debug
-//! because it builds the whole index into a temp dir.
+//! `CAPY_MXL_DIR` overrides the default location. The Median XL index is shared with
+//! `real_data.rs` (see `common`): the first run builds it (about 90 s in debug),
+//! later runs reuse it.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+mod common;
 
-use capy_index::{Index, UserDb, parse_query};
+use std::path::PathBuf;
+
+use capy_index::{UserDb, parse_query};
 use d2_assets::{GamePath, Profile};
 use d2_formats::ds1::Ds1;
 
@@ -219,13 +221,8 @@ fn p3_queries_over_median_xl() {
         return;
     }
     let profile = Profile::median_xl(&dir);
-    let saves = tempfile::tempdir().unwrap();
-    let cache = tempfile::tempdir().unwrap();
     let user_dir = tempfile::tempdir().unwrap();
-    let overlay = profile.open(saves.path()).unwrap();
-    let mut idx = Index::open(cache.path()).unwrap();
-    idx.build(&profile, &overlay, &mut |_| {}, &AtomicBool::new(false))
-        .unwrap();
+    let common::Shared { idx, overlay, .. } = common::shared_mxl(&profile);
     oracle(&overlay);
 
     let user = UserDb::open(&user_dir.path().join("user.db")).unwrap();
@@ -267,6 +264,27 @@ fn p3_queries_over_median_xl() {
         .search("mxl", &parse_query("meadow mosaic").unwrap(), &user, 1)
         .unwrap();
     assert_eq!(alias_hit[0].alias.as_deref(), Some("Meadow mosaic"));
+
+    // Fuzzy floor: `shire` is only a loose subsequence of the Yshari trees
+    // names, so `shire floor` must not return them; the shire DS1 is still
+    // found by `type:ds1 shire`.
+    let shire_floor = idx
+        .search("mxl", &parse_query("shire floor").unwrap(), &user, 100_000)
+        .unwrap();
+    println!("shire floor: {} hits", shire_floor.len());
+    assert!(
+        shire_floor
+            .iter()
+            .all(|h| !h.asset.path.contains("yshari\\trees.dt1")),
+        "yshari trees floors came back for `shire floor`"
+    );
+    let shire_ds1 = idx
+        .search("mxl", &parse_query("type:ds1 shire").unwrap(), &user, 5)
+        .unwrap();
+    assert!(
+        shire_ds1.iter().any(|h| h.asset.key == SHIRE_DS1),
+        "type:ds1 shire should find {SHIRE_DS1}"
+    );
 
     // Ranking property: with several words, tiles whose name has all of them
     // come first.

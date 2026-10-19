@@ -127,6 +127,9 @@ const PATH_SEGMENT: f32 = 150.0;
 const PATH_SUBSTRING: f32 = 60.0;
 /// A fuzzy-only path match counts for less than the same name match.
 const PATH_FUZZY_WEIGHT: f32 = 0.6;
+/// A fuzzy match with no alias/name/path hit counts only when its nucleo
+/// score is at least this share of the token's score against itself.
+pub(crate) const FUZZY_FLOOR: f32 = 0.7;
 
 fn word_prefix(haystack_lower: &str, token: &str) -> bool {
     haystack_lower
@@ -144,30 +147,35 @@ fn segment_prefix(path_lower: &str, token: &str) -> bool {
 /// of which must match (AND). A token's score is the best over alias, name
 /// and path of its fuzzy score plus a tier bonus; the asset's score is the sum.
 struct Ranker {
-    tokens: Vec<(Atom, String)>,
+    /// Per token: the fuzzy atom, the lower-cased token and the atom's score
+    /// against the token itself (the best a fuzzy match can do).
+    tokens: Vec<(Atom, String, f32)>,
     scratch: RefCell<(Matcher, Vec<char>, Vec<char>)>,
 }
 
 impl Ranker {
     fn new(text: &str) -> Ranker {
+        let mut matcher = Matcher::new(Config::DEFAULT);
+        let mut buf = Vec::new();
         let tokens = text
             .split_whitespace()
             .map(|t| {
-                (
-                    Atom::new(
-                        t,
-                        CaseMatching::Smart,
-                        Normalization::Smart,
-                        AtomKind::Fuzzy,
-                        false,
-                    ),
-                    t.to_lowercase(),
-                )
+                let atom = Atom::new(
+                    t,
+                    CaseMatching::Smart,
+                    Normalization::Smart,
+                    AtomKind::Fuzzy,
+                    false,
+                );
+                let own = atom
+                    .score(Utf32Str::new(t, &mut buf), &mut matcher)
+                    .map_or(0.0, f32::from);
+                (atom, t.to_lowercase(), own)
             })
             .collect();
         Ranker {
             tokens,
-            scratch: RefCell::new((Matcher::new(Config::DEFAULT), Vec::new(), Vec::new())),
+            scratch: RefCell::new((matcher, Vec::new(), Vec::new())),
         }
     }
 
@@ -178,9 +186,15 @@ impl Ranker {
         let path_lower = path.to_lowercase();
         let alias_lower = alias.map(str::to_lowercase);
         let mut total = 0.0f32;
-        for (atom, token) in &self.tokens {
-            let mut fuzzy = |hay: &str| -> Option<f32> {
-                atom.score(Utf32Str::new(hay, buf), matcher).map(f32::from)
+        for (atom, token, own) in &self.tokens {
+            // Fuzzy score of a field; `hit` says the token is already a
+            // prefix, substring or segment hit there. Without a hit the
+            // score must reach the floor, so loose subsequences never match.
+            let mut fuzzy = |hay: &str, hit: bool| -> Option<f32> {
+                let score = atom
+                    .score(Utf32Str::new(hay, buf), matcher)
+                    .map(f32::from)?;
+                (hit || score >= FUZZY_FLOOR * own).then_some(score)
             };
             let mut best: Option<f32> = None;
             let mut offer = |s: Option<f32>| {
@@ -198,7 +212,7 @@ impl Ranker {
                 } else {
                     0.0
                 };
-                offer(fuzzy(alias).map(|f| f + bonus));
+                offer(fuzzy(alias, bonus > 0.0).map(|f| f + bonus));
             }
             let bonus = if word_prefix(&name_lower, token) {
                 NAME_PREFIX
@@ -207,7 +221,7 @@ impl Ranker {
             } else {
                 0.0
             };
-            offer(fuzzy(name).map(|f| f + bonus));
+            offer(fuzzy(name, bonus > 0.0).map(|f| f + bonus));
             let bonus = if segment_prefix(&path_lower, token) {
                 PATH_SEGMENT
             } else if path_lower.contains(token.as_str()) {
@@ -215,7 +229,7 @@ impl Ranker {
             } else {
                 0.0
             };
-            offer(fuzzy(path).map(|f| f * PATH_FUZZY_WEIGHT + bonus));
+            offer(fuzzy(path, bonus > 0.0).map(|f| f * PATH_FUZZY_WEIGHT + bonus));
             total += best?;
         }
         Some(total)
@@ -268,7 +282,7 @@ impl Index {
             let mut stmt = self.conn.prepare(&statement).map_err(|e| self.sql(e))?;
             let rows = stmt
                 .query_map(params_from_iter(sql.params.iter()), |r| {
-                    Ok((asset_from_row(r)?, r.get::<_, f64>(19)?))
+                    Ok((asset_from_row(r)?, r.get::<_, f64>(21)?))
                 })
                 .map_err(|e| self.sql(e))?;
             let mut hits = Vec::new();
@@ -332,5 +346,105 @@ impl Index {
             });
         }
         Ok(hits)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    const YSHARI_NAME: &str = "Mxl Quest Yshari Trees · Floor · dark · 04/55";
+    const YSHARI_PATH: &str = "data\\global\\tiles\\mxl\\quest\\yshari\\trees.dt1#0/4/55/0";
+    const SHIRE_NAME: &str = "Mxl Zone Whimsy Shire · Floor · green · 01/02";
+    const SHIRE_PATH: &str = "data\\global\\tiles\\mxl\\zone\\whimsy\\shire.dt1#0/1/2/0";
+    const FLOOR_NAME: &str = "Mxl Zone Whimsy Whimsyfloor · Floor · green · 23/05";
+    const FLOOR_PATH: &str = "data\\global\\tiles\\mxl\\zone\\whimsy\\whimsyfloor.dt1#0/23/5/0";
+
+    #[test]
+    fn loose_fuzzy_hits_do_not_match() {
+        let ranker = Ranker::new("shire floor");
+        assert!(
+            ranker.score(None, YSHARI_NAME, YSHARI_PATH).is_none(),
+            "`shire` is only a loose subsequence of the Yshari names"
+        );
+        assert!(ranker.score(None, SHIRE_NAME, SHIRE_PATH).is_some());
+        // Any subsequence used to match; now only close ones do.
+        assert!(
+            Ranker::new("yre")
+                .score(None, SHIRE_NAME, SHIRE_PATH)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn prefix_substring_and_segment_hits_always_match() {
+        assert!(
+            Ranker::new("shi")
+                .score(None, SHIRE_NAME, SHIRE_PATH)
+                .is_some()
+        );
+        assert!(
+            Ranker::new("hire")
+                .score(None, SHIRE_NAME, SHIRE_PATH)
+                .is_some(),
+            "substring of the name"
+        );
+        assert!(
+            Ranker::new("shire.dt1")
+                .score(None, "unrelated", SHIRE_PATH)
+                .is_some(),
+            "path substring"
+        );
+        assert!(
+            Ranker::new("meadow")
+                .score(Some("Meadow mosaic"), "unrelated", "x")
+                .is_some(),
+            "alias prefix"
+        );
+    }
+
+    /// The share of its self-match score the typo `whimsyflor` reaches on the
+    /// real name and path; the floor is [`FUZZY_FLOOR`].
+    #[test]
+    fn typo_ratio_is_above_the_floor() {
+        let mut matcher = Matcher::new(Config::DEFAULT);
+        let mut buf = Vec::new();
+        let atom = Atom::new(
+            "whimsyflor",
+            CaseMatching::Smart,
+            Normalization::Smart,
+            AtomKind::Fuzzy,
+            false,
+        );
+        let own = f32::from(
+            atom.score(Utf32Str::new("whimsyflor", &mut buf), &mut matcher)
+                .unwrap(),
+        );
+        let on_name = f32::from(
+            atom.score(
+                Utf32Str::new(&FLOOR_NAME.to_lowercase(), &mut buf),
+                &mut matcher,
+            )
+            .unwrap(),
+        );
+        let on_path = f32::from(
+            atom.score(
+                Utf32Str::new(&FLOOR_PATH.to_lowercase(), &mut buf),
+                &mut matcher,
+            )
+            .unwrap(),
+        );
+        println!(
+            "whimsyflor: self {own}, name {on_name} ({:.2}), path {on_path} ({:.2})",
+            on_name / own,
+            on_path / own
+        );
+        assert!(on_name / own >= FUZZY_FLOOR || on_path / own >= FUZZY_FLOOR);
+        assert!(
+            Ranker::new("whimsyflor 23/05")
+                .score(None, FLOOR_NAME, FLOOR_PATH)
+                .is_some()
+        );
     }
 }

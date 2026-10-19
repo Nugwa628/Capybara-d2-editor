@@ -6,6 +6,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -20,7 +22,8 @@ fn dir(var: &str, default: &str) -> PathBuf {
 struct Built {
     idx: Index,
     user: UserDb,
-    report: capy_index::BuildReport,
+    /// `None` when the index was reused from an earlier run.
+    report: Option<capy_index::BuildReport>,
     overlay: d2_assets::Overlay,
     _dirs: Vec<tempfile::TempDir>,
 }
@@ -74,9 +77,23 @@ fn build(profile: &Profile) -> Built {
     Built {
         idx,
         user,
-        report,
+        report: Some(report),
         overlay,
         _dirs: vec![saves, cache, user_dir],
+    }
+}
+
+/// The shared Median XL index (see `common`), with a throw-away user db.
+fn shared_mxl(profile: &Profile) -> Built {
+    let shared = common::shared_mxl(profile);
+    let user_dir = tempfile::tempdir().unwrap();
+    let user = UserDb::open(&user_dir.path().join("user.db")).unwrap();
+    Built {
+        idx: shared.idx,
+        user,
+        report: shared.report,
+        overlay: shared.overlay,
+        _dirs: vec![user_dir],
     }
 }
 
@@ -104,7 +121,7 @@ fn median_xl_index() {
         println!("skipped: {} missing", mxl.display());
         return;
     }
-    let b = build(&Profile::median_xl(&mxl));
+    let b = shared_mxl(&Profile::median_xl(&mxl));
     let ds1 = b.idx.count("mxl", Some(AssetKind::Ds1)).unwrap();
     let dt1 = b.idx.count("mxl", Some(AssetKind::Dt1)).unwrap();
     let tiles = b.idx.count("mxl", Some(AssetKind::Tile)).unwrap();
@@ -117,7 +134,9 @@ fn median_xl_index() {
     assert!(ds1 >= 574, "ds1 files: {ds1}");
     assert!(dt1 >= 129, "dt1 files: {dt1}");
     assert!(tiles >= 5_000, "tiles: {tiles}");
-    assert_eq!(b.report.tiles, tiles);
+    if let Some(report) = &b.report {
+        assert_eq!(report.tiles, tiles);
+    }
 
     let shire = search(&b, "mxl", "file:shire", 50);
     assert!(!shire.is_empty());
@@ -166,7 +185,7 @@ fn median_xl_index() {
     for kind in ["dc6", "dcc", "cof"] {
         let all = search(&b, "mxl", &format!("type:{kind}"), 1_000_000);
         let sized = all.iter().filter(|h| h.asset.width.is_some()).count();
-        let counted = all.iter().filter(|h| h.asset.rarity.is_some()).count();
+        let counted = all.iter().filter(|h| h.asset.directions.is_some()).count();
         let thumbs = all
             .iter()
             .filter(|h| b.idx.thumbnail(h.asset.id).unwrap().is_some())
@@ -227,8 +246,8 @@ fn vanilla_index() {
     assert!(tiles >= 5_000, "tiles: {tiles}");
     let old: Vec<&String> = b
         .report
-        .warnings
         .iter()
+        .flat_map(|r| &r.warnings)
         .filter(|w| w.contains("unsupported DT1 version"))
         .collect();
     println!("old-format DT1 warnings: {old:?}");

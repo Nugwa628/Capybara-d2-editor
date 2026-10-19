@@ -389,10 +389,10 @@ struct NewAsset {
     act: Option<u8>,
     width: Option<u32>,
     height: Option<u32>,
-    /// Sprites: frames per direction.
-    variant: Option<u32>,
     /// Sprites: number of directions.
-    rarity: Option<i32>,
+    directions: Option<u32>,
+    /// Sprites: frames per direction.
+    frames: Option<u32>,
     /// COF: `"<n> layers"`.
     class: Option<String>,
     gen_name: String,
@@ -412,8 +412,8 @@ impl NewAsset {
             act: None,
             width: None,
             height: None,
-            variant: None,
-            rarity: None,
+            directions: None,
+            frames: None,
             class: None,
             src: entry.source.clone(),
             src_tag: entry.src_tag,
@@ -441,7 +441,7 @@ impl NewAsset {
 
 fn insert_asset(tx: &Transaction<'_>, profile: &str, a: &NewAsset) -> rusqlite::Result<i64> {
     let mut stmt = tx.prepare_cached(
-        "INSERT INTO assets(profile, key, kind, path, act, width, height, variant, rarity, class,
+        "INSERT INTO assets(profile, key, kind, path, act, width, height, directions, frames, class,
                             gen_name, src, src_tag, thumb)
          VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
     )?;
@@ -453,8 +453,8 @@ fn insert_asset(tx: &Transaction<'_>, profile: &str, a: &NewAsset) -> rusqlite::
         a.act,
         a.width,
         a.height,
-        a.variant,
-        a.rarity,
+        a.directions,
+        a.frames,
         a.class,
         a.gen_name,
         a.src,
@@ -850,8 +850,8 @@ impl Index {
                 let mut asset = NewAsset::file(entry, kind);
                 asset.width = sprite.width;
                 asset.height = sprite.height;
-                asset.rarity = sprite.directions.and_then(|d| i32::try_from(d).ok());
-                asset.variant = sprite.frames;
+                asset.directions = sprite.directions;
+                asset.frames = sprite.frames;
                 asset.class = sprite.layers.map(|n| format!("{n} layers"));
                 asset.thumb = sprite.thumb;
                 insert_asset(&tx, profile_id, &asset).map_err(sq)?;

@@ -10,26 +10,6 @@ const TILES_PREFIX: &str = "data\\global\\tiles\\";
 const GLOBAL_PREFIX: &str = "data\\global\\";
 const DATA_PREFIX: &str = "data\\";
 
-/// The fixed 16-colour palette used to name a tile's dominant colour.
-const COLORS: [(&str, [u8; 3]); 16] = [
-    ("black", [20, 20, 20]),
-    ("grey", [128, 128, 128]),
-    ("white", [240, 240, 240]),
-    ("red", [192, 32, 32]),
-    ("orange", [230, 130, 30]),
-    ("brown", [130, 70, 20]),
-    ("yellow", [230, 220, 50]),
-    ("olive", [128, 128, 0]),
-    ("green", [50, 150, 50]),
-    ("teal", [30, 130, 130]),
-    ("cyan", [60, 220, 220]),
-    ("blue", [40, 70, 200]),
-    ("purple", [120, 50, 160]),
-    ("magenta", [220, 40, 200]),
-    ("pink", [240, 150, 180]),
-    ("tan", [200, 170, 120]),
-];
-
 /// Edge density (mean Sobel magnitude) below which a tile is `flat`.
 pub const FLAT_BELOW: f32 = 20.0;
 /// Edge density below which a tile is `noisy`; at or above it is `edgy`.
@@ -42,24 +22,75 @@ pub fn luma(rgb: [u8; 3]) -> f32 {
     0.299 * f32::from(rgb[0]) + 0.587 * f32::from(rgb[1]) + 0.114 * f32::from(rgb[2])
 }
 
-/// Nearest palette colour (squared RGB distance; ties go to the earlier
-/// palette entry) to the mean opaque colour of a tile.
+/// Saturation (HSV) below which a colour is `grey` or `white`.
+pub const GREY_BELOW_SATURATION: f32 = 0.15;
+/// Mean luma below which a colour is `grey`; at or above it is `white`.
+pub const WHITE_FROM_LUMA: f32 = 170.0;
+/// HSV value below which red, orange and yellow read as `brown`.
+pub const BROWN_BELOW_VALUE: f32 = 0.55;
+/// HSV saturation below which orange and yellow (bright enough) read as `tan`.
+pub const TAN_BELOW_SATURATION: f32 = 0.35;
+
+/// Hue sectors in degrees: the name applies from the listed start up to the
+/// next start. Red wraps around 0 (its sector is [345, 360) and [0, 15)).
+const HUE_SECTORS: [(f32, &str); 10] = [
+    (15.0, "orange"),
+    (45.0, "yellow"),
+    (70.0, "green"),
+    (160.0, "teal"),
+    (185.0, "cyan"),
+    (200.0, "blue"),
+    (255.0, "purple"),
+    (290.0, "magenta"),
+    (320.0, "pink"),
+    (345.0, "red"),
+];
+
+/// HSV of an RGB colour: hue in degrees `[0, 360)`, saturation and value in
+/// `[0, 1]`. Grey colours have hue 0.
+fn hsv(rgb: [u8; 3]) -> (f32, f32, f32) {
+    let [r, g, b] = rgb.map(|c| f32::from(c) / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    let value = max;
+    let saturation = if max <= 0.0 { 0.0 } else { delta / max };
+    let hue = if delta <= 0.0 {
+        0.0
+    } else if (max - r).abs() <= f32::EPSILON {
+        60.0 * ((g - b) / delta).rem_euclid(6.0)
+    } else if (max - g).abs() <= f32::EPSILON {
+        60.0 * ((b - r) / delta + 2.0)
+    } else {
+        60.0 * ((r - g) / delta + 4.0)
+    };
+    (hue.rem_euclid(360.0), saturation, value)
+}
+
+/// The colour name of a tile's mean opaque colour, by the HSV rule of
+/// `docs/api/capy-index.md`: `dark` below luma 25; `grey` or `white` below
+/// saturation 0.15 (split at luma 170); otherwise the hue sector, with red,
+/// orange and yellow below value 0.55 turned `brown` and pale orange or
+/// yellow turned `tan`.
 pub fn color_name(rgb: [u8; 3]) -> &'static str {
-    let mut best = COLORS[0].0;
-    let mut best_d = i64::MAX;
-    for (name, c) in COLORS {
-        let d: i64 = (0..3)
-            .map(|i| {
-                let diff = i64::from(rgb[i]) - i64::from(c[i]);
-                diff * diff
-            })
-            .sum();
-        if d < best_d {
-            best_d = d;
-            best = name;
-        }
+    let y = luma(rgb);
+    if y < DARK_BELOW {
+        return "dark";
     }
-    best
+    let (hue, saturation, value) = hsv(rgb);
+    if saturation < GREY_BELOW_SATURATION {
+        return if y < WHITE_FROM_LUMA { "grey" } else { "white" };
+    }
+    let sector = HUE_SECTORS
+        .iter()
+        .rev()
+        .find(|(start, _)| hue >= *start)
+        .map_or("red", |(_, name)| *name);
+    match sector {
+        "red" | "orange" | "yellow" if value < BROWN_BELOW_VALUE => "brown",
+        "orange" | "yellow" if saturation < TAN_BELOW_SATURATION => "tan",
+        other => other,
+    }
 }
 
 /// `flat` below 20, `noisy` below 60, `edgy` otherwise. NaN counts as flat.
@@ -89,20 +120,20 @@ pub fn class_name(orientation: u8) -> &'static str {
     }
 }
 
-/// The descriptor part of a tile name. A tile whose mean opaque `luma` is
-/// below [`DARK_BELOW`] is `dark`, whatever its colour name. Otherwise it is
-/// the colour, plus the texture when the tile is not flat; a few pairs read
+/// The descriptor part of a tile name. A `dark` colour, or a tile whose mean
+/// opaque `luma` is below [`DARK_BELOW`], is `dark`. Otherwise it is the
+/// colour, plus the texture when the tile is not flat; a few pairs read
 /// better as a word: green+noisy is `grass`, brown+noisy `dirt`, grey+edgy
-/// `stone`, blue+flat `water`.
+/// `stone`, blue, cyan or teal + flat `water`.
 pub fn descriptor(color: &str, texture: &str, luma: f32) -> String {
-    if luma < DARK_BELOW {
+    if luma < DARK_BELOW || color == "dark" {
         return "dark".to_owned();
     }
     match (color, texture) {
         ("green", "noisy") => "grass".to_owned(),
         ("brown", "noisy") => "dirt".to_owned(),
         ("grey", "edgy") => "stone".to_owned(),
-        ("blue", "flat") => "water".to_owned(),
+        ("blue" | "cyan" | "teal", "flat") => "water".to_owned(),
         (color, "flat") => color.to_owned(),
         (color, texture) => format!("{color} {texture}"),
     }
@@ -250,19 +281,121 @@ mod tests {
         }
     }
 
+    /// An RGB colour of the given hue (degrees), saturation and value.
+    fn from_hsv(hue: f32, saturation: f32, value: f32) -> [u8; 3] {
+        let c = value * saturation;
+        let x = c * (1.0 - ((hue / 60.0).rem_euclid(2.0) - 1.0).abs());
+        let m = value - c;
+        let (r, g, b) = match hue {
+            h if h < 60.0 => (c, x, 0.0),
+            h if h < 120.0 => (x, c, 0.0),
+            h if h < 180.0 => (0.0, c, x),
+            h if h < 240.0 => (0.0, x, c),
+            h if h < 300.0 => (x, 0.0, c),
+            _ => (c, 0.0, x),
+        };
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let to_u8 = |v: f32| ((v + m) * 255.0).round() as u8;
+        [r, g, b].map(to_u8)
+    }
+
     #[test]
-    fn colour_nearest_name() {
-        for (name, rgb) in COLORS {
-            assert_eq!(color_name(rgb), name, "palette entry {name}");
+    fn hue_sector_boundaries() {
+        // Fully saturated, bright colours: the value/saturation exceptions
+        // do not apply, so the name is the pure hue sector.
+        let expected = [
+            (0.0, "red"),
+            (14.0, "red"),
+            (16.0, "orange"),
+            (44.0, "orange"),
+            (46.0, "yellow"),
+            (69.0, "yellow"),
+            (71.0, "green"),
+            (159.0, "green"),
+            (161.0, "teal"),
+            (184.0, "teal"),
+            (186.0, "cyan"),
+            (199.0, "cyan"),
+            (201.0, "blue"),
+            (254.0, "blue"),
+            (256.0, "purple"),
+            (289.0, "purple"),
+            (291.0, "magenta"),
+            (319.0, "magenta"),
+            (321.0, "pink"),
+            (344.0, "pink"),
+            (346.0, "red"),
+            (359.0, "red"),
+        ];
+        for (hue, name) in expected {
+            let rgb = from_hsv(hue, 1.0, 1.0);
+            assert_eq!(color_name(rgb), name, "hue {hue} = {rgb:?}");
         }
-        assert_eq!(color_name([10, 10, 10]), "black");
-        assert_eq!(color_name([250, 250, 250]), "white");
-        assert_eq!(color_name([60, 140, 60]), "green");
-        assert_eq!(color_name([100, 70, 40]), "brown");
-        assert_eq!(color_name([130, 125, 135]), "grey");
-        assert_eq!(color_name([30, 30, 190]), "blue");
-        assert_eq!(color_name([40, 40, 40]), "black");
-        assert_eq!(color_name([90, 90, 90]), "grey");
+        assert_eq!(color_name([255, 0, 0]), "red");
+        assert_eq!(color_name([255, 255, 0]), "yellow");
+        assert_eq!(color_name([0, 255, 0]), "green");
+        assert_eq!(color_name([0, 255, 255]), "teal", "hue 180");
+        assert_eq!(color_name([0, 230, 255]), "cyan", "hue 188");
+        assert_eq!(color_name([0, 0, 255]), "blue");
+        assert_eq!(color_name([255, 0, 255]), "magenta");
+        assert_eq!(color_name([255, 0, 128]), "pink");
+    }
+
+    #[test]
+    fn dark_grey_and_white_boundaries() {
+        // Luma 25 is the dark boundary (strictly below is dark).
+        assert_eq!(color_name([24, 24, 24]), "dark");
+        assert_eq!(color_name([25, 25, 25]), "grey");
+        // Dark wins over any hue.
+        assert_eq!(color_name([0, 0, 40]), "dark", "luma 4.6");
+        assert_eq!(color_name([60, 0, 0]), "dark", "luma 17.9");
+        assert_eq!(color_name([0, 0, 0]), "dark");
+        // Saturation 0.15 is the grey boundary (strictly below is grey).
+        assert_eq!(color_name([200, 169, 169]), "red", "s = 0.155");
+        assert_eq!(
+            color_name([200, 171, 171]),
+            "white",
+            "s < 0.15, luma >= 170"
+        );
+        assert_eq!(color_name([120, 103, 103]), "grey", "s = 0.142, luma < 170");
+        // Luma 170 is the white boundary (grey below, white from 170).
+        assert_eq!(color_name([169, 169, 169]), "grey");
+        assert_eq!(color_name([170, 170, 170]), "white");
+        assert_eq!(color_name([255, 255, 255]), "white");
+        assert_eq!(color_name([128, 128, 128]), "grey");
+    }
+
+    #[test]
+    fn brown_and_tan_boundaries() {
+        // Value 0.55 is 140.25 of 255: 140 is below, 141 is not.
+        assert_eq!(color_name([140, 70, 0]), "brown", "orange hue, v < 0.55");
+        assert_eq!(color_name([141, 70, 0]), "orange", "orange hue, v >= 0.55");
+        assert_eq!(color_name([140, 0, 0]), "brown", "red, v < 0.55");
+        assert_eq!(color_name([141, 0, 0]), "red");
+        assert_eq!(color_name([140, 140, 0]), "brown", "yellow, v < 0.55");
+        assert_eq!(color_name([141, 141, 0]), "yellow");
+        // Other hues are never brown.
+        assert_eq!(color_name([0, 100, 0]), "green");
+        assert_eq!(color_name([40, 40, 200]), "blue");
+        // Tan: orange or yellow, s < 0.35, v >= 0.55. At v = 200, s = 0.35 is min = 130.
+        assert_eq!(color_name([200, 160, 131]), "tan", "orange hue, s = 0.345");
+        assert_eq!(
+            color_name([200, 160, 129]),
+            "orange",
+            "orange hue, s = 0.355"
+        );
+        assert_eq!(color_name([200, 200, 131]), "tan", "yellow hue, s = 0.345");
+        assert_eq!(
+            color_name([200, 200, 129]),
+            "yellow",
+            "yellow hue, s = 0.355"
+        );
+        // Dull and dark is brown, not tan.
+        assert_eq!(color_name([100, 85, 70]), "brown");
+        // Red is never tan, however pale.
+        assert_eq!(color_name([200, 140, 140]), "red");
+        // Grey takes precedence over tan.
+        assert_eq!(color_name([200, 195, 190]), "white");
     }
 
     #[test]
@@ -283,15 +416,17 @@ mod tests {
         assert_eq!(descriptor("brown", "noisy", mid), "dirt");
         assert_eq!(descriptor("grey", "edgy", mid), "stone");
         assert_eq!(descriptor("blue", "flat", mid), "water");
+        assert_eq!(descriptor("cyan", "flat", mid), "water");
+        assert_eq!(descriptor("teal", "flat", mid), "water");
+        assert_eq!(descriptor("cyan", "noisy", mid), "cyan noisy");
+        assert_eq!(descriptor("dark", "edgy", mid), "dark");
         assert_eq!(descriptor("red", "flat", mid), "red");
         assert_eq!(descriptor("red", "noisy", mid), "red noisy");
         assert_eq!(descriptor("green", "flat", mid), "green");
         assert_eq!(descriptor("green", "edgy", mid), "green edgy");
         assert_eq!(descriptor("grey", "noisy", mid), "grey noisy");
-        // Black is a colour name like any other once the tile is not dark.
-        assert_eq!(descriptor("black", "flat", 30.0), "black");
         // Dark wins over every colour and texture.
-        assert_eq!(descriptor("black", "flat", 24.9), "dark");
+        assert_eq!(descriptor("grey", "flat", 24.9), "dark");
         assert_eq!(descriptor("green", "noisy", 10.0), "dark");
         assert_eq!(descriptor("brown", "edgy", 0.0), "dark");
         assert_eq!(descriptor("brown", "edgy", 25.0), "brown edgy");

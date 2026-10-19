@@ -71,6 +71,10 @@ pub struct AssetRow {
     pub transparency: Option<f32>,
     pub src: String,
     pub src_tag: String,
+    /// Sprites (DC6/DCC/COF): number of directions.
+    pub directions: Option<u32>,
+    /// Sprites: frames per direction.
+    pub frames: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -93,7 +97,7 @@ pub struct Index {
 /// Columns of [`AssetRow`], aliased `a`.
 pub(crate) const ASSET_COLS: &str = "a.id, a.key, a.kind, a.path, a.act, a.orientation, a.main, a.sub, \
      a.variant, a.rarity, a.width, a.height, a.class, a.gen_name, a.color, a.texture, \
-     a.transparency, a.src, a.src_tag";
+     a.transparency, a.src, a.src_tag, a.directions, a.frames";
 
 fn opt_int<T: TryFrom<i64>>(row: &Row<'_>, idx: usize) -> rusqlite::Result<Option<T>> {
     Ok(row
@@ -131,6 +135,8 @@ pub(crate) fn asset_from_row(row: &Row<'_>) -> rusqlite::Result<AssetRow> {
         transparency: row.get::<_, Option<f64>>(16)?.map(|t| t as f32),
         src: row.get(17)?,
         src_tag: row.get(18)?,
+        directions: opt_int(row, 19)?,
+        frames: opt_int(row, 20)?,
     })
 }
 
