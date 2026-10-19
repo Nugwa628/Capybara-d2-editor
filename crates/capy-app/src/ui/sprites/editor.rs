@@ -160,8 +160,9 @@ fn top_bar(ui: &mut Ui, state: &mut AppState) {
             }
         });
     });
+    super::paint_badge_row(ui, state, crate::sprites::Focus::Editor);
     ui.horizontal_wrapped(|ui| {
-        palette_controls(ui, state);
+        palette_controls(ui, state, crate::sprites::Focus::Editor);
         ui.separator();
         let Some(e) = editor(state) else { return };
         let mut z = e.zoom.round();

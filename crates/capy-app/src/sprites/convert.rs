@@ -122,6 +122,14 @@ fn sheet_meta(file: &Path) -> Option<ExportMeta> {
     serde_json::from_slice(&json).ok()
 }
 
+/// The `sprite.json` (or sheet `.json`) an import would read, if any.
+pub fn import_meta(settings: &ImportSettings) -> Option<ExportMeta> {
+    match settings.layout {
+        Layout::Frames => sibling_meta(&settings.files),
+        Layout::Sheet => settings.files.first().and_then(|f| sheet_meta(f)),
+    }
+}
+
 /// (directions, frames) for `count` images.
 pub fn frame_layout(count: usize, directions: u32, frames: u32) -> Result<(usize, usize), String> {
     let dirs = directions.max(1) as usize;

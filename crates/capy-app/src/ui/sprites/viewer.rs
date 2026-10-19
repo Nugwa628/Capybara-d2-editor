@@ -4,7 +4,8 @@ use std::hash::{Hash, Hasher};
 
 use bevy_egui::egui::{self, Color32, PointerButton, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use super::{paint_checker, palette_controls, rgba_texture};
+use super::{paint_badge_row, paint_checker, palette_controls, rgba_texture};
+use crate::sprites::Focus;
 use crate::sprites::viewer::{Background, MAX_ZOOM, Tex};
 use crate::state::AppState;
 
@@ -38,7 +39,15 @@ fn toolbar(ui: &mut Ui, state: &mut AppState) {
         if let Some((_, format)) = v.sprite() {
             ui.weak(format.extension().to_ascii_uppercase());
         }
+        if v.dt1().is_some() {
+            ui.weak("DT1");
+        }
         let can_edit = v.sprite().is_some();
+        let converted = matches!(
+            v.source,
+            Some(crate::sprites::SpriteSource::Converted { .. })
+        );
+        let can_convert = v.sprite().is_some() || v.dt1().is_some();
         if ui
             .add_enabled(can_edit, egui::Button::new("Open in editor"))
             .on_disabled_hover_text("Open a DC6/DCC (a COF layer has its own button)")
@@ -48,14 +57,23 @@ fn toolbar(ui: &mut Ui, state: &mut AppState) {
             state.error(e);
         }
         if ui
-            .add_enabled(can_edit, egui::Button::new("Save to game path..."))
+            .add_enabled(can_edit || converted, egui::Button::new("Save to game path..."))
             .clicked()
         {
             state.begin_sprite_save(crate::sprites::Target::Viewer);
         }
+        if ui
+            .add_enabled(can_convert, egui::Button::new("Convert to palette..."))
+            .on_hover_text("Carry the colours into another palette (act, UI, ...); nothing changes until Convert")
+            .on_disabled_hover_text("Open a DC6, DCC or DT1")
+            .clicked()
+        {
+            let _ = state.convert_open_viewer();
+        }
     });
+    paint_badge_row(ui, state, Focus::Viewer);
     ui.horizontal_wrapped(|ui| {
-        palette_controls(ui, state);
+        palette_controls(ui, state, Focus::Viewer);
         ui.separator();
         let v = &mut state.sprites.viewer;
         ui.label("Zoom");
@@ -80,7 +98,42 @@ fn toolbar(ui: &mut Ui, state: &mut AppState) {
 fn playback(ui: &mut Ui, state: &mut AppState) {
     let v = &mut state.sprites.viewer;
     let (dirs, frames) = (v.directions(), v.frames());
+    let is_dt1 = v.dt1().is_some();
     ui.horizontal_wrapped(|ui| {
+        if is_dt1 {
+            ui.label("Tile");
+            let mut tile = v.frame;
+            if ui
+                .add(egui::Slider::new(&mut tile, 0..=frames.saturating_sub(1)))
+                .changed()
+            {
+                v.set_frame(tile);
+            }
+            ui.weak(format!("of {frames}"));
+            let mut jump = None;
+            if let Some(d) = v.dt1() {
+                let (o, m, s) = d
+                    .tiles
+                    .get(v.frame)
+                    .map_or((0, 0, 0), |t| (t.orientation, t.main, t.sub));
+                let (mut o2, mut m2, mut s2) = (o, m, s);
+                ui.add(
+                    egui::DragValue::new(&mut o2)
+                        .prefix("orient. ")
+                        .range(0..=19),
+                );
+                ui.add(egui::DragValue::new(&mut m2).prefix("main ").range(0..=255));
+                ui.add(egui::DragValue::new(&mut s2).prefix("sub ").range(0..=255));
+                if (o2, m2, s2) != (o, m, s) {
+                    jump = d.find(o2, m2, s2, None);
+                }
+                ui.weak(d.label(v.frame));
+            }
+            if let Some(i) = jump {
+                v.set_frame(i);
+            }
+            return;
+        }
         ui.label("Direction");
         let mut dir = v.dir;
         egui::ComboBox::from_id_salt("viewer_dir")

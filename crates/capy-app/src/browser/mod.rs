@@ -616,6 +616,14 @@ impl AppState {
         self.browser.with_user(&path, f)
     }
 
+    /// Runs `f` with user.db (opened on first use); for other modules.
+    pub(crate) fn user_db<T>(
+        &mut self,
+        f: impl FnOnce(&UserDb) -> capy_index::Result<T>,
+    ) -> Result<T, String> {
+        self.user(f)
+    }
+
     /// Reload groups, recents and saved searches from user.db.
     pub fn refresh_lists(&mut self) {
         self.browser.lists.dirty = false;

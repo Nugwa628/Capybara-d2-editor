@@ -26,6 +26,15 @@ pub enum Purpose {
     ExportSprite,
     BatchInput,
     BatchOutput,
+    /// A DT1/DC6/DCC to open in "Convert to palette".
+    ConvertOpenFile,
+    /// "Save As..." of the converted file.
+    ConvertSaveAs,
+    /// Files for the palette batch.
+    ConvertBatchFiles,
+    /// A folder (tree) for the palette batch.
+    ConvertBatchFolder,
+    ConvertBatchOutput,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,8 +48,10 @@ enum Kind {
 impl Purpose {
     fn kind(self) -> Kind {
         match self {
-            Purpose::OpenSprite => Kind::OpenFile,
-            Purpose::ImportImages => Kind::OpenFiles,
+            Purpose::OpenSprite | Purpose::ConvertOpenFile => Kind::OpenFile,
+            Purpose::ImportImages | Purpose::ConvertBatchFiles => Kind::OpenFiles,
+            Purpose::ConvertBatchFolder | Purpose::ConvertBatchOutput => Kind::Folder,
+            Purpose::ConvertSaveAs => Kind::Save,
             Purpose::ImportFolder
             | Purpose::ExportFrames
             | Purpose::BatchInput
@@ -70,13 +81,21 @@ impl Purpose {
             Purpose::ExportSprite => "Export the sprite file",
             Purpose::BatchInput => "Batch input folder",
             Purpose::BatchOutput => "Batch output folder",
+            Purpose::ConvertOpenFile => "Open a DT1, DC6 or DCC to convert",
+            Purpose::ConvertSaveAs => "Save the converted file as",
+            Purpose::ConvertBatchFiles => "Files to convert",
+            Purpose::ConvertBatchFolder => "Folder to convert (with sub-folders)",
+            Purpose::ConvertBatchOutput => "Output folder for the converted files",
         }
     }
 
     /// (filter name, extensions)
     fn filter(self) -> Option<(&'static str, &'static [&'static str])> {
         match self {
-            Purpose::OpenSprite => Some(("Sprites", &["dc6", "dcc", "cof"])),
+            Purpose::OpenSprite => Some(("Sprites and tiles", &["dc6", "dcc", "cof", "dt1"])),
+            Purpose::ConvertOpenFile | Purpose::ConvertBatchFiles | Purpose::ConvertSaveAs => {
+                Some(("Tiles and sprites", &["dt1", "dc6", "dcc"]))
+            }
             Purpose::ImportImages => Some(("Images", &["png", "bmp", "gif", "pcx"])),
             Purpose::ExportSheet | Purpose::ExportPng => Some(("PNG", &["png"])),
             Purpose::ExportGif => Some(("GIF", &["gif"])),

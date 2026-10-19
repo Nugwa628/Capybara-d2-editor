@@ -17,7 +17,7 @@ mod palette;
 mod properties;
 mod settings;
 mod shortcuts;
-mod sprites;
+pub mod sprites;
 mod status;
 mod thumbs;
 mod tiles;

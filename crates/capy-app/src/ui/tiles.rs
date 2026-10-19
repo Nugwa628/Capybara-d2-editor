@@ -952,6 +952,18 @@ fn tile_menu(ctx: &egui::Context, state: &mut AppState) {
         if ui.button("Copy key").clicked() {
             action = Some(MenuAction::Copy);
         }
+        ui.separator();
+        let dt1 = key
+            .split('#')
+            .next()
+            .is_some_and(|p| p.to_ascii_lowercase().ends_with(".dt1"));
+        if ui
+            .add_enabled(dt1, egui::Button::new("Convert tile set to palette..."))
+            .on_hover_text("Open this DT1 in Convert to palette (nothing changes until Convert)")
+            .clicked()
+        {
+            action = Some(MenuAction::ConvertPalette);
+        }
     });
     if shown.is_none() {
         menu.open = false;
@@ -991,6 +1003,7 @@ fn tile_menu(ctx: &egui::Context, state: &mut AppState) {
         MenuAction::RemoveFav(g) => state.favorite_remove(g, &key),
         MenuAction::Similar => state.find_similar(&key),
         MenuAction::UsedIn => state.browser.used_in_window = Some(key.clone()),
+        MenuAction::ConvertPalette => state.convert_open_tile_key(&key),
         MenuAction::Copy => {
             ctx.copy_text(key.clone());
             state.notify(format!("Copied {key}"));
@@ -1028,6 +1041,7 @@ enum MenuAction {
     Similar,
     UsedIn,
     Copy,
+    ConvertPalette,
 }
 
 fn prompt(ctx: &egui::Context, state: &mut AppState) {

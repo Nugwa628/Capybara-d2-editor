@@ -18,6 +18,7 @@
 //! | Ctrl+wheel, wheel, middle drag | zoom and pan (editor); wheel zooms the viewer |
 
 mod browser;
+pub mod convert_palette;
 mod converter;
 mod editor;
 pub mod preview;
@@ -96,8 +97,29 @@ pub fn rgba_texture(
     Some(ctx.load_texture(name, image, TextureOptions::NEAREST))
 }
 
-/// Palette picker and gamma, shared by the viewer and the editor.
-pub fn palette_controls(ui: &mut Ui, state: &mut AppState) {
+/// The palette-memory key of the file a panel shows.
+pub fn panel_key(state: &AppState, panel: Focus) -> Option<String> {
+    use crate::sprites::SpriteSource;
+    match panel {
+        Focus::Viewer => state
+            .sprites
+            .viewer
+            .source
+            .as_ref()
+            .and_then(SpriteSource::memory_key),
+        Focus::Editor => state
+            .sprites
+            .editor
+            .as_ref()
+            .and_then(|e| e.source.memory_key()),
+        Focus::Converter => state
+            .target_data(state.sprites.converter.target)
+            .and_then(|d| d.source)
+            .and_then(|s| s.memory_key()),
+    }
+}
+
+fn palette_list(state: &AppState) -> Vec<PaletteChoice> {
     let extra = state
         .session
         .as_ref()
@@ -105,6 +127,13 @@ pub fn palette_controls(ui: &mut Ui, state: &mut AppState) {
         .unwrap_or_default();
     let mut list = choices(&extra);
     list.push(PaletteChoice::Grey);
+    list
+}
+
+/// Palette picker and gamma, shared by the viewer, the editor and the
+/// converter. A pick is remembered for the panel's file.
+pub fn palette_controls(ui: &mut Ui, state: &mut AppState, panel: Focus) {
+    let list = palette_list(state);
     let current = state.sprites.palette.choice.clone();
     let mut picked = None;
     ui.label("Palette");
@@ -118,8 +147,8 @@ pub fn palette_controls(ui: &mut Ui, state: &mut AppState) {
             }
         });
     if let Some(c) = picked {
-        state.sprites.palette.choice = c;
-        state.sync_editor_palette();
+        let key = panel_key(state, panel);
+        state.pick_palette(c, key.as_deref());
     }
     ui.add(
         egui::DragValue::new(&mut state.sprites.palette.gamma)
@@ -128,6 +157,57 @@ pub fn palette_controls(ui: &mut Ui, state: &mut AppState) {
             .prefix("gamma "),
     )
     .on_hover_text("Display only: gamma never changes the palette indices");
+}
+
+/// The badge on its own row of a panel header.
+pub fn paint_badge_row(ui: &mut Ui, state: &mut AppState, panel: Focus) {
+    palette_badge(ui, state, panel);
+}
+
+/// The palette badge of a panel's header: which palette is on and whether
+/// it is the one remembered for the file. One click opens the palette list;
+/// a remembered or folder palette that differs is offered as a button.
+pub fn palette_badge(ui: &mut Ui, state: &mut AppState, panel: Focus) {
+    use crate::sprites::palette_memory::Tone;
+    let key = panel_key(state, panel);
+    let badge = state.palette_badge(key.as_deref());
+    let fill = match badge.tone {
+        Tone::Good => Color32::from_rgb(38, 110, 52),
+        Tone::Info => Color32::from_rgb(40, 82, 140),
+        Tone::Warn => Color32::from_rgb(170, 110, 20),
+        Tone::Danger => Color32::from_rgb(170, 36, 36),
+    };
+    let list = palette_list(state);
+    let mut picked = None;
+    ui.horizontal_wrapped(|ui| {
+        let button = egui::Button::new(
+            egui::RichText::new(&badge.text)
+                .color(Color32::WHITE)
+                .strong(),
+        )
+        .fill(fill);
+        let resp = ui
+            .add(button)
+            .on_hover_text("The palette this file is shown and saved with. Click to change it.");
+        egui::Popup::menu(&resp).show(|ui| {
+            for c in list {
+                if ui.selectable_label(c == badge.current, c.label()).clicked() {
+                    picked = Some(c);
+                }
+            }
+        });
+        if let Some(offer) = &badge.offer
+            && ui
+                .button(format!("Use {}", offer.label()))
+                .on_hover_text("Switch to the palette this file (or folder) was used with")
+                .clicked()
+        {
+            picked = Some(offer.clone());
+        }
+    });
+    if let Some(c) = picked {
+        state.pick_palette(c, key.as_deref());
+    }
 }
 
 /// `label` of a colour for tooltips.
@@ -285,7 +365,9 @@ pub fn shortcuts(ctx: &Context, state: &mut AppState) {
 // ───────────────────────── questions ─────────────────────────
 
 pub fn dialogs(ctx: &Context, state: &mut AppState) {
+    convert_palette::window(ctx, state);
     save_prompt(ctx, state);
+    palette_warning(ctx, state);
     dcc_warning(ctx, state);
     discard_prompt(ctx, state);
     quit_prompt(ctx, state);
@@ -299,15 +381,40 @@ fn save_prompt(ctx: &Context, state: &mut AppState) {
         .session
         .as_ref()
         .map_or_else(|| "(no profile)".to_owned(), |s| s.profile.id.clone());
+    let palette_name = if prompt.converted {
+        state
+            .sprites
+            .convert
+            .result
+            .as_ref()
+            .map_or_else(String::new, |r| r.target.label())
+    } else {
+        state.sprites.palette.choice.label()
+    };
     let mut save = false;
     let mut cancel = false;
     egui::Modal::new(Id::new("sprite_save_modal")).show(ctx, |ui| {
         ui.set_min_width(520.0);
-        ui.heading("Save to game path");
-        ui.label(format!(
-            "Writes capybara\\saves\\{profile}\\<game path>, lists it in CHANGED.txt and \
-             records a snapshot. The extension (.dc6 or .dcc) picks the format."
-        ));
+        ui.heading(if prompt.converted {
+            "Save the converted file to a game path"
+        } else {
+            "Save to game path"
+        });
+        if prompt.converted {
+            ui.label(format!(
+                "Writes the converted file as it is to capybara\\saves\\{profile}\\<game path>, \
+                 lists it in CHANGED.txt and records a snapshot."
+            ));
+        } else {
+            ui.label(format!(
+                "Writes capybara\\saves\\{profile}\\<game path>, lists it in CHANGED.txt and \
+                 records a snapshot. The extension (.dc6 or .dcc) picks the format."
+            ));
+        }
+        ui.horizontal(|ui| {
+            ui.label("Palette:");
+            ui.strong(&palette_name);
+        });
         ui.add_space(6.0);
         let edit = ui.add(
             egui::TextEdit::singleline(&mut prompt.text)
@@ -333,6 +440,23 @@ fn save_prompt(ctx: &Context, state: &mut AppState) {
     });
     if cancel {
         state.sprites.save_prompt = None;
+    } else if save && prompt.converted {
+        let text = prompt.text.clone();
+        let kind = state.sprites.convert.result.as_ref().map(|r| r.kind);
+        let checked = kind
+            .ok_or_else(|| "nothing was converted".to_owned())
+            .and_then(|k| crate::sprites::convert_palette::check_converted_path(&text, k));
+        match checked {
+            Err(e) => {
+                if let Some(p) = state.sprites.save_prompt.as_mut() {
+                    p.error = Some(e);
+                }
+            }
+            Ok(_) => {
+                state.sprites.save_prompt = None;
+                let _ = state.convert_save_game(&text);
+            }
+        }
     } else if save {
         let (target, text) = (prompt.target, prompt.text.clone());
         match crate::sprites::convert::check_game_path(&text) {
@@ -342,6 +466,74 @@ fn save_prompt(ctx: &Context, state: &mut AppState) {
                 state.sprite_write_checked(target, crate::sprites::DccWrite::Game(text));
             }
         }
+    }
+}
+
+/// "This file belongs to another palette": use it, keep the current one,
+/// or cancel.
+fn palette_warning(ctx: &Context, state: &mut AppState) {
+    use crate::sprites::{PaletteAnswer, PendingWrite};
+    let Some(w) = state.sprites.palette_warning.clone() else {
+        return;
+    };
+    let (remembered, current) = (w.remembered.label(), w.current.label());
+    let mut answer = None;
+    let mut convert = false;
+    egui::Modal::new(Id::new("sprite_palette_warning")).show(ctx, |ui| {
+        ui.set_max_width(520.0);
+        let what = match &w.pending {
+            PendingWrite::Save { .. } => "Saving",
+            PendingWrite::Import | PendingWrite::ImportFolder(_) => "Importing",
+        };
+        ui.heading(format!("{what} with {current}, but this file uses {remembered}"));
+        if w.from_json {
+            ui.label(format!(
+                "The export's sprite.json says its colours are {remembered}; the palette now is {current}."
+            ));
+        } else {
+            ui.label(format!(
+                "{} was last used with {remembered}; the palette now is {current}.",
+                w.key
+            ));
+        }
+        ui.label(
+            "Palette indices mean different colours in different palettes, so art made under the \
+             wrong one shows the wrong colours in game.",
+        );
+        if matches!(w.pending, PendingWrite::Save { .. }) {
+            ui.weak(format!(
+                "If the art was drawn under {current} and must look the same under {remembered}, \
+                 use Convert to palette instead."
+            ));
+        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui.button(format!("Use {remembered}")).clicked() {
+                answer = Some(PaletteAnswer::UseRemembered);
+            }
+            if ui.button(format!("Keep {current}")).clicked() {
+                answer = Some(PaletteAnswer::KeepCurrent);
+            }
+            if matches!(w.pending, PendingWrite::Save { .. })
+                && ui.button("Convert to palette...").clicked()
+            {
+                convert = true;
+                answer = Some(PaletteAnswer::Cancel);
+            }
+            if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                answer = Some(PaletteAnswer::Cancel);
+            }
+        });
+    });
+    if let Some(a) = answer {
+        state.answer_palette_warning(a);
+    }
+    if convert {
+        let target = match &w.pending {
+            PendingWrite::Save { target, .. } => *target,
+            _ => crate::sprites::Target::Viewer,
+        };
+        state.convert_open_target(target, w.current.clone(), w.remembered.clone());
     }
 }
 
