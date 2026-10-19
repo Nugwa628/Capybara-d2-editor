@@ -455,6 +455,8 @@ fn drive_builds(
     layer_material: Res<LayerMaterial>,
 ) {
     let gamma = state.config.gamma;
+    // Edits made since the last frame (scripts run before the UI does).
+    state.sync_docs();
 
     // Drop the state of closed documents.
     let live: Vec<u64> = state.docs.iter().map(|d| d.id).collect();
@@ -514,6 +516,7 @@ fn drive_builds(
                     elapsed,
                 } = out;
                 dr.tiles = res.tiles.clone().or_else(|| dr.tiles.take());
+                state.docs[doc_index].tiles = dr.tiles.clone();
                 if let Some(pixels) = pixels {
                     let image = images.add(atlas_image(pixels));
                     dr.material = Some(materials.add(TileMaterial { atlas: image }));

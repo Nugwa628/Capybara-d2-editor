@@ -3,13 +3,15 @@
 use bevy_egui::egui::{self, Ui};
 use d2_assets::GamePath;
 
-use super::Dock;
+use super::{Dock, dialogs};
 use crate::config::AppMode;
+use crate::edit::ops::EditOp;
 use crate::state::AppState;
 
 pub fn show(ui: &mut Ui, state: &mut AppState, dock: &mut Dock) {
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| file_menu(ui, state));
+        ui.menu_button("Edit", |ui| edit_menu(ui, state));
         ui.menu_button("View", |ui| view_menu(ui, state, dock));
         ui.separator();
         profile_picker(ui, state);
@@ -42,11 +44,19 @@ fn file_menu(ui: &mut Ui, state: &mut AppState) {
     ui.separator();
     let can_close = state.active.is_some();
     if ui
+        .add_enabled(can_close, egui::Button::new("Save").shortcut_text("Ctrl+S"))
+        .on_hover_text(r"Write the map to capybara\saves\<profile>\ and record a snapshot")
+        .clicked()
+    {
+        state.save_active();
+        ui.close();
+    }
+    if ui
         .add_enabled(can_close, egui::Button::new("Close map"))
         .clicked()
     {
         if let Some(i) = state.active {
-            state.close_doc(i);
+            state.request_close(i);
         }
         ui.close();
     }
@@ -60,12 +70,150 @@ fn file_menu(ui: &mut Ui, state: &mut AppState) {
         open_saves_folder(state);
         ui.close();
     }
-    ui.add_enabled(false, egui::Button::new("Mark as packed"))
-        .on_disabled_hover_text("coming with capy-history");
+    let changed = state.edit.changed;
+    if ui
+        .add_enabled(
+            has_profile && changed > 0,
+            egui::Button::new(format!("Mark as packed ({changed})")),
+        )
+        .on_hover_text("Empty CHANGED.txt after packing the saved files into your MPQ")
+        .on_disabled_hover_text("CHANGED.txt is empty")
+        .clicked()
+    {
+        state.edit.confirm_packed = true;
+        ui.close();
+    }
+    ui.weak(format!("CHANGED.txt: {changed} file(s)"));
 
     ui.separator();
     if ui.button("Quit").clicked() {
-        state.quit_requested = true;
+        state.request_quit();
+        ui.close();
+    }
+}
+
+fn edit_menu(ui: &mut Ui, state: &mut AppState) {
+    let (undo, redo, has_sel, has_obj) = match state.active_doc() {
+        Some(d) => (
+            d.edit.undo_label().map(str::to_owned),
+            d.edit.redo_label().map(str::to_owned),
+            !d.selection.is_empty(),
+            !d.object_sel.is_empty(),
+        ),
+        None => (None, None, false, false),
+    };
+    let has_doc = state.active.is_some();
+    let label = |verb: &str, what: &Option<String>| match what {
+        Some(w) => format!("{verb} {w}"),
+        None => verb.to_owned(),
+    };
+    if ui
+        .add_enabled(
+            undo.is_some(),
+            egui::Button::new(label("Undo", &undo)).shortcut_text("Ctrl+Z"),
+        )
+        .clicked()
+    {
+        state.undo();
+        ui.close();
+    }
+    if ui
+        .add_enabled(
+            redo.is_some(),
+            egui::Button::new(label("Redo", &redo)).shortcut_text("Ctrl+Y"),
+        )
+        .clicked()
+    {
+        state.redo();
+        ui.close();
+    }
+    ui.separator();
+    if ui
+        .add_enabled(has_sel, egui::Button::new("Cut").shortcut_text("Ctrl+X"))
+        .clicked()
+    {
+        state.cut_selection();
+        ui.close();
+    }
+    if ui
+        .add_enabled(has_sel, egui::Button::new("Copy").shortcut_text("Ctrl+C"))
+        .clicked()
+    {
+        state.copy_selection();
+        ui.close();
+    }
+    if ui
+        .add_enabled(has_doc, egui::Button::new("Paste").shortcut_text("Ctrl+V"))
+        .clicked()
+    {
+        state.begin_paste();
+        ui.close();
+    }
+    if ui
+        .add_enabled(
+            has_sel || has_obj,
+            egui::Button::new("Delete").shortcut_text("Del"),
+        )
+        .clicked()
+    {
+        super::shortcuts::delete(state);
+        ui.close();
+    }
+    ui.separator();
+    if ui
+        .add_enabled(
+            has_doc,
+            egui::Button::new("Select all on the active layer").shortcut_text("Ctrl+A"),
+        )
+        .clicked()
+    {
+        super::shortcuts::select_all(state);
+        ui.close();
+    }
+    if ui
+        .add_enabled(
+            has_sel || has_obj,
+            egui::Button::new("Deselect").shortcut_text("Ctrl+D"),
+        )
+        .clicked()
+    {
+        state.deselect();
+        ui.close();
+    }
+    ui.separator();
+    ui.add_enabled_ui(has_sel, |ui| {
+        ui.menu_button("Selection flags", |ui| {
+            let mut op = None;
+            if ui.button("Set hidden").clicked() {
+                op = Some((Some(true), None));
+            }
+            if ui.button("Clear hidden").clicked() {
+                op = Some((Some(false), None));
+            }
+            if ui.button("Set unwalkable").clicked() {
+                op = Some((None, Some(true)));
+            }
+            if ui.button("Clear unwalkable").clicked() {
+                op = Some((None, Some(false)));
+            }
+            if let (Some((hidden, unwalkable)), Some(i)) = (op, state.active) {
+                state.exec(i, EditOp::SetFlags { hidden, unwalkable });
+                ui.close();
+            }
+        });
+    });
+    if ui
+        .add_enabled(has_sel, egui::Button::new("Move selection to layer..."))
+        .clicked()
+    {
+        state.edit.move_dialog = dialogs::new_move_dialog(state);
+        ui.close();
+    }
+    if ui
+        .add_enabled(has_doc, egui::Button::new("Resize map..."))
+        .clicked()
+    {
+        state.edit.resize_dialog = dialogs::new_resize_dialog(state);
         ui.close();
     }
 }
@@ -82,6 +230,11 @@ fn view_menu(ui: &mut Ui, state: &mut AppState, dock: &mut Dock) {
         state.request_fit = true;
         ui.close();
     }
+    ui.add_enabled(
+        map_mode,
+        egui::Checkbox::new(&mut state.edit.grid, "Cell grid"),
+    )
+    .on_hover_text("G");
     let mut preview = dock.has_sprite_preview();
     if ui
         .add_enabled(

@@ -36,6 +36,20 @@ pub fn cell_center(x: i32, y: i32) -> Vec2d {
     [sx, sy + HALF_H]
 }
 
+/// Iso position of a continuous tile-space point, where cell `(x, y)` spans
+/// `[x, x + 1] x [y, y + 1]` (so `(x, y)` is the cell's top corner and
+/// `(x + 0.5, y + 0.5)` its centre).
+pub fn tile_to_iso(u: f64, v: f64) -> Vec2d {
+    [(u - v) * HALF_W, (u + v) * HALF_H]
+}
+
+/// Inverse of [`tile_to_iso`].
+pub fn iso_to_tile(p: Vec2d) -> (f64, f64) {
+    let a = p[0] / HALF_W; // u - v
+    let b = p[1] / HALF_H; // u + v
+    ((a + b) / 2.0, (b - a) / 2.0)
+}
+
 /// The cell whose diamond contains the iso point. Not bounds-checked.
 pub fn screen_to_cell(p: Vec2d) -> (i32, i32) {
     // Continuous cell coordinates with integers at diamond centres.
@@ -163,6 +177,19 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn tile_space_is_the_inverse_of_the_projection() {
+        for (u, v) in [(0.0, 0.0), (3.5, 7.25), (-2.0, 9.0), (100.5, 0.5)] {
+            let (a, b) = iso_to_tile(tile_to_iso(u, v));
+            assert!((a - u).abs() < 1e-9 && (b - v).abs() < 1e-9);
+        }
+        // Corners and centres agree with the cell helpers.
+        assert_eq!(tile_to_iso(3.0, 2.0), cell_top(3, 2));
+        assert_eq!(tile_to_iso(3.5, 2.5), cell_center(3, 2));
+        let (u, v) = iso_to_tile(cell_center(5, 9));
+        assert_eq!((u.floor() as i32, v.floor() as i32), (5, 9));
     }
 
     #[test]

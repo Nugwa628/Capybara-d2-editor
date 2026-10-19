@@ -15,6 +15,7 @@ use crate::config::{self, Config};
 use crate::hooks::{self, DebugHooks};
 use crate::paths::Paths;
 use crate::render::{MapCamera, MapRender, RenderPlugin};
+use crate::script_run::{self, ScriptRunner};
 use crate::state::AppState;
 use crate::ui::{self, Dock};
 
@@ -140,7 +141,7 @@ fn load_profiles_leniently(dir: &std::path::Path, notes: &mut Vec<(bool, String)
     out
 }
 
-pub fn run(startup: Prepared) {
+pub fn run(startup: Prepared) -> AppExit {
     let Prepared { state, dock } = startup;
     let window = Window {
         title: "Capybara Map Editor".into(),
@@ -153,6 +154,8 @@ pub fn run(startup: Prepared) {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(window),
+            // Closing the window asks about unsaved maps first.
+            close_when_requested: false,
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
@@ -162,13 +165,16 @@ pub fn run(startup: Prepared) {
         .insert_resource(dock)
         .insert_resource(PersistTimer::default())
         .insert_resource(DebugHooks::from_env())
+        .insert_resource(ScriptRunner::from_env())
         .add_systems(Startup, (setup_cameras, begin_startup_profile))
         .add_systems(
             Update,
             (
                 poll_background,
                 hooks::run_hooks,
+                script_run::run_script,
                 track_window_size,
+                handle_close_request,
                 handle_quit,
                 persist,
             )
@@ -179,7 +185,7 @@ pub fn run(startup: Prepared) {
             Last,
             persist_on_exit.after(bevy::window::exit_on_all_closed),
         )
-        .run();
+        .run()
 }
 
 fn setup_cameras(mut commands: Commands, mut egui: ResMut<EguiGlobalSettings>) {
@@ -267,6 +273,16 @@ fn track_window_size(window: Query<&Window, With<PrimaryWindow>>, mut state: Res
         c.width = width;
         c.height = height;
         state.config_dirty = true;
+    }
+}
+
+/// The window's close button: quit, after asking about unsaved maps.
+fn handle_close_request(
+    mut requests: MessageReader<bevy::window::WindowCloseRequested>,
+    mut state: ResMut<AppState>,
+) {
+    if requests.read().next().is_some() {
+        state.request_quit();
     }
 }
 

@@ -55,6 +55,7 @@ image = { version = "0.25", default-features = false, features = ["png", "bmp", 
 blake3 = { version = "1", default-features = false, features = ["pure"] }
 gix = { version = "0.89", default-features = false, features = ["sha1"] }
 png = "0.18"
+arboard = { version = "3", default-features = false }
 gif = "0.14"
 
 # UI stack, pinned together: bevy_egui 0.43.1 and egui_dock 0.21.1 both

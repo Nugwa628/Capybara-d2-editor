@@ -23,6 +23,9 @@ d2-formats.workspace = true
 d2-assets.workspace = true
 capy-render.workspace = true
 capy-index.workspace = true
+capy-edit.workspace = true
+capy-history.workspace = true
+arboard.workspace = true
 bevy = { workspace = true, features = [
     "std",
     "bevy_winit",
