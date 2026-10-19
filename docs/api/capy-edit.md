@@ -136,6 +136,14 @@ impl Document {
     pub fn add_object(&mut self, object: d2_formats::ds1::Object) -> Result<usize>;
     pub fn move_objects(&mut self, indices: &[usize], dx: i32, dy: i32) -> Result<()>;
     pub fn delete_objects(&mut self, indices: &[usize]) -> Result<()>;           // NPC paths anchored on them move to undo data
+    /// Replace one object's type/id/flags/position (position change moves its anchored path).
+    pub fn set_object(&mut self, index: usize, object: d2_formats::ds1::Object) -> Result<()>;
+    // NPC paths (keyed by the anchor object's sub-tile coordinate; need DS1 v>=14, else NeedsVersion{14}).
+    pub fn path_of(&self, object_index: usize) -> Option<&d2_formats::ds1::NpcPath>;
+    pub fn add_path_point(&mut self, object_index: usize, point: d2_formats::ds1::PathPoint, at: Option<usize>) -> Result<()>; // creates the path if missing
+    pub fn move_path_point(&mut self, object_index: usize, point_index: usize, x: i32, y: i32) -> Result<()>;
+    pub fn set_path_action(&mut self, object_index: usize, point_index: usize, action: i32) -> Result<()>;
+    pub fn delete_path_points(&mut self, object_index: usize, point_indices: &[usize]) -> Result<()>; // removes the path when empty
 }
 
 // ───────────── selection.rs ─────────────
