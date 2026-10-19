@@ -22,7 +22,13 @@ pub struct Dt1View {
 
 impl Dt1View {
     pub fn load(bytes: &[u8]) -> Result<Dt1View, String> {
-        let dt1 = Dt1::parse(bytes).map_err(|e| format!("not a DT1 this editor reads: {e}"))?;
+        let dt1 = Dt1::parse(bytes).map_err(|e| match e {
+            d2_formats::FormatError::UnsupportedVersion { version, .. } => format!(
+                "this DT1 uses an undocumented version ({version}) that neither the game's maps \
+                 nor this editor read (six vanilla act 1 files are like this)"
+            ),
+            e => format!("not a DT1 this editor reads: {e}"),
+        })?;
         if dt1.tiles.is_empty() {
             return Err("the DT1 has no tiles".to_owned());
         }
