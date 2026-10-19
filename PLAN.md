@@ -200,7 +200,7 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
   - Output: "Save to game path" writes to `capybara\saves\<profile>\<game path>` and appends CHANGED.txt; "Export to…" and batch conversion write to a folder the user picks.
   - **Test:** every DC6 and DCC in both corpora re-encodes to the same frames (decode, encode, decode); a PNG import/export round trip preserves pixels and offsets; batch conversion of a sample tree both ways.
 - **P5 Extras.** Objects and NPC paths, animated DCC/DC6, a headless render CLI, and an importer for the legacy `assets/*.ini` files. (No MPQ writing; the user packs by hand.)
-  - Stretch goal: offline CLIP text-to-image tile search.
+  - Stretch goal: offline CLIP text-to-image tile search. **Deferred by the user (2026-10-19)**; feasibility and plan in `docs/research/clip-search.md` (opt-in model download into `capybara\cache\clip\`, gated by a one-day quality check).
 
 ## Asset index (`capy-index`, built in P1, used by P3)
 1. **Crawl:**
