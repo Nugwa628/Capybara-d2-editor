@@ -34,6 +34,9 @@ pub struct RenderArgs {
     pub gamma: f32,
     pub visibility: Visibility,
     pub variant: VariantRule,
+    /// Animation frame shown for every object sprite (taken modulo each
+    /// COF's frame count).
+    pub object_frame: u8,
     pub out: PathBuf,
 }
 
@@ -56,6 +59,9 @@ pub enum Command {
 
 pub const VERBS: [&str; 5] = ["render", "index", "maps", "profiles", "help"];
 
+/// First arguments that mean `help` (compared case-insensitively).
+pub const HELP_ALIASES: [&str; 4] = ["help", "--help", "-h", "/?"];
+
 /// Default zoom divisor of `render` (the reference's 1:1).
 pub const DEFAULT_ZOOM: u32 = 1;
 /// Default gamma of `render` (the reference's 1.30).
@@ -68,12 +74,14 @@ pub fn parse(args: &[OsString]) -> Result<Option<Command>, UsageError> {
     };
     let verb = first.to_ascii_lowercase();
     let rest = &args[1..];
+    if HELP_ALIASES.contains(&verb.as_str()) {
+        return parse_help(rest).map(Some);
+    }
     match verb.as_str() {
         "render" => parse_render(rest).map(|a| Some(Command::Render(a))),
         "index" => parse_index(rest).map(Some),
         "maps" => parse_maps(rest).map(Some),
         "profiles" => parse_profiles(rest).map(Some),
-        "help" => parse_help(rest).map(Some),
         _ => Ok(None),
     }
 }
@@ -218,7 +226,15 @@ fn parse_render(args: &[OsString]) -> Result<RenderArgs, UsageError> {
         V,
         args,
         &[
-            "profile", "lvltype", "def", "zoom", "gamma", "layers", "variant", "out",
+            "profile",
+            "lvltype",
+            "def",
+            "zoom",
+            "gamma",
+            "layers",
+            "variant",
+            "object-frame",
+            "out",
         ],
     )?;
     let map = match p.positionals.as_slice() {
@@ -274,6 +290,15 @@ fn parse_render(args: &[OsString]) -> Result<RenderArgs, UsageError> {
             }
         },
     };
+    let object_frame = match p.take_str(V, "object-frame")? {
+        None => 0,
+        Some(f) => f.trim().parse::<u8>().map_err(|_| {
+            usage(
+                V,
+                format!("bad --object-frame {f:?}: use a frame number from 0 to 255"),
+            )
+        })?,
+    };
     Ok(RenderArgs {
         map,
         profile,
@@ -283,6 +308,7 @@ fn parse_render(args: &[OsString]) -> Result<RenderArgs, UsageError> {
         gamma,
         visibility,
         variant,
+        object_frame,
         out,
     })
 }

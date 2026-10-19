@@ -13,31 +13,38 @@ verbs:
   index     show or build the asset index of a profile
   maps      list the maps of a profile
   profiles  list the profiles in capybara\\profiles
-  help      this text; `help <verb>` for one verb
+  help      this text; `help <verb>` for one verb (also --help, -h, /?)
 
 Without a verb the editor starts. Game folders are never written to.
-Exit codes: 0 ok, 1 runtime error, 2 usage error.";
+Exit codes: 0 ok, 1 runtime error (including a map whose tile set cannot be
+found), 2 usage error (a bad or missing flag or value).";
 
 const RENDER: &str = "\
 render <map> --profile <id|path.toml> [--lvltype N [--def N]] [--zoom 1:N] [--gamma G]
-       [--layers floors,walls,shadow,roofs,special] [--variant reference|documented]
+       [--layers LIST] [--variant reference|documented] [--object-frame N]
        --out <file.png>
 
   <map>      a game path (data\\global\\tiles\\...\\x.ds1, resolved through the profile's
              layers including its saves folder) or a filesystem path to a .ds1
   --profile  a profile id (capybara\\profiles\\<id>.toml) or a path to a profile TOML
   --lvltype  LvlTypes id; with --def, the LvlPrest Def (DS1Edit's command-line form).
-             Without it the best LvlPrest/LvlType match is used. A .ds1 outside the
-             profile needs it.
+             Without it the editor's saved override for the map (capybara\\config.toml)
+             is used, else the best LvlPrest/LvlType match. A .ds1 outside the profile
+             needs one of the two.
   --zoom     1:N, N from 1 to 16 (default 1:1)
   --gamma    palette gamma (default 1.30, the reference's)
   --layers   comma list of floors, walls, shadow, roofs, special, objects, all
-             (default: everything except special)
+             (default: everything except special; without objects, terrain only)
   --variant  reference (DS1Edit's choice among tile variants, default) or documented
+  --object-frame
+             animation frame of every object sprite, 0 to 255, wrapped at each
+             sprite's frame count (default 0)
   --out      PNG file to write
 
-Prints the map info line and the number of missing tiles. Exit 0 even with
-missing tiles (a warning is printed), 1 when the render or the write fails.";
+Prints the map info line, then the result line with the number of missing
+tiles and of drawn and missing objects. Exit 0 even with missing tiles or
+objects (a warning is printed); 1 when the tile set cannot be found, or the
+render or the write fails.";
 
 const INDEX: &str = "\
 index status --profile <id|path.toml>
@@ -51,14 +58,19 @@ maps list --profile <id|path.toml> [--filter S]
 
   Prints one game path per line, a tab, and the MapCatalog source of the
   map's LvlType (Override, LvlPrest, PathGuess, TileCoverage, Ds1Header).
+  Override is an LvlType saved in the editor (capybara\\config.toml).
   --filter keeps paths containing S (case-insensitive).";
 
 const PROFILES: &str = "\
 profiles list
 
-  Prints each profile in capybara\\profiles: id, game version, name.";
+  Prints each profile in capybara\\profiles: id, game version (1.13c, 1.14d
+  or d2r), name.";
 
-const HELP: &str = "help [verb]";
+const HELP: &str = "\
+help [verb]
+
+  Also --help, -h or /? as the first argument.";
 
 fn text_for(verb: &str) -> Option<&'static str> {
     match verb {

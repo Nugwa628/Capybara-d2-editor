@@ -4,7 +4,7 @@ use std::ffi::OsString;
 
 use d2_assets::{GamePath, MapCatalog};
 
-use crate::{CmdResult, Ctx, Fail, names, profiles};
+use crate::{CmdResult, Ctx, Fail, names, overrides, profiles};
 
 /// How many catalog warnings are echoed before the rest is summarised.
 pub const MAX_WARNINGS: usize = 5;
@@ -40,9 +40,10 @@ pub fn list(ctx: &mut Ctx<'_>, profile_arg: &OsString, filter: Option<&str>) -> 
     if maps.is_empty() {
         return Ok(());
     }
-    let (catalog, warnings) = MapCatalog::build(&overlay, profile.game_version, &maps)
+    let (mut catalog, warnings) = MapCatalog::build(&overlay, profile.game_version, &maps)
         .map_err(|e| Fail::Runtime(format!("building the map catalog: {e}")))?;
     warn_limited(ctx, &warnings);
+    overrides::apply(ctx, &mut catalog, &profile.id);
     for map in &maps {
         let source = catalog
             .best(map)

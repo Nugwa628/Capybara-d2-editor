@@ -10,6 +10,7 @@ mod help;
 mod index_cmd;
 mod maps_cmd;
 mod names;
+mod overrides;
 mod profiles;
 mod render_cmd;
 
@@ -83,16 +84,21 @@ fn root_from(env_override: Option<OsString>, exe: &Path) -> PathBuf {
 }
 
 /// Parses `args` (without argv[0]). Returns `None` when the first argument is
-/// not a CLI verb (the GUI starts). Otherwise runs the verb and returns its
-/// exit code (0 ok, 1 runtime error, 2 usage error). Output goes to stdout;
-/// errors to stderr. Never panics on bad input.
+/// not a CLI verb (the GUI starts); `help`, `--help`, `-h` and `/?` are
+/// verbs. Otherwise runs the verb and returns its exit code (0 ok, 1 runtime
+/// error, 2 usage error). Output goes to stdout; errors to stderr. Never
+/// panics on bad input.
 pub fn run(args: &[OsString]) -> Option<ExitCode> {
     // Decide "is this a verb" before touching the filesystem or environment.
-    if matches!(args::parse(args), Ok(None)) {
-        return None;
-    }
+    let needs_root = match args::parse(args) {
+        Ok(None) => return None,
+        Ok(Some(Command::Help(_))) | Err(_) => false,
+        Ok(Some(_)) => true,
+    };
     let root = match capybara_root() {
         Ok(root) => root,
+        // Help and usage errors never look at the folder.
+        Err(_) if !needs_root => PathBuf::new(),
         Err(e) => {
             eprintln!("error: cannot locate the capybara folder: {e}");
             return Some(ExitCode::from(1));
@@ -124,17 +130,22 @@ pub fn run_in(
     };
     let mut ctx = Ctx { root, out, err };
     let result = dispatch(&mut ctx, command);
-    Some(match result {
+    if let Err(Fail::Usage(message) | Fail::Runtime(message)) = &result {
+        let _ = writeln!(ctx.err, "error: {message}");
+    }
+    Some(exit_code(&result))
+}
+
+/// Exit code of a command's result: 0 ok; 1 for a runtime condition (a file
+/// that cannot be read or written, a profile that will not open, a map whose
+/// tile set cannot be found); 2 only for usage errors (bad or missing flags,
+/// bad values).
+pub(crate) fn exit_code(result: &CmdResult) -> u8 {
+    match result {
         Ok(()) => 0,
-        Err(Fail::Usage(message)) => {
-            let _ = writeln!(ctx.err, "error: {message}");
-            2
-        }
-        Err(Fail::Runtime(message)) => {
-            let _ = writeln!(ctx.err, "error: {message}");
-            1
-        }
-    })
+        Err(Fail::Runtime(_)) => 1,
+        Err(Fail::Usage(_)) => 2,
+    }
 }
 
 fn dispatch(ctx: &mut Ctx<'_>, command: Command) -> CmdResult {
