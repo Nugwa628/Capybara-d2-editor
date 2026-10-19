@@ -107,10 +107,30 @@
 //! import-ini C:\ds1edit\assets\act1.ini # File > Import DS1Edit ini mappings
 //! center-cell 30 25                     # centre the view on a cell
 //! ```
+//!
+//! Loading screen (off during scripts unless one of these shows it):
+//!
+//! ```text
+//! splash 4                              # pin door frame 0..9 (waits for the build)
+//! splash plain                          # pin the plain look (no game files)
+//! splash auto                           # behave as at launch: play, then close
+//! splash off
+//! splash-wait-closed                    # wait until it has closed (fails after 30 s)
+//! splash-save 4 2 C:\out\door4.png      # frame, scale: the view as a PNG
+//! ```
 
 use std::path::PathBuf;
 
 use capy_edit::{LayerRef, MoveMode, PasteMode};
+
+/// What `splash` asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplashArg {
+    Frame(usize),
+    Plain,
+    Auto,
+    Off,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cmd {
@@ -261,6 +281,13 @@ pub enum Cmd {
     /// Open "Add game install..." (optionally for a folder); writes nothing.
     AddInstall(Option<String>),
     CloseDialogs,
+    Splash(SplashArg),
+    SplashWaitClosed,
+    SplashSave {
+        frame: usize,
+        scale: usize,
+        file: PathBuf,
+    },
     Animate(bool),
     /// `None` = follow the clock again.
     ObjectFrameTick(Option<u32>),
@@ -921,6 +948,34 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
         "close-dialogs" => {
             need(0, "no arguments")?;
             Cmd::CloseDialogs
+        }
+        "splash" => {
+            need(1, "<frame>|plain|auto|off")?;
+            Cmd::Splash(match args[0].to_ascii_lowercase().as_str() {
+                "plain" => SplashArg::Plain,
+                "auto" => SplashArg::Auto,
+                "off" => SplashArg::Off,
+                frame => SplashArg::Frame(parse_usize(frame, "frame")?),
+            })
+        }
+        "splash-wait-closed" => {
+            need(0, "no arguments")?;
+            Cmd::SplashWaitClosed
+        }
+        "splash-save" => {
+            let mut it = rest.splitn(3, char::is_whitespace);
+            let (Some(frame), Some(scale), Some(file)) = (it.next(), it.next(), it.next()) else {
+                return Err("splash-save: expected <frame> <scale> <png file>".to_owned());
+            };
+            let scale = parse_usize(scale, "scale")?;
+            if !(1..=8).contains(&scale) {
+                return Err(format!("splash-save: scale {scale} must be 1..8"));
+            }
+            Cmd::SplashSave {
+                frame: parse_usize(frame, "frame")?,
+                scale,
+                file: PathBuf::from(file.trim()),
+            }
         }
         "animate" => {
             need(1, "on|off")?;

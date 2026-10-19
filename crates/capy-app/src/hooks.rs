@@ -91,6 +91,12 @@ impl DebugHooks {
         }
     }
 
+    /// A verification run (screenshot or timing) that must not wait for
+    /// the loading screen.
+    pub fn automated(&self) -> bool {
+        self.screenshot.is_some() || self.map_only || self.exit_when_indexed
+    }
+
     /// The divisor a map-only screenshot is laid out for.
     pub fn map_only_div(&self) -> u32 {
         self.zoom.unwrap_or(1).clamp(1, 16)

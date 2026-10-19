@@ -156,14 +156,14 @@ mod tests {
     fn env_override_wins() {
         let root = root_from(
             Some(OsString::from("D:\\scratch\\home")),
-            Path::new("C:\\apps\\CapybaraMapEditor.exe"),
+            Path::new("C:\\apps\\CapybarasD2Editor.exe"),
         );
         assert_eq!(root, PathBuf::from("D:\\scratch\\home"));
     }
 
     #[test]
     fn default_root_is_next_to_exe() {
-        let exe = Path::new("C:\\apps\\capy\\CapybaraMapEditor.exe");
+        let exe = Path::new("C:\\apps\\capy\\CapybarasD2Editor.exe");
         assert_eq!(
             root_from(None, exe),
             Path::new("C:\\apps\\capy").join("capybara")

@@ -44,7 +44,7 @@ fn gpu_tests_enabled() -> bool {
 }
 
 fn exe() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_CapybaraMapEditor"))
+    Command::new(env!("CARGO_BIN_EXE_CapybarasD2Editor"))
 }
 
 /// Runs the exe on `script` with a scratch home; returns (exit code, stderr).

@@ -61,9 +61,9 @@ impl CatalogSlot {
         let spawned = std::thread::Builder::new()
             .name("object-catalog".to_owned())
             .spawn(move || {
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let r = crate::crash::catch(|| {
                     ObjectCatalog::build(&overlay, version).map_err(|e| e.to_string())
-                }))
+                })
                 .unwrap_or_else(|_| Err("building the object tables panicked".to_owned()));
                 let _ = tx.send(r);
             });

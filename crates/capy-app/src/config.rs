@@ -111,6 +111,8 @@ pub struct Config {
     /// View > "Object markers": diamond handles on every object, not only
     /// with the Objects tool.
     pub object_markers: bool,
+    /// Settings > "Show loading screen": the door animation at start-up.
+    pub show_loading_screen: bool,
     pub mode: AppMode,
     pub window: WindowConfig,
     pub layer_visibility: LayerVisibility,
@@ -130,6 +132,7 @@ impl Default for Config {
             browser_thumb: 64.0,
             animate_objects: true,
             object_markers: false,
+            show_loading_screen: true,
             mode: AppMode::default(),
             window: WindowConfig::default(),
             layer_visibility: LayerVisibility::default(),

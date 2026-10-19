@@ -113,7 +113,7 @@ fn search_brush_paint_favorite_alias_and_ctrl_k() {
     );
     let file = home.path().join("script.txt");
     std::fs::write(&file, &script).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_CapybaraMapEditor"))
+    let out = Command::new(env!("CARGO_BIN_EXE_CapybarasD2Editor"))
         .env("CAPY_HOME", home.path().join("capybara"))
         .env("CAPY_PROFILE", "mxl")
         .env("CAPY_SCRIPT", &file)
@@ -179,7 +179,7 @@ fn an_unknown_key_fails_the_script() {
     seed_index(home.path());
     let file = home.path().join("script.txt");
     std::fs::write(&file, "brush-from data\\global\\tiles\\nope.dt1#0/1/2/0\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_CapybaraMapEditor"))
+    let out = Command::new(env!("CARGO_BIN_EXE_CapybarasD2Editor"))
         .env("CAPY_HOME", home.path().join("capybara"))
         .env("CAPY_PROFILE", "mxl")
         .env("CAPY_SCRIPT", &file)

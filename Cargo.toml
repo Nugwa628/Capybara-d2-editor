@@ -65,6 +65,11 @@ windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 windows-registry = "0.6"
 # Local time for the History panel and the autosave note (capy-app only).
 jiff = "0.2"
+# The window/taskbar icon (capy-app only); the version Bevy's winit backend uses.
+winit = { version = "0.30", default-features = false }
+# Exe icon and version resource from capy-app's build script (Windows hosts
+# only; MIT, 2026-03-16). Needs rc.exe from the Windows SDK.
+winresource = { version = "=0.1.31", default-features = false }
 
 # UI stack, pinned together: bevy_egui 0.43.1 and egui_dock 0.21.1 both
 # require egui 0.36.2. `cargo tree -d` showed a single egui with this set.

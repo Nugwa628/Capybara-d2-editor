@@ -1,13 +1,15 @@
-//! Capybara Map Editor binary: the GUI, and the `capy-cli` verbs when the
-//! first argument is one (`CapybaraMapEditor.exe render ...`).
+//! Capybara's D2 Editor binary: the GUI, and the `capy-cli` verbs when the
+//! first argument is one (`CapybarasD2Editor.exe render ...`).
 
 // Release builds are GUI programs (no console window); CLI verbs attach to
 // the console they were started from, see `attach_parent_console`.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod branding;
 mod browser;
 mod config;
+mod crash;
 mod doc;
 mod edit;
 mod fatal;
@@ -21,12 +23,16 @@ mod paths;
 mod render;
 mod script_run;
 mod settings;
+mod splash;
 mod sprites;
 mod state;
 mod tasks;
 mod ui;
 
 use std::process::ExitCode;
+
+/// The product name in window titles, dialogs and messages.
+pub const PRODUCT: &str = "Capybara's D2 Editor";
 
 fn main() -> ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
@@ -38,6 +44,11 @@ fn main() -> ExitCode {
     }
     match paths::Paths::resolve() {
         Ok(paths) => {
+            crash::install(
+                Some(paths.root.join(crash::LOG_NAME)),
+                crash::dialog_wanted(),
+            );
+            debug_panic_at_start();
             // A failed verification hook or script reports through the exit code.
             match app::run(app::prepare(paths)) {
                 bevy::app::AppExit::Error(code) => ExitCode::from(code.get()),
@@ -47,10 +58,21 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("{e}");
             fatal::run(
-                "Capybara Map Editor cannot use its data folder",
+                &format!("{PRODUCT} cannot use its data folder"),
                 &e.to_string(),
             );
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// `CAPY_DEBUG_PANIC=1`: panic right after the crash hook is installed, to
+/// test crash.log and the dialog without a GPU.
+fn debug_panic_at_start() {
+    if std::env::var_os("CAPY_DEBUG_PANIC").is_some_and(|v| v == "1") {
+        #[allow(clippy::panic)]
+        {
+            panic!("CAPY_DEBUG_PANIC: test panic at startup");
         }
     }
 }

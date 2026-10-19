@@ -287,6 +287,9 @@ impl AppState {
                 };
                 self.set_scope_default(scope);
             }
+            "show_loading_screen" | "show-loading-screen" | "loading_screen" => {
+                self.config.show_loading_screen = flag()?;
+            }
             layer if layer.starts_with("layer.") || layer.starts_with("layer_") => {
                 let on = flag()?;
                 let mut v = self.config.layer_visibility;

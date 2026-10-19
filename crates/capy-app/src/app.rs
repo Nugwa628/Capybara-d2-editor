@@ -16,7 +16,8 @@ use crate::hooks::{self, DebugHooks};
 use crate::paths::Paths;
 use crate::render::{MapCamera, MapRender, RenderPlugin};
 use crate::script_run::{self, ScriptRunner};
-use crate::state::AppState;
+use crate::splash::Splash;
+use crate::state::{AppState, CatalogState};
 use crate::ui::{self, Dock};
 
 const PERSIST_DEBOUNCE: Duration = Duration::from_millis(1500);
@@ -147,8 +148,14 @@ fn load_profiles_leniently(dir: &std::path::Path, notes: &mut Vec<(bool, String)
 
 pub fn run(startup: Prepared) -> AppExit {
     let Prepared { state, dock } = startup;
+    let hooks = DebugHooks::from_env();
+    let script = ScriptRunner::from_env();
+    // Verification runs start without the loading screen (a script can
+    // still show it with `splash`).
+    let splash =
+        Splash::new(state.config.show_loading_screen && !hooks.automated() && !script.active());
     let window = Window {
-        title: "Capybara Map Editor".into(),
+        title: crate::PRODUCT.into(),
         resolution: WindowResolution::new(
             state.config.window.width as u32,
             state.config.window.height as u32,
@@ -168,9 +175,11 @@ pub fn run(startup: Prepared) -> AppExit {
         .insert_resource(state)
         .insert_resource(dock)
         .insert_resource(PersistTimer::default())
-        .insert_resource(DebugHooks::from_env())
-        .insert_resource(ScriptRunner::from_env())
+        .insert_resource(hooks)
+        .insert_resource(script)
+        .insert_resource(splash)
         .add_systems(Startup, (setup_cameras, begin_startup_profile))
+        .add_systems(Update, crate::branding::set_window_icons)
         .add_systems(
             Update,
             (
@@ -229,6 +238,7 @@ fn begin_startup_profile(
     mut state: ResMut<AppState>,
     hooks: Res<DebugHooks>,
     mut render: ResMut<MapRender>,
+    mut splash: ResMut<Splash>,
 ) {
     state.forced_context = hooks.forced_context;
     state.index_disabled = hooks.no_index;
@@ -242,7 +252,15 @@ fn begin_startup_profile(
         .clone()
         .or_else(|| state.config.last_profile.clone());
     // First run (nothing wanted): vanilla before alphabetical order.
-    if let Some(id) = crate::installs::startup_profile(&state.profiles, wanted.as_deref()) {
+    let id = crate::installs::startup_profile(&state.profiles, wanted.as_deref());
+    if splash.active() {
+        // The loading screen reads its door frames from the same profile.
+        let profile = id
+            .as_ref()
+            .and_then(|id| state.profiles.iter().find(|p| &p.id == id).cloned());
+        splash.start_build(profile, state.paths.saves.clone());
+    }
+    if let Some(id) = id {
         state.open_profile_by_id(&id);
     }
 }
@@ -261,12 +279,27 @@ fn ui_system(
     mut state: ResMut<AppState>,
     mut dock: ResMut<Dock>,
     hooks: Res<DebugHooks>,
+    mut splash: ResMut<Splash>,
 ) -> Result {
     if hooks.map_only {
         return Ok(()); // the map-only screenshot has no UI
     }
     let ctx = contexts.ctx_mut()?.clone();
+    crate::splash::take_input(&ctx, &mut splash);
     ui::draw(&ctx, &mut state, &mut dock);
+    if splash.active() {
+        // Ready once the start profile's maps can be listed with their
+        // context (or there is nothing to load).
+        let ready = state.loading.is_none() && !matches!(state.catalog, CatalogState::Building);
+        let dialog_open = state.edit.modal_open()
+            || state.sprites.modal_open()
+            || state.history.modal_open()
+            || state.settings.modal_open()
+            || state.settings.open
+            || state.browser.prompt.is_some()
+            || state.browser.palette.open;
+        crate::splash::draw(&ctx, &mut splash, ready, dialog_open);
+    }
     Ok(())
 }
 
