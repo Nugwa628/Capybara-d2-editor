@@ -266,6 +266,11 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - **Writes outside `capybara\` (user-approved, 2026-10-19):** the sprite converter's "Export to…" and batch conversion write to a folder the user picks in a dialog. Everything else still stays under `capybara\`.
 - Repo-local git identity `ZF <112085691+Nugwa628@users.noreply.github.com>` was set because none existed.
 
+## Pending small fixes (lead decisions, not yet implemented)
+- `capy-edit`: `EditError::NeedsVersion.required` must be the true minimum version for the requested result (today a v3 map with tag cells asks for 4, then `upgrade_version(4)` asks for 10). Compute it with `min_version_for_model` on the hypothetical model.
+- `capy-edit`: `set_object` / `move_objects` must refuse a destination sub-tile where it would leave two NPC paths on one anchor (or a pathed object sharing a sub-tile). Path edits on an already-ambiguous path stay allowed so it can be cleaned up.
+- `docs/api/capy-edit.md`: document `Format(Invalid)` for shared sub-tiles and the edge cases above.
+
 ## Known gaps
 - `Patch_D2.mpq`: 77 of 209 files (vanilla) and 53 of Median XL's copy remain unnamed after the harvest; every map, tile set and table the game references is named. A COF-derived name pass (objects/monsters) can recover sprite names later.
 - `scripts/` tools (Python extractor, oracle renders) are dev-only and not shipped.
