@@ -192,3 +192,25 @@ pub fn corpus_seeds(ext: &str, filter: &str, max: usize) -> Vec<PathBuf> {
     let step = all.len().div_ceil(max);
     all.into_iter().step_by(step).collect()
 }
+
+/// Runs `work` over `items` on every core; results come back in any order.
+pub fn parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(item) = items.get(i) else { break };
+                    let r = work(item);
+                    if let Ok(mut out) = results.lock() {
+                        out.push(r);
+                    }
+                }
+            });
+        }
+    });
+    results.into_inner().unwrap_or_default()
+}
