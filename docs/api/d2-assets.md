@@ -217,3 +217,83 @@ impl KnownNames {
 /// fallback); an absent form falls back to the other.
 pub fn load_excel(overlay: &Overlay, kind: d2_formats::excel::ExcelTableKind, version: GameVersion) -> Result<d2_formats::txt::TxtTable>;
 ```
+
+## Installs and default profiles (`installs.rs`, release round)
+
+Install detection and first-run profile seeding, shared by the GUI and the
+CLI so either can be the first to run on a clean `capybara\` folder (moved
+from `capy-app/src/installs.rs`; same file formats and results). Install
+folders are only listed, never written; the registry is opened read-only
+(`KEY_READ`, `windows-registry`, Windows only). The only files written are
+profile TOMLs in the profiles folder the caller names, atomically
+(`<file>.tmp` then rename), never over an existing file and never inside an
+install.
+
+```rust
+pub mod installs;   // pub use installs::{Candidate, InstallKind, InstallSearch};
+
+pub const DEFAULT_VANILLA_INSTALL: &str = r"C:\Program Files (x86)\Diablo II";
+pub const DEFAULT_MXL_INSTALL: &str = r"C:\games\median-xl"; // an auto-detect candidate only
+pub const REGISTRY_KEYS: [(RegistryRoot, &str); 2]; // HKLM\SOFTWARE\WOW6432Node\Blizzard Entertainment\Diablo II, HKCU\Software\Blizzard Entertainment\Diablo II
+pub const REGISTRY_VALUE: &str = "InstallPath";
+pub enum RegistryRoot { LocalMachine, CurrentUser }          // .label(): "HKLM" | "HKCU"
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum InstallKind { Vanilla, MedianXl, Unknown }          // .label(), .base_id(): "vanilla" | "mxl"
+/// File names directly in `dir`, case-insensitive: any `medianxl-*.mpq` is
+/// MedianXl (it wins); `d2data.mpq` + `d2exp.mpq` is Vanilla; else Unknown
+/// (also for a missing folder).
+pub fn detect_kind(dir: &Path) -> InstallKind;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Candidate { pub path: PathBuf, pub source: String /* "registry (HKLM)", ... */ }
+/// Trims NULs, whitespace, quotes and a trailing separator; "C:" becomes "C:\";
+/// empty or relative values are None.
+pub fn install_path_from_value(value: &str) -> Option<PathBuf>;
+/// The InstallPath values of REGISTRY_KEYS, read-only, deduplicated; empty off Windows.
+pub fn registry_install_paths() -> Vec<Candidate>;
+/// Case-insensitive, separator-style and trailing-separator insensitive.
+pub fn same_path(a: &Path, b: &Path) -> bool;
+/// ([default_vanilla, registry paths not equal to it...], [default_mxl]).
+pub fn first_run_candidates(default_vanilla: &Path, default_mxl: &Path, registry: &[Candidate])
+    -> (Vec<PathBuf>, Vec<PathBuf>);
+
+/// Where first-run seeding looks. `system()` = the two defaults + the real
+/// registry; tests build one by hand (no registry or game dependence).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstallSearch { pub default_vanilla: PathBuf, pub default_mxl: PathBuf, pub registry: Vec<Candidate> }
+impl InstallSearch {
+    pub fn system() -> InstallSearch;
+    pub fn candidates(&self) -> (Vec<PathBuf>, Vec<PathBuf>); // first_run_candidates
+}
+
+/// At least one `*.toml` file (any case) in `dir`; a missing folder has none.
+pub fn has_profile_files(dir: &Path) -> bool;
+/// Writes vanilla.toml (Profile::vanilla) for the first vanilla candidate that
+/// is a folder — index 0 (the default location) unconditionally, later ones
+/// (registry) only when detect_kind == Vanilla — and mxl.toml
+/// (Profile::median_xl) for the first mxl candidate that is a folder. Skips
+/// existing files and a profiles folder inside the chosen install; creates
+/// the folder only when writing. Returns the files written.
+pub fn seed_profiles(profiles_dir: &Path, vanilla: &[PathBuf], mxl: &[PathBuf]) -> Result<Vec<PathBuf>>;
+/// seed_profiles(search().candidates()) when !has_profile_files(profiles_dir);
+/// `search` is not called otherwise. The CLI runs this before every verb but help.
+pub fn seed_default_profiles(profiles_dir: &Path, search: impl FnOnce() -> InstallSearch) -> Result<Vec<PathBuf>>;
+
+/// The wanted id when it exists, else "vanilla" when it exists, else the smallest id.
+pub fn startup_profile(profiles: &[Profile], wanted: Option<&str>) -> Option<String>;
+/// base, else base-2, base-3, ... (taken compared case-insensitively).
+pub fn unique_id(taken: &[String], base: &str) -> String;
+/// Ids of profiles with an Mpq/Folder/Casc path in or directly under `dir`, or an MpqGlob on `dir`.
+pub fn profiles_using(profiles: &[Profile], dir: &Path) -> Vec<String>;
+/// `[a-z0-9_-]+` (the rule Profile::from_toml enforces).
+pub fn valid_id(id: &str) -> bool;
+/// Profile::median_xl for MedianXl, else Profile::vanilla; with id, the
+/// trimmed name (unless blank) and version.
+pub fn profile_for(kind: InstallKind, dir: &Path, id: &str, name: &str, version: GameVersion) -> Profile;
+/// Writes profiles_dir\<id>.toml (creating the folder). AssetError::Profile for
+/// an invalid id, an existing file, a profile that does not round-trip through
+/// TOML, or a profiles folder inside install_dir (checked on the nearest
+/// existing ancestor, so a folder not created yet is caught too).
+pub fn write_profile(profiles_dir: &Path, install_dir: &Path, profile: &Profile) -> Result<PathBuf>;
+```

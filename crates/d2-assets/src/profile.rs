@@ -66,7 +66,7 @@ pub struct Profile {
     pub layers: Vec<LayerSpec>,
 }
 
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id
             .bytes()
