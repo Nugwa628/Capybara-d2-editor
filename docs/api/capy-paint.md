@@ -17,7 +17,7 @@ pub mod mask;     pub use mask::{Mask, MaskOp};
 pub mod session;  pub use session::{PaintSession, FrameRef, Paint, Brush, BrushShape};
 pub mod tools;    // methods on PaintSession (below)
 pub mod check;    pub use check::{dcc_cell_violations, reduce_dcc_cells, CellViolation};
-pub mod export;   pub use export::{palette_gpl, palette_act, palette_jasc, indexed_png, animated_gif, onion_composite};
+pub mod export;   pub use export::{palette_gpl, palette_act, palette_jasc, indexed_png, animated_gif, animated_gif_with, GifOptions, delay_for_fps, nearest_index, rgba_to_indexed, onion_composite};
 pub mod remap;    // palette conversion planner (P7), used as capy_paint::remap::*
 
 #[derive(Debug, thiserror::Error)] #[non_exhaustive]
@@ -157,6 +157,17 @@ pub fn palette_jasc(palette: &d2_formats::palette::Palette) -> String;          
 pub fn indexed_png(img: &d2_formats::IndexedImage, palette: &d2_formats::palette::Palette) -> Result<Vec<u8>>;
 /// Animated GIF of one direction at `delay_cs` centiseconds per frame, uniform canvas = union box.
 pub fn animated_gif(frames: &[d2_formats::IndexedImage], palette: &d2_formats::palette::Palette, delay_cs: u16) -> Result<Vec<u8>>;
+/// `animated_gif` with options: loop or play once, nearest-neighbour `scale` (1..=8),
+/// optional solid `background` (replaces colour 0 and drops the transparent index).
+pub struct GifOptions { pub delay_cs: u16, pub looping: bool, pub scale: u32, pub background: Option<[u8; 3]> }
+impl GifOptions { pub fn new(delay_cs: u16) -> GifOptions; }   // loops, scale 1, transparent
+pub fn animated_gif_with(frames: &[d2_formats::IndexedImage], palette: &d2_formats::palette::Palette, opts: &GifOptions) -> Result<Vec<u8>>;
+/// Centiseconds per frame for an fps value (at least 2).
+pub fn delay_for_fps(fps: f32) -> u16;
+/// Nearest of palette entries 1..=255 (index 0 is never chosen).
+pub fn nearest_index(palette: &d2_formats::palette::Palette, rgb: [u8; 3]) -> u8;
+/// RGBA (straight alpha, alpha >= 128 is opaque) to an indexed image; used to export COF composites.
+pub fn rgba_to_indexed(width: u32, height: u32, offset_x: i32, offset_y: i32, rgba: &[u8], palette: &d2_formats::palette::Palette) -> d2_formats::IndexedImage;
 /// RGBA preview: `current` over faded `prev`/`next` (onion skin), uniform canvas.
 pub fn onion_composite(current: &d2_formats::IndexedImage, prev: Option<&d2_formats::IndexedImage>, next: Option<&d2_formats::IndexedImage>, palette: &d2_formats::palette::Palette, fade: f32) -> (u32, u32, Vec<u8>);
 ```

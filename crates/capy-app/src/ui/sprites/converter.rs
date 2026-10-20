@@ -198,7 +198,21 @@ fn export(ui: &mut Ui, state: &mut AppState) {
     let have = state.target_data(target).is_some();
     let busy = state.sprites.dialogs.is_open();
     let ok = have && !busy;
-    let rows: [(Purpose, &str, &str); 5] = [
+    let from_editor = target == crate::sprites::Target::Editor;
+    let can_gif = if from_editor {
+        state.sprites.editor.is_some()
+    } else {
+        state.sprites.viewer.sprite().is_some() || state.sprites.viewer.cof().is_some()
+    };
+    if ui
+        .add_enabled(can_gif && !busy, egui::Button::new("Animated GIF..."))
+        .on_hover_text("Frame range, directions, speed, scale, background; COFs are composed")
+        .clicked()
+        && let Err(e) = state.open_gif_dialog(from_editor)
+    {
+        state.error(e);
+    }
+    let rows: [(Purpose, &str, &str); 4] = [
         (
             Purpose::ExportFrames,
             "Frames + sprite.json...",
@@ -208,11 +222,6 @@ fn export(ui: &mut Ui, state: &mut AppState) {
             Purpose::ExportSheet,
             "Sprite sheet...",
             "One PNG: rows are directions, columns frames",
-        ),
-        (
-            Purpose::ExportGif,
-            "Animated GIF...",
-            "The current direction at the viewer's speed",
         ),
         (
             Purpose::ExportPng,

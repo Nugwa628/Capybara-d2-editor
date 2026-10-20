@@ -142,7 +142,6 @@ fn top_bar(ui: &mut Ui, state: &mut AppState) {
             for (p, label) in [
                 (Purpose::ExportFrames, "Frames + sprite.json..."),
                 (Purpose::ExportSheet, "Sprite sheet..."),
-                (Purpose::ExportGif, "Animated GIF (this direction)..."),
                 (Purpose::ExportPng, "Indexed PNG (this frame)..."),
                 (Purpose::ExportSprite, "Sprite file (DC6/DCC)..."),
             ] {
@@ -151,6 +150,13 @@ fn top_bar(ui: &mut Ui, state: &mut AppState) {
                     state.sprite_dialog(p);
                     ui.close();
                 }
+            }
+            if ui.button("Animated GIF...").clicked() {
+                state.sprites.converter.target = Target::Editor;
+                if let Err(e) = state.open_gif_dialog(true) {
+                    state.error(e);
+                }
+                ui.close();
             }
         });
         ui.menu_button("Format", |ui| {

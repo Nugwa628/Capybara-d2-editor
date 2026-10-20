@@ -104,24 +104,133 @@ fn union_box<'a>(images: impl Iterator<Item = &'a IndexedImage>) -> Option<(i32,
 /// transparent index; every frame is drawn on one canvas (the union of the
 /// frames' boxes) at its offset, and each frame replaces the previous one.
 pub fn animated_gif(frames: &[IndexedImage], palette: &Palette, delay_cs: u16) -> Result<Vec<u8>> {
+    animated_gif_with(frames, palette, &GifOptions::new(delay_cs))
+}
+
+/// How [`animated_gif_with`] writes the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GifOptions {
+    /// Centiseconds per frame.
+    pub delay_cs: u16,
+    /// Loop forever (`true`) or play once (`false`).
+    pub looping: bool,
+    /// Whole-number nearest-neighbour magnification, clamped to 1..=8.
+    pub scale: u32,
+    /// A solid background colour; `None` keeps index 0 transparent.
+    pub background: Option<[u8; 3]>,
+}
+
+impl GifOptions {
+    pub fn new(delay_cs: u16) -> GifOptions {
+        GifOptions {
+            delay_cs,
+            looping: true,
+            scale: 1,
+            background: None,
+        }
+    }
+}
+
+/// Centiseconds per frame for `fps`, at least 2 (viewers slow down anything
+/// shorter) and at most one minute.
+pub fn delay_for_fps(fps: f32) -> u16 {
+    if !fps.is_finite() {
+        return 4;
+    }
+    (100.0 / fps.max(0.1)).round().clamp(2.0, 6000.0) as u16
+}
+
+/// Index of the colour in `palette[1..]` closest to `rgb`.
+pub fn nearest_index(palette: &Palette, rgb: [u8; 3]) -> u8 {
+    let mut best = (u32::MAX, 1usize);
+    for (i, c) in palette.colors.iter().enumerate().skip(1) {
+        let d: u32 = (0..3)
+            .map(|k| {
+                let d = i32::from(c[k]) - i32::from(rgb[k]);
+                (d * d) as u32
+            })
+            .sum();
+        if d < best.0 {
+            best = (d, i);
+            if d == 0 {
+                break;
+            }
+        }
+    }
+    best.1 as u8
+}
+
+/// An RGBA picture (straight alpha, `width * height * 4` bytes) as an indexed
+/// image: each pixel with alpha 128 or more takes the nearest of palette
+/// entries 1..=255; the rest is transparent.
+pub fn rgba_to_indexed(
+    width: u32,
+    height: u32,
+    offset_x: i32,
+    offset_y: i32,
+    rgba: &[u8],
+    palette: &Palette,
+) -> IndexedImage {
+    let mut img = IndexedImage::new(width, height, offset_x, offset_y);
+    let mut cache = std::collections::HashMap::<[u8; 3], u8>::new();
+    for (i, px) in rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .take(img.pixels.len())
+        .enumerate()
+    {
+        if px[3] < 128 {
+            continue;
+        }
+        let rgb = [px[0], px[1], px[2]];
+        img.pixels[i] = *cache
+            .entry(rgb)
+            .or_insert_with(|| nearest_index(palette, rgb));
+        img.alpha[i] = 255;
+    }
+    img
+}
+
+/// [`animated_gif`] with a loop flag, a nearest-neighbour scale and an
+/// optional solid background (which replaces colour 0 of the table; opaque
+/// pixels that used index 0 take the nearest other colour).
+pub fn animated_gif_with(
+    frames: &[IndexedImage],
+    palette: &Palette,
+    opts: &GifOptions,
+) -> Result<Vec<u8>> {
     let Some((bx, by, w, h)) = union_box(frames.iter()) else {
         return Err(PaintError::Encode(
             "no frames to encode, or their boxes are too far apart".into(),
         ));
     };
-    let (Ok(cw), Ok(ch)) = (u16::try_from(w), u16::try_from(h)) else {
+    let scale = opts.scale.clamp(1, 8);
+    let (sw, sh) = (
+        u64::from(w) * u64::from(scale),
+        u64::from(h) * u64::from(scale),
+    );
+    let (Ok(cw), Ok(ch)) = (u16::try_from(sw), u16::try_from(sh)) else {
         return Err(PaintError::Encode(format!(
-            "canvas {w}x{h} exceeds the GIF limit of 65535"
+            "canvas {sw}x{sh} exceeds the GIF limit of 65535"
         )));
     };
-    if u64::from(w) * u64::from(h) > MAX_CANVAS {
-        return Err(PaintError::Encode(format!("canvas {w}x{h} is too large")));
+    if sw * sh > MAX_CANVAS {
+        return Err(PaintError::Encode(format!("canvas {sw}x{sh} is too large")));
+    }
+    let scale = scale as usize;
+    let mut table = rgb_bytes(palette);
+    // What an opaque index-0 pixel becomes when 0 turns into the background.
+    let zero_stand_in = nearest_index(palette, palette.colors[0]);
+    if let Some(bg) = opts.background {
+        table[..3].copy_from_slice(&bg);
     }
     let mut out = Vec::new();
     {
-        let mut enc =
-            gif::Encoder::new(&mut out, cw, ch, &rgb_bytes(palette)).map_err(encode_err)?;
-        enc.set_repeat(gif::Repeat::Infinite).map_err(encode_err)?;
+        let mut enc = gif::Encoder::new(&mut out, cw, ch, &table).map_err(encode_err)?;
+        if opts.looping {
+            enc.set_repeat(gif::Repeat::Infinite).map_err(encode_err)?;
+        }
         for img in frames {
             let mut canvas = vec![0u8; w as usize * h as usize];
             // An empty frame draws nothing (and is not in the union box).
@@ -136,17 +245,33 @@ pub fn animated_gif(frames: &[IndexedImage], palette: &Palette, delay_cs: u16) -
                     let cx = (i64::from(img.offset_x) - i64::from(bx)) as usize + x;
                     let cy = (i64::from(img.offset_y) - i64::from(by)) as usize + y;
                     if let Some(c) = canvas.get_mut(cy * w as usize + cx) {
-                        *c = img.pixels.get(i).copied().unwrap_or(0);
+                        let mut v = img.pixels.get(i).copied().unwrap_or(0);
+                        if v == 0 && opts.background.is_some() {
+                            v = zero_stand_in;
+                        }
+                        *c = v;
                     }
                 }
             }
+            let buffer = if scale == 1 {
+                canvas
+            } else {
+                let (bw, bh) = (w as usize * scale, h as usize * scale);
+                let mut big = vec![0u8; bw * bh];
+                for y in 0..bh {
+                    for x in 0..bw {
+                        big[y * bw + x] = canvas[(y / scale) * w as usize + x / scale];
+                    }
+                }
+                big
+            };
             let frame = gif::Frame {
                 width: cw,
                 height: ch,
-                delay: delay_cs,
+                delay: opts.delay_cs,
                 dispose: gif::DisposalMethod::Background,
-                transparent: Some(0),
-                buffer: Cow::Owned(canvas),
+                transparent: opts.background.is_none().then_some(0),
+                buffer: Cow::Owned(buffer),
                 ..gif::Frame::default()
             };
             enc.write_frame(&frame).map_err(encode_err)?;

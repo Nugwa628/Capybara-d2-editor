@@ -1334,10 +1334,32 @@ transparency. Without one, each frame is anchored at its bottom centre.
 |---|---|
 | Frames + sprite.json... | One PNG per frame (`d00_f000.png`, ...) and `sprite.json` with the exact offsets, for a lossless re-import. |
 | Sprite sheet... | One PNG, rows are directions and columns are frames, plus a `.json` with the offsets. |
-| Animated GIF... | The current direction at the Viewer's speed. |
+| Animated GIF... | Opens the Export GIF window (below). |
 | Indexed PNG... | The current frame as a palette PNG, for round trips through GIMP or Photoshop. |
 | Sprite file (DC6/DCC)... | The sprite encoded in the format of the file name you choose. |
 | Palette .gpl / .act / .pal | The current palette for GIMP, Photoshop or JASC tools. |
+
+#### Export GIF
+
+**Export GIF...** in the Viewer, **Animated GIF...** in the Converter and
+**Export > Animated GIF...** in the Editor open one window. It works on a
+DC6/DCC, or on a COF (an object or monster), which is exported composed with
+all visible layers and blend modes as the Viewer shows it, or as one part
+chosen in **Part**.
+
+- **Frames:** a strip of thumbnails. Click one to set the first frame,
+  Shift+click to set the last, or type a range such as `3-7` (1-based).
+  The default is every frame.
+- **Directions:** the current one, all, or a ticked list. With several, choose
+  one GIF per direction (`name_dNN.gif` beside the file you pick) or one GIF
+  that plays them in sequence.
+- **Playback:** the speed starts at what the Viewer plays (AnimData for a
+  COF); override it in fps. **Loop** off plays the GIF once.
+- **Look:** scale 1x to 4x without smoothing, a transparent or solid
+  background, and the palette selected in Sprites mode. A COF's blended
+  colours are matched to the nearest palette colour.
+- **Preview:** plays exactly the chosen range at the chosen speed, scale and
+  background. **Export...** asks for the file name.
 
 #### Batch conversion
 

@@ -550,6 +550,9 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
         | Cmd::SpriteImport { .. }
         | Cmd::SpriteSaveGame(_)
         | Cmd::SpriteExportFrames(_)
+        | Cmd::SpriteGifOpen
+        | Cmd::SpriteGifSet(_)
+        | Cmd::SpriteGifExport(_)
         | Cmd::SpriteEdit
         | Cmd::SpriteTab(_)
         | Cmd::PaintPencil { .. }
@@ -738,6 +741,24 @@ fn sprite_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
                 .sprite_export(Purpose::ExportFrames, dir, target)
                 .map(|_| ())
         }
+        Cmd::SpriteGifOpen => state.open_gif_dialog(state.sprites.editor.is_some()),
+        Cmd::SpriteGifSet(pairs) => (|| {
+            let d = state
+                .sprites
+                .gif
+                .as_mut()
+                .ok_or("sprite-gif-set: open the window with sprite-gif-open")?;
+            let (frames, dirs) = (d.frame_count, d.settings.ticked.len());
+            for p in pairs {
+                let (k, v) = p
+                    .split_once('=')
+                    .ok_or_else(|| format!("sprite-gif-set: {p:?} is not key=value"))?;
+                crate::sprites::gif_export::apply_setting(&mut d.settings, k, v, frames, dirs)?;
+            }
+            d.range_text = crate::sprites::gif_export::range_label(&d.settings);
+            Ok(())
+        })(),
+        Cmd::SpriteGifExport(file) => state.gif_export(file).map(|_| ()),
         Cmd::SpriteEdit => {
             let r = state.edit_viewer_sprite(None);
             if state.sprites.pending_editor.is_some() {

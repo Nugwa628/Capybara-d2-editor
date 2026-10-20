@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+- **Export GIF window** (Viewer, Converter and Editor): choose a frame range
+  (thumbnail strip or typed), the current, all or ticked directions (one GIF
+  each, or one in sequence), speed (starts at the Viewer's), loop or play
+  once, scale 1-4x, a transparent or solid background, with a live preview.
+  COF objects and monsters export composed with blend modes, or as one part.
+- `capy-paint`: `animated_gif_with` and `GifOptions` (loop, scale,
+  background), `delay_for_fps`, `rgba_to_indexed`, `nearest_index`.
+- Script commands `sprite-gif-open`, `sprite-gif-set`, `sprite-gif-export`.
+
+### Changed
+- The Map Editor's status bar shows the palette act the map is drawn with
+  beside the DS1's act (`Act 1 · Act 2 palette`).
+- The Tiles panel's "!" warning explains that the tile's DT1 is not loaded by
+  the map's level type, so it would be invisible in game.
+
+### Fixed
+- A COF (object or monster) shown in the Viewer could not be exported as a
+  GIF at all; the Converter's export buttons stayed disabled. It now exports
+  the composite.
+
 ## [1.2.0] - 2026-10-20
 
 The Map Editor now has the interface, layout and map-editing tools of

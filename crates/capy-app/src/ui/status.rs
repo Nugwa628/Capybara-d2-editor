@@ -37,6 +37,23 @@ pub fn index_text(state: &IndexState) -> Option<String> {
     }
 }
 
+/// The palette part of the map facts (`Act N palette`), empty when unknown.
+/// It follows the DS1's own act, so both stay visible when they differ.
+pub fn palette_text(palette_act: Option<u8>) -> String {
+    palette_act.map_or_else(String::new, |p| format!(" \u{b7} Act {p} palette"))
+}
+
+#[cfg(test)]
+mod palette_tests {
+    use super::palette_text;
+
+    #[test]
+    fn shows_the_palette_act_beside_the_ds1_act() {
+        assert_eq!(palette_text(Some(2)), " \u{b7} Act 2 palette");
+        assert_eq!(palette_text(None), "");
+    }
+}
+
 /// What the current tool does, for the status bar.
 fn tool_hint(state: &AppState) -> &'static str {
     use crate::edit::tools::Tool;
@@ -93,12 +110,14 @@ pub fn show_map(ui: &mut Ui, state: &mut AppState) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if let Some(doc) = state.active_doc() {
                 let z = ZOOM_STEPS[doc.view.zoom.min(ZOOM_STEPS.len() - 1)];
+                let ds1_act = doc.ds1.effective_act() + 1;
+                let palette_act = doc.info.as_ref().map(|i| i.palette_act + 1);
                 ui.label(small(format!(
-                    "{}\u{d7}{} \u{b7} v{} \u{b7} Act {}",
+                    "{}\u{d7}{} \u{b7} v{} \u{b7} Act {ds1_act}{}",
                     doc.ds1.width,
                     doc.ds1.height,
                     doc.ds1.version,
-                    doc.ds1.effective_act() + 1
+                    palette_text(palette_act)
                 )));
                 ui.label(small(format!("{}%", (100.0 / f64::from(z)).round())));
                 ui.label(small(match state.hover_cell {

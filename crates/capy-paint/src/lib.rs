@@ -47,7 +47,8 @@ pub mod tools;
 pub use check::{CellViolation, dcc_cell_violations, reduce_dcc_cells};
 pub use error::{PaintError, Result};
 pub use export::{
-    animated_gif, indexed_png, onion_composite, palette_act, palette_gpl, palette_jasc,
+    GifOptions, animated_gif, animated_gif_with, delay_for_fps, indexed_png, nearest_index,
+    onion_composite, palette_act, palette_gpl, palette_jasc, rgba_to_indexed,
 };
 pub use mask::{Mask, MaskOp};
 pub use ramps::{RampId, Ramps};
