@@ -331,7 +331,11 @@ impl AppState {
                         continue;
                     }
                     match result {
-                        Ok(text) => self.info(text),
+                        Ok(text) => {
+                            self.info(text);
+                            // Saved maps and tilesets change what searches return.
+                            self.browser.invalidate_searches();
+                        }
                         Err(e) => self.warn(format!("Asset index: cannot refresh saves: {e}")),
                     }
                 }

@@ -253,7 +253,7 @@ pub fn spawn_refresh(
                     .refresh_saves(&profile, &overlay)
                     .map_err(|e| e.to_string())?;
                 Ok(format!(
-                    "Asset index: saved maps refreshed ({} files, {} ms)",
+                    "Asset index: saved maps and tilesets refreshed ({} files, {} ms)",
                     report.files, report.millis
                 ))
             });
