@@ -1,6 +1,6 @@
 # Capybara's D2 Editor (formerly Capybara Map Editor) — Plan
 
-Status: **Release 1.2.0 published** (2026-10-20, github.com/Nugwa628/Capybara-d2-editor): 1.1.0 plus ds1-studio parity (P8–P13). Earlier: 1.1.0 (P7 palette tools). Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC. Waiting on the user's DC6 examples to refine palette memory. Limits in 1.2.0 are listed under "P8–P13 acceptance".
+Status: **Release 1.2.1 published** (2026-10-20, github.com/Nugwa628/Capybara-d2-editor): Add to this map (DT1 registration in LvlTypes/Dt1Mask; 1.13c `.bin` field patching) and the Export GIF window, on top of 1.2.0 (ds1-studio parity, P8–P13). Earlier: 1.1.0 (P7 palette tools). Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC. Waiting on the user's DC6 examples to refine palette memory. Limits in 1.2.0 are listed under "P8–P13 acceptance".
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -413,7 +413,7 @@ Goal: give end users ds1-studio's UI and layout for map editing, then add every 
     - The work is: case-sensitive paths for loose mod folders and saves; install detection for Wine, Lutris and Steam prefixes instead of the registry; cfg-gating `winresource`; a Linux release script (AppImage or tar.gz); running the GPU e2e suites under Linux (WSL2 is enough).
     - Decisions currently say Linux is "not a goal now".
 
-## 1.2.1 (user request 2026-10-20, in progress)
+## 1.2.1 (user request 2026-10-20, released)
 - **Add to this map.** Right-click a tile marked "!" in Tiles (or a Ctrl+click multi-selection) and choose **Add to this map**. A preview dialog lists every change, then:
   1. The tiles are copied (pixels, sub-tile flags, animation frames) into the level type's own DT1, as ds1-studio's `ownTiles.ts` does. One file is shared by the whole level type, and new tiles are appended if it exists.
   2. Tile numbers that clash with any DT1 of the level type are renumbered to free main/sub values (walls keep their orientation), and painting uses the new numbers.
@@ -435,6 +435,11 @@ Goal: give end users ds1-studio's UI and layout for map editing, then add every 
 - **Tests:**
   - Add tiles from `act1/barracks/barset.dt1` to a vanilla map and to Median XL `shire.ds1`. LvlTypes and LvlPrest change only the intended cells, the catalog then resolves the tiles, and undo restores everything.
   - Export a real DCC and a COF with a frame range, decode the GIF back, and check the frame count, frame order and pixels.
+- **Result (2026-10-20):**
+  - **Gates:** fmt clean, clippy 0 warnings, `CAPY_FULL_CORPUS=1 CAPY_GPU_TESTS=1 cargo test --workspace` 1,372 passed, 0 failed.
+  - **Single-frame GIF:** could not be reproduced (about 6,500 real DCC direction sets exported with the right frame count). The real defect was that a COF opened in the Viewer couldn't be exported at all; that is fixed.
+  - **Undo:** Ctrl+Z undoes only the DS1 file-list part of Add to this map. The DT1 and tables are restored from History.
+  - **1.13c (Median XL):** only `lvltypes.bin` (the File slot) and `lvlprest.bin` (Dt1Mask) are patched, via `excel::patch_bin_field`. The level-table tools refuse to save when the `.txt` row count differs from the `.bin`.
 
 ## Asset index (`capy-index`, built in P1, used by P3)
 1. **Crawl:**

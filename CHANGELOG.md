@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [1.2.1] - 2026-10-20
 
 ### Added
 - **Add to this map.** Right-click a tile marked "!" in the Tiles panel (or

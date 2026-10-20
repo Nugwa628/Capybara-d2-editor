@@ -1689,7 +1689,7 @@ dependencies = [
 
 [[package]]
 name = "capy-app"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1721,7 +1721,7 @@ dependencies = [
 
 [[package]]
 name = "capy-cli"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "capy-edit",
  "capy-history",
@@ -1738,7 +1738,7 @@ dependencies = [
 
 [[package]]
 name = "capy-edit"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "capy-render",
  "d2-assets",
@@ -1752,7 +1752,7 @@ dependencies = [
 
 [[package]]
 name = "capy-history"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "blake3",
  "d2-assets",
@@ -1766,7 +1766,7 @@ dependencies = [
 
 [[package]]
 name = "capy-index"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "blake3",
  "d2-assets",
@@ -1783,7 +1783,7 @@ dependencies = [
 
 [[package]]
 name = "capy-mod"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "capy-edit",
  "capy-paint",
@@ -1799,7 +1799,7 @@ dependencies = [
 
 [[package]]
 name = "capy-paint"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "d2-formats",
  "gif",
@@ -1810,7 +1810,7 @@ dependencies = [
 
 [[package]]
 name = "capy-render"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "d2-assets",
  "d2-formats",
@@ -1823,7 +1823,7 @@ dependencies = [
 
 [[package]]
 name = "capy-sprite"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "d2-formats",
  "image",
@@ -2130,7 +2130,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "d2-assets"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "bzip2",
  "d2-formats",
@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "d2-formats"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "proptest",
  "thiserror 2.0.21",
