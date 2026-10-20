@@ -1,7 +1,8 @@
-//! DT1 tile files (`data\global\tiles\**\*.dt1`). There is no general writer:
-//! the one way to produce a DT1 is [`crate::remap::remap_indices`], which
-//! rewrites the pixel literals of an existing file in place (palette index
-//! remapping) and leaves every other byte alone.
+//! DT1 tile files (`data\global\tiles\**\*.dt1`). [`Dt1::to_bytes`] writes
+//! any model (tiles added, removed, duplicated, flags or pixels changed) in
+//! the canonical layout every shipped file uses, so a parsed, unchanged file
+//! comes back byte for byte; [`Block::with_pixels`] re-encodes edited pixels.
+//! [`crate::remap::remap_indices`] still patches pixel literals in place.
 //!
 //! ```text
 //! 0x000 i32   version major (7; the only value the game checks)
@@ -92,7 +93,21 @@ pub struct Block {
     pub data: Vec<u8>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Tile-header bytes the editor does not interpret, kept so an unchanged tile
+/// is written back byte for byte (see `docs/specs/dt1.md` section 2).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TilePreserved {
+    /// +16, zero in every shipped file.
+    pub unknown_16: [u8; 4],
+    /// +36, varies per tile (e.g. `ff 00 ff 00`).
+    pub unknown_36: [u8; 4],
+    /// +65..+72, zero in every shipped file.
+    pub unknown_65: [u8; 7],
+    /// +84..+96, runtime slots; some shipped tiles carry a leaked pointer at +88.
+    pub runtime_84: [u8; 12],
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Tile {
     pub direction: i32,
     pub roof_height: i16,
@@ -109,6 +124,7 @@ pub struct Tile {
     /// bottom-row-first layout.
     pub subtile_flags: [u8; 25],
     pub blocks: Vec<Block>,
+    pub preserved: TilePreserved,
 }
 
 impl Tile {
@@ -324,7 +340,22 @@ fn parse_tile(
         rarity: i32f(32),
         subtile_flags,
         blocks,
+        preserved: TilePreserved {
+            unknown_16: raw_bytes(h, 16),
+            unknown_36: raw_bytes(h, 36),
+            unknown_65: raw_bytes(h, 65),
+            runtime_84: raw_bytes(h, 84),
+        },
     })
+}
+
+/// `N` bytes of `h` at `at` (zero where `h` is short; it never is).
+fn raw_bytes<const N: usize>(h: &[u8], at: usize) -> [u8; N] {
+    let mut out = [0u8; N];
+    if let Some(src) = slice_at(h, at, N) {
+        out.copy_from_slice(src);
+    }
+    out
 }
 
 /// A horizontal run of literal pixels at block-space `(x, y)`.
@@ -424,6 +455,8 @@ fn compose(runs: &[Run<'_>]) -> Result<IndexedImage> {
     }
     Ok(image)
 }
+
+mod write;
 
 #[cfg(test)]
 #[allow(clippy::panic, clippy::unwrap_used)]

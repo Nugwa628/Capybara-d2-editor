@@ -389,13 +389,27 @@ pub struct TileKey { pub orientation: u8, pub main: u8, pub sub: u8 }
 pub enum BlockFormat { Isometric, Rle }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block { pub x: i16, pub y: i16, pub grid_x: u8, pub grid_y: u8, pub raw_format: i16, pub format: BlockFormat, pub data: Vec<u8> }
-#[derive(Clone, Debug, PartialEq, Eq)]
+impl Block {
+    pub fn render(&self) -> Result<IndexedImage>;  // this block alone, block x/y space
+    /// 32x15 diamond at (x, y) from the opaque pixels of `image` (block space); 0 elsewhere.
+    pub fn isometric(x: i16, y: i16, grid_x: u8, grid_y: u8, image: &IndexedImage) -> Block;
+    /// RLE block of the opaque pixels of `image`; at least `min_rows` rows terminated.
+    /// NotRepresentable: raw_format 1, a pixel left of x / above y, data > 65535 bytes.
+    pub fn rle(x: i16, y: i16, grid_x: u8, grid_y: u8, raw_format: i16, image: &IndexedImage, min_rows: usize) -> Result<Block>;
+    /// Same position/grid/format, pixels re-encoded from `image` (RLE keeps its row count).
+    pub fn with_pixels(&self, image: &IndexedImage) -> Result<Block>;
+}
+/// Tile-header bytes not interpreted, kept for byte-identical write-back.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TilePreserved { pub unknown_16: [u8; 4], pub unknown_36: [u8; 4], pub unknown_65: [u8; 7], pub runtime_84: [u8; 12] }
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Tile {
     pub direction: i32, pub roof_height: i16, pub sound: u8, pub animated: u8,
     pub height: i32, pub width: i32,
     pub orientation: i32, pub main_index: i32, pub sub_index: i32,
     pub rarity: i32, pub subtile_flags: [u8; 25],
     pub blocks: Vec<Block>,
+    pub preserved: TilePreserved,
 }
 impl Tile {
     pub fn key(&self) -> Option<TileKey>;          // None if an index is out of range
@@ -403,7 +417,17 @@ impl Tile {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dt1 { pub version: (i32, i32), pub tiles: Vec<Tile> }
-impl Dt1 { pub fn parse(bytes: &[u8]) -> Result<Dt1>; }   // no general writer; only remap::remap_indices patches pixels in place (P7)
+impl Dt1 {
+    pub fn parse(bytes: &[u8]) -> Result<Dt1>;
+    /// Canonical layout (P11); an unchanged parse writes back byte for byte,
+    /// any model parses back to itself. UnsupportedVersion unless version.0 == 7;
+    /// NotRepresentable for a block over 65535 bytes, format != raw_format, > 2 GiB.
+    pub fn to_bytes(&self) -> Result<Vec<u8>>;
+}
+// remap::remap_indices still patches pixel literals in place (P7).
+// Full corpora (CAPY_FULL_CORPUS=1): 619/619 readable DT1 byte-identical
+// (the 12 4.1 files do not parse); all 895,820 blocks re-encode
+// (with_pixels(render())) to the same pixels and the same bytes.
 
 // ───────────── dc6.rs / dcc.rs / cof.rs / animdata.rs (wave 2) ─────────────
 pub struct Dc6 { pub version: i32, pub flags: u32, pub encoding: u32, pub directions: u32, pub frames_per_direction: u32, pub frames: Vec<Dc6Frame> }

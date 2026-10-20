@@ -50,6 +50,7 @@ pub fn tile(orientation: i32, main: i32, sub: i32, rarity: i32, pixel: u8) -> Ti
         sub_index: sub,
         rarity,
         subtile_flags: [0; 25],
+        preserved: Default::default(),
         blocks,
     }
 }
