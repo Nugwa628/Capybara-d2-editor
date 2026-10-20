@@ -92,6 +92,7 @@ pub mod error;
 pub mod layer;
 pub mod patch;
 pub mod selection;
+pub mod tools;
 
 mod layer_ops;
 mod version;
@@ -103,3 +104,7 @@ pub use error::{EditError, Result};
 pub use layer::{CellValue, LayerRef};
 pub use patch::Patch;
 pub use selection::{CellRect, SelectOp, Selection};
+pub use tools::{
+    Brush, FloorChoice, NewMapSpec, ObjectCheckOptions, ObjectFinding, ObjectProblem,
+    RerollOptions, RerollReport, Rng, TileKey, check_objects, new_map, tile_key,
+};
