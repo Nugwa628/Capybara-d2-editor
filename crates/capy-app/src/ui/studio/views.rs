@@ -647,7 +647,7 @@ pub fn group_thousands(v: f64) -> String {
     let digits = n.abs().to_string();
     let mut out = String::new();
     for (i, ch) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(ch);
@@ -664,10 +664,13 @@ pub struct Rendered {
     pub iso: [f64; 4],
 }
 
+/// `(doc, rev, result)` of a minimap drawing in flight.
+type MinimapJob = (u64, u64, std::sync::Mutex<Receiver<Option<Rendered>>>);
+
 /// The minimap's rendered map: drawn on a worker thread per revision.
 #[derive(Default)]
 pub struct MinimapRender {
-    job: Option<(u64, u64, std::sync::Mutex<Receiver<Option<Rendered>>>)>,
+    job: Option<MinimapJob>,
     done: Option<(u64, u64)>,
     texture: Option<(u64, TextureHandle, [f64; 4])>,
 }

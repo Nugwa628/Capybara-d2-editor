@@ -11,15 +11,20 @@ use d2_formats::excel::ExcelTableKind;
 
 use crate::state::AppState;
 
+/// Level id -> its DS1s.
+type LevelMaps = Arc<HashMap<i32, Vec<GamePath>>>;
+/// `((doc, rev, session epoch), warps)`.
+type WarpCache = ((u64, u64, u64), Arc<Vec<MapWarp>>);
+
 #[derive(Default)]
 pub struct Levels {
     /// Session epoch the rows were read for.
     epoch: Option<u64>,
     rows: Option<Arc<BTreeMap<i32, LevelRow>>>,
     /// Level id -> the DS1s the catalog places in it (built on first use).
-    maps: Option<(u64, Arc<HashMap<i32, Vec<GamePath>>>)>,
+    maps: Option<(u64, LevelMaps)>,
     /// Warps of one map revision.
-    warps: Option<((u64, u64, u64), Arc<Vec<MapWarp>>)>,
+    warps: Option<WarpCache>,
 }
 
 fn parse_rows(table: &d2_formats::txt::TxtTable) -> BTreeMap<i32, LevelRow> {

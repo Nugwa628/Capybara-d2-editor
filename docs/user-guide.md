@@ -226,14 +226,17 @@ status bar at the bottom.
    it cannot be used right now, and its tooltip shows its key.
    - **Home**: File (Save, Recent, Profile, Import, Export, Preferences, Saves,
      Add game), Edit (Paste, Cut, Copy, Delete, Undo, Redo, Flags, Move to
-     layer), Tools (Select, **Select ▾** with Lasso, Select by tile ID,
+     layer, Replace), Tools (Select, **Select ▾** with Lasso, Select by tile ID,
      Select identical and the selection scope, Paint, Erase, Pick),
-     Paint / erase (brush size and the value Paint writes) and the
+     Paint / erase (Freehand, Rectangle, Fill area, the random mix, brush
+     size and the value Paint writes) and the
      **Active layer**.
-   - **View**: Fit, 100%, zoom in and out, Just the map, the Tiles and
-     Objects modes, Show (Grid, Minimap, Sprites, Animate, Markers), the
-     floating panels and the **Theme** menu.
-   - **Map**: Resize, Map info, Close map, add floor / wall / tag layers,
+   - **View**: Fit, 100%, zoom in and out, Just the map, Game view and Game
+     size, the six view modes and As if inside, Overlays (Rooms 8x8, Spawn
+     regions, Warps, Wall categories), Show (Grid, Minimap, Sprites,
+     Animate, Markers), the floating panels and the **Theme** menu.
+   - **Map**: New map, Resize, Map info, Close map, Re-roll floors,
+     Reassign tiles, Find & replace, add floor / wall / tag layers,
      Tile libraries and Presets.
    - **Game**: Add to game, Change level type, Type packages, Entering text,
      Cube recipe, Custom object, Automap editor and Tables.
@@ -458,6 +461,48 @@ and class, lets you pick a direction, play or pause, and **Open in Sprites
 mode** to inspect its COF. Editing objects is described in
 [Objects and NPC paths](#objects-and-npc-paths).
 
+### View modes and overlays
+
+The map has six view modes, as in DS1 Studio. **Tab** and **Shift+Tab** step
+through them, **F1-F6** pick one, and **View > Mode** has a button for each.
+
+| Key | Mode | What it shows |
+|---|---|---|
+| F1 | Tiles | The map as the game draws it. |
+| F2 | Objects | The Objects tool (as **O**). |
+| F3 (W) | Walkability | Every sub-tile coloured: green walkable, yellow monsters only, red blocked, violet floorless void a player can walk into, orange the edge next to it. |
+| F4 (A) | Automap | A preview of the automap: walls light, floors dark. View only for now. |
+| F5 (Shift+L) | Level light | The map darkened by its Levels.txt light (Intensity, Red, Green, Blue), with the values in a badge. View only for now. |
+| F6 (H) | Roof hiding | Each hide area (pop) with its trigger rectangle and the tiles it hides. **Shift+H** draws the map as if the player stood inside: those tiles disappear. |
+
+On top of any mode:
+
+- The **walkable-area badge** (top right) is DS1 Studio's number: the
+  sub-tiles a player can stand on, in tiles squared (cells without a floor
+  count as blocked). It is grey below 3,300, then green, orange and red as
+  the area grows.
+- **View > Overlays**: **Rooms 8x8** (**R**) outlines the game's 8x8-cell
+  rooms; **Spawn regions** colours where random monsters can appear (blue),
+  logic nodes (yellow), rooms with a warp (violet) and levels that spawn
+  none (grey); **Warps** labels every warp tile with the level it leads to.
+  Click a warp label to open that level's map (the first, when several make
+  it up; random levels have none).
+- **Game view** (**Z**) frames what the character sees at the screen size of
+  **View > Game size** (800x600 by default) and zooms so it fits.
+- **Animate** (**Shift+N**) plays object animations and animated floors:
+  water, lava and other tiles whose DT1 variants are animation frames
+  (10 frames per second).
+
+The **Upper walls** and **Lower walls** chips in the Show bar hide one group
+of wall tiles on every wall layer (**9** toggles lower walls, **Shift+9**
+shows only them). A wall tile is a lower wall when its orientation is 16 or
+more. **Wall categories** opens a row with every DT1 of the map: set a DT1
+to **Upper** or **Lower** when its walls belong to the other group. This is
+an editor preference only; game files don't change.
+
+The **minimap** (**K**) shows the map itself, drawn small in the
+background after every change; click or drag in it to move there.
+
 ### Missing tiles
 
 A cell whose tile isn't found in the map's DT1 set gets a thin **magenta
@@ -627,12 +672,87 @@ way DS1Edit does.
 With cells selected, **Home > Flags** sets or clears the **hidden**
 and **unwalkable** bits of every selected cell.
 
+The **Cell** section of the right column shows the cell under the pointer
+(or, when the pointer is off the map, the last cell you clicked): for every
+layer its tile (main/sub, and the orientation on walls), the raw cell dword
+and its four bytes, and checkboxes for **Hidden** (bit 31), **Unwalkable**
+(bit 17) and **Block jump** (bit 16). Ticking one changes that cell at once
+(undoable).
+
+### Rectangle, Fill area and random mix
+
+**Home > Paint / erase** has three modes for Paint (**B**) and Erase (**E**):
+
+- **Freehand** follows the mouse with the brush size.
+- **Rectangle** (**U**): drag a rectangle; it is painted (or erased) on the
+  active layer when you let go.
+- **Fill area** (**L**): click a cell to paint (or erase) every connected
+  cell with the same tile (orientation, main and sub; edges only, not
+  corners). Clicking inside the selection keeps the fill inside it.
+
+**Random mix:** **Ctrl+click** several tiles in the Tiles column. Paint,
+Rectangle and Fill area then pick one of them at random for every cell
+(Ctrl+click a tile again to take it out). Each stroke, rectangle or fill is
+one undo step.
+
+**Shift+mouse wheel** over a cell steps through the tiles stacked in it:
+each step makes the next layer that has a tile there the active layer and
+selects the cell. With the Select tool, a **double-click** selects every
+copy of the tile under the pointer (Shift adds them to the selection).
+
+### Find & replace, re-roll and reassign
+
+- **Find & replace tiles** (**Ctrl+H**, also on the right-click menu): a
+  tile to find and one to replace it with (orientation, main and sub; the
+  buttons take them from the cell or the brush), the layers to search and
+  "Only inside the selection". It counts the matches as you type; **Select
+  them** selects them, **Replace all** replaces them in one undo step. Other
+  bits of each cell (hidden, unwalkable) are kept.
+- **Map > Re-roll floors...**: tick floor tiles of the map's tile set (per
+  DT1; **Check every floor of this DT1**), pick the floor layer and
+  optionally the selection. The re-roll spreads the ticked tiles evenly,
+  avoids repeating a neighbour, keeps each cell's walkability when
+  **Preserve walkability** is on (cells with no matching tile stay as they
+  are) and leaves empty cells alone. **Variation** changes the result.
+- **Map > Reassign tiles...**: rows of old -> new tile numbers. Every cell
+  with an old number gets the new one on every layer, for example after
+  renumbering tiles in a DT1.
+
+### New map
+
+**Map > New map...** asks for the game path (under
+`data\global\tiles\`), the size, the act, the number of floor and wall
+layers, a tag layer and the LvlType to draw it with ("Guess from the
+folder" lets the catalog choose). The map is version 18 and is saved to the
+profile's saves folder at once (with a CHANGED.txt entry); add it to the
+game with **Game > Add to game**.
+
 ### Resizing the map
 
 **Map > Resize...** sets a new width and height (1 to 1024 cells). The
 top-left corner stays in place. Shrinking cuts off cells beyond the new edge;
 **Ctrl+Z** brings them back. Objects outside the new size are kept as they
 are.
+
+With the Select tool you can also **drag any edge of the map**: the pointer
+changes near an edge, and the new size shows while you drag. Growing or
+shrinking on the left or top edge moves the cells, objects, NPC paths and
+groups with it; whatever falls off the map is dropped. One Ctrl+Z undoes it.
+
+### Tags and object groups
+
+The **Tags & groups** section shows the tag value of the cell (editable
+when the map has a tag layer) and the map's object groups as rows of x, y,
+width and height in cells. Edit a number and let go of it to apply; **x**
+deletes a group, **Add group** adds an 8x8 group at the top corner. Groups
+need DS1 version 12 or newer; an older map asks to upgrade first.
+
+### Exporting pictures
+
+**Home > Export** writes **Map as PNG** (the whole map at 1:1 with the
+layers and objects that are shown) or **Selection as PNG** (only the
+selected cells, cropped). **PrintScreen** (or **Copy the view to the
+clipboard**) copies the map view as it is on screen.
 
 ### Layer actions
 
@@ -691,6 +811,13 @@ With one object selected, the Objects panel shows:
 - **Type**, **Id**, **Flags** and the **Sub-tile** position. Change them and
   click **Apply** (one undo step) or **Revert**. Flags need DS1 version 6;
   moving an object carries its NPC path along.
+
+#### Object checks
+
+The top of the Objects panel lists problems DS1 Studio checks for: objects
+outside the map, duplicates (same type, id and position as an earlier
+object) and, once the object tables are loaded, ids the tables don't know.
+Click a line to select that object.
 
 #### NPC paths
 
@@ -1694,8 +1821,8 @@ The Map Editor uses DS1 Studio's default keys. **Help > Shortcuts** lists
 every command: click a key and press the new one to change it (a key taken
 from another command moves), **Clear** removes it and **Reset all** restores
 the defaults. Changes are saved in `config.toml` (`[ui.keys]`). Keys of
-commands that come in a later version (rectangle, fill, replace, view modes)
-are listed greyed out and already reserved.
+commands that come in a later version (Shift+Delete, P) are listed greyed out
+and already reserved.
 
 | Keys | Action |
 |---|---|
@@ -1719,14 +1846,27 @@ are listed greyed out and already reserved.
 | I | Pick (eyedropper) |
 | O, F2 | Objects tool |
 | Shift+O | Switch between the Objects tool and the previous tool |
-| F1 | Leave the Objects tool (Tiles mode) |
+| F1 | Tiles view (leaves the Objects tool) |
 | F | Fit the map |
 | Home | Zoom to 100% |
 | = and - | Zoom in / out a step |
 | G | Cell grid on/off |
 | M | Object markers on/off |
 | N | Object sprites on/off |
-| Shift+N | Animate objects on/off |
+| Shift+N | Animate objects and animated floors on/off |
+| U, L | Rectangle / Fill area mode of Paint and Erase |
+| Ctrl+H | Find & replace tiles |
+| Tab, Shift+Tab | Next / previous view mode |
+| F3, F4, F5, F6 | Walkability, Automap, Level light, Roof hiding view |
+| W, A, Shift+L, H | Toggle the Walkability, Automap, Level light, Roof hiding view |
+| Shift+H | Roof hiding: show the map as if inside |
+| R | 8x8 game rooms on/off |
+| Z | Game view on/off |
+| 9, Shift+9 | Lower walls on/off; show only the lower walls |
+| PrintScreen | Copy the map view to the clipboard |
+| Shift + mouse wheel | Step through the tiles stacked in the cell |
+| Double-click (Select tool) | Select every copy of the tile |
+| Ctrl + click (Tiles column) | Add a tile to the random paint mix |
 | K | Minimap on/off |
 | Shift+F | Just the map (fold both side columns, or bring them back) |
 | 1-8, 0 | Show/hide Floor 1, Floor 2, Wall 1-4, Shadows, Roofs, Special tiles |

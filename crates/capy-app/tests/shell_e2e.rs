@@ -110,8 +110,8 @@ fn every_ribbon_button_and_default_key_works() {
     let clicked = count_after(&stderr, "click-ribbon:");
     let pressed = count_after(&stderr, "press-all-keys:");
     eprintln!("{clicked} ribbon buttons clicked, {pressed} keys pressed");
-    assert!(clicked >= 65, "only {clicked} ribbon buttons were clicked");
-    assert!(pressed >= 45, "only {pressed} keys were pressed");
+    assert!(clicked >= 80, "only {clicked} ribbon buttons were clicked");
+    assert!(pressed >= 65, "only {pressed} keys were pressed");
     // Failing clicks must fail the script.
     let (code, stderr) = run_script(home.path(), &format!("open {MAP}\nclick no.such\n"), false);
     assert_eq!(code, Some(1), "{stderr}");

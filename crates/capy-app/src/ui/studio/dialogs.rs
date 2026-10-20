@@ -134,8 +134,8 @@ pub fn open_replace(state: &mut AppState) {
         .collect();
     let in_selection = !doc.selection.is_empty();
     state.studio.dialogs.replace = Some(ReplaceDialog {
-        from: from,
-        to: to,
+        from,
+        to,
         layers,
         in_selection,
     });
@@ -619,7 +619,7 @@ pub fn open_new_map(state: &mut AppState) {
         .unwrap_or_else(|| "data\\global\\tiles\\act1\\town".to_owned());
     let act = state
         .active_doc()
-        .map_or(1, |d| d.ds1.effective_act().clamp(0, 4) as u8 + 1);
+        .map_or(1, |d| d.ds1.effective_act().clamp(0, 4) + 1);
     state.studio.dialogs.new_map = Some(NewMapDialog {
         path: format!("{folder}\\newmap.ds1"),
         width: 24,
