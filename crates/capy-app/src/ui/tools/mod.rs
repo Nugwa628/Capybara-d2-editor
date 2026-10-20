@@ -14,6 +14,7 @@ use bevy_egui::egui::{self, Id};
 
 use crate::state::AppState;
 
+pub mod addmap;
 pub mod automap_ed;
 pub mod column_help;
 pub mod diag;
@@ -198,6 +199,7 @@ pub fn spec(id: &str) -> Option<&'static Spec> {
 #[derive(Default)]
 pub struct ToolsState {
     pub open: BTreeSet<&'static str>,
+    pub addmap: addmap::AddMapUi,
     pub dt1: dt1::Dt1Ui,
     pub review: review::ReviewUi,
     pub diag: diag::DiagUi,

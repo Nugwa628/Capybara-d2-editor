@@ -15,6 +15,9 @@
 //! tool table-assert <row> <column> <value...>
 //! tool add-to-game new|existing <level id> <map path under tiles> <name...>
 //! tool change-type <type id> [copy]
+//! tool addmap <tile key>...                     # open "Add to this map" for these Tiles keys
+//! tool addmap-confirm                           # press Add in that dialog
+//! tool addmap-assert-loaded <game path> true|false  # in the map's DT1 list (catalog)
 //! tool wait-catalog
 //! tool custom-object <row> <frames> <act> <png> <name...>
 //! tool preset-export <zip> [preset name]        # all presets without a name
@@ -65,6 +68,34 @@ pub fn run(state: &mut AppState, line: &str) -> Result<Outcome, String> {
         } else {
             Outcome::Done
         }),
+        "addmap" => {
+            if args.is_empty() {
+                return Err(bad("<tile key> [tile key...]"));
+            }
+            super::addmap::script_open(state, args.iter().map(|s| (*s).to_owned()).collect())?;
+            Ok(Outcome::Done)
+        }
+        "addmap-assert-loaded" => {
+            let want = args.last() == Some(&"true");
+            let path = args[..args.len().saturating_sub(1)].join(" ");
+            let got = state
+                .map_dt1s()
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(&path));
+            if got == want {
+                Ok(Outcome::Done)
+            } else {
+                Err(format!(
+                    "{path} is {}loaded by the map",
+                    if got { "" } else { "not " }
+                ))
+            }
+        }
+        "addmap-confirm" => {
+            let msg = super::addmap::script_confirm(state)?;
+            state.info(format!("addmap: {msg}"));
+            Ok(Outcome::Done)
+        }
         "dt1-open" => {
             dt1::open_lib(state, rest)?;
             Ok(Outcome::Done)

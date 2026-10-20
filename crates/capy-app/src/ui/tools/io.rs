@@ -7,7 +7,9 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use capy_mod::level_tables::{LevelTables, TableName};
-use d2_assets::GamePath;
+use d2_assets::tables::load_excel;
+use d2_assets::{GamePath, GameVersion};
+use d2_formats::excel::ExcelTableKind;
 use d2_formats::tbl::TblDoc;
 use d2_formats::txt::TxtDoc;
 
@@ -61,12 +63,88 @@ pub fn read_tbl(state: &AppState, path: &str) -> Result<TblDoc, String> {
 
 pub fn level_tables(state: &AppState) -> Result<LevelTables, String> {
     Ok(LevelTables {
-        prest: read_txt(state, "lvlprest.txt")?,
-        levels: read_txt(state, "levels.txt")?,
-        types: read_txt(state, "lvltypes.txt")?,
+        prest: read_level_table(state, ExcelTableKind::LvlPrest, "lvlprest.txt")?,
+        levels: read_level_table(state, ExcelTableKind::Levels, "levels.txt")?,
+        types: read_level_table(state, ExcelTableKind::LvlTypes, "lvltypes.txt")?,
         lvl_sub: read_txt(state, "lvlsub.txt").ok(),
     })
 }
+
+/// Whether the profile reads compiled `.bin` tables (1.13c, e.g. Median XL).
+pub fn reads_bin_tables(state: &AppState) -> bool {
+    state
+        .session
+        .as_ref()
+        .is_some_and(|s| s.profile.game_version == GameVersion::V113c)
+}
+
+/// A level table as the game reads it: on 1.13c the compiled `.bin` decoded
+/// to text (the shipped `.txt` can be stale), unless the profile's saves
+/// already hold an edited `.txt`; elsewhere the `.txt`.
+fn read_level_table(state: &AppState, kind: ExcelTableKind, name: &str) -> Result<TxtDoc, String> {
+    if reads_bin_tables(state)
+        && let Some(session) = state.session.as_ref()
+        && !saves_root(state).is_some_and(|r| excel_path(name).to_native(&r).exists())
+        && let Ok(t) = load_excel(&session.overlay, kind, GameVersion::V113c)
+    {
+        let mut text = t.headers().join("\t");
+        text.push_str("\r\n");
+        for r in t.rows() {
+            text.push_str(&r.cells().join("\t"));
+            text.push_str("\r\n");
+        }
+        return Ok(TxtDoc::parse(text.as_bytes()));
+    }
+    read_txt(state, name)
+}
+
+/// What registering a DT1 for the open map did.
+pub struct Registered {
+    pub changes: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// Makes the game load `rel` (a DT1 relative to data/global/tiles) for the
+/// open map: LvlTypes File slot of its level type and the map's LvlPrest
+/// Dt1Mask, saved to the profile's saves. Used by every feature that creates
+/// a DT1 for a map.
+pub fn register_for_open_map(state: &mut AppState, rel: &str) -> Result<Registered, String> {
+    let (type_id, def, map) = {
+        let doc = state.active_doc().ok_or("Open a map first")?;
+        let info = doc
+            .info
+            .as_ref()
+            .ok_or("The map's level type is not known yet")?;
+        (
+            info.lvl_type.ok_or("The map has no level type")?,
+            info.lvlprest_def,
+            tiles_rel(doc.path.as_str()),
+        )
+    };
+    let mut t = level_tables(state)?;
+    let rows = capy_mod::tiles_register::map_prest_rows(&t.prest, &map, def);
+    let (types0, prest0) = (t.types.clone(), t.prest.clone());
+    let reg =
+        capy_mod::tiles_register::register_dt1(&mut t.types, &mut t.prest, type_id, &rows, rel)
+            .map_err(|e| e.to_string())?;
+    if t.types != types0 {
+        save_txt(state, "lvltypes.txt", &t.types)?;
+    }
+    if t.prest != prest0 {
+        save_txt(state, "lvlprest.txt", &t.prest)?;
+    }
+    let mut warnings = reg.warnings;
+    if reads_bin_tables(state) && !reg.changes.is_empty() {
+        warnings.push(BIN_NOTE.to_owned());
+    }
+    Ok(Registered {
+        changes: reg.changes,
+        warnings,
+    })
+}
+
+/// Shown after the `.txt` tables of a 1.13c profile are written.
+pub const BIN_NOTE: &str = "This profile reads compiled .bin tables: the game ignores the edited .txt until they are recompiled (for example start D2 with -direct -txt).";
 
 /// Writes `bytes` to the profile's saves, snapshots it and refreshes what
 /// shows saves (CHANGED.txt count, history, the asset index).

@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+- **Add to this map.** Right-click a tile marked "!" in the Tiles panel (or
+  Ctrl+click several) and choose **Add to this map...**. After a preview, the
+  tiles are copied into the level type's own DT1, renumbered where they clash
+  with any DT1 of the type, and the DT1 is registered in the first free
+  LvlTypes File slot and the map's LvlPrest Dt1Mask, so the game really loads
+  it. Saved with CHANGED.txt entries and a history snapshot; Ctrl+Z undoes the
+  map's file list. Median XL (1.13c) profiles get a note that the `.bin` tables
+  need recompiling.
+
+### Fixed
+- **Re-roll floors** and **Presets > Copy tiles to DT1** now register their DT1
+  in LvlTypes and the map's Dt1Mask. In 1.2.0 they only changed the DS1's file
+  list, which the game ignores.
+- The "!" tooltip now says the tile's DT1 is not loaded by the map's level type
+  and would be invisible in game.
+- On 1.13c profiles the level tables tools read the compiled `.bin` tables when
+  no edited `.txt` is saved yet (the shipped `.txt` can be stale).
+
 ## [1.2.0] - 2026-10-20
 
 The Map Editor now has the interface, layout and map-editing tools of
