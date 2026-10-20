@@ -333,11 +333,29 @@ pub fn copy_tiles_run(state: &mut AppState, preset: &Preset) -> Result<String, S
         super::game::replace_map(state, "Add the preset's tile library", ds1)?;
     }
     save_preset(state, &out.preset)?;
-    Ok(format!(
+    // The game only loads DT1s that LvlTypes lists and the map's Dt1Mask selects.
+    let mut msg = format!(
         "Copied {} tile(s) into {rel} ({} renumbered); the preset now uses it",
         out.plan.records.len(),
         out.plan.renumbered.len()
-    ))
+    );
+    match io::register_for_open_map(state, &rel) {
+        Ok(reg) => {
+            for c in &reg.changes {
+                msg.push_str(&format!("; {c}"));
+            }
+            for w in &reg.warnings {
+                state.warn(w.clone());
+                msg.push_str(&format!("; {w}"));
+            }
+        }
+        Err(e) => {
+            let w = format!("The game does not load {rel} yet: {e}");
+            state.warn(w.clone());
+            msg.push_str(&format!("; {w}"));
+        }
+    }
+    Ok(msg)
 }
 
 fn delete_preset(state: &mut AppState, preset: &Preset) -> Result<(), String> {

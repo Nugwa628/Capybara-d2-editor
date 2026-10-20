@@ -219,6 +219,21 @@ pub fn plan_custom_dt1(&[TilePick], sources, taken: &BTreeSet<TileId>) -> Custom
 pub fn build_custom_dt1(&CustomDt1Plan, remap_for: Option<&dyn Fn(usize) -> Option<[u8; 256]>>) -> Dt1;
 pub fn own_tiles_path(map_path, Option<(type_name, listed)>, own_files) -> String;  pub fn append_tiles(..);
 
+// tiles_register: make the game load a DT1; "Add to this map"
+pub fn register_dt1(types: &mut TxtDoc, prest: &mut TxtDoc, type_id: u32, prest_rows: &[usize], dt1_path: &str) -> Result<Registration>;
+//   first free LvlTypes File slot (or the DT1's own) + that bit OR-ed into Dt1Mask of each row; atomic, refuses when all 32 slots are used;
+//   no rows => LvlTypes only + a warning. Registration { slot, slot_added, mask_rows, changes, warnings }
+//   Registration also has slot_value and masks: Vec<(row, new mask)> so a caller can patch compiled tables
+//   (d2_formats::excel::patch_bin_field(kind, bytes, record, "File 3" | "Dt1Mask", value), one field only).
+pub fn mirror_registration(types, prest, type_id, map, def, &Registration) -> Vec<String>; // same slot/bit on .txt tables that have the rows
+pub fn stale_against(name, txt: &TxtDoc, compiled_rows) -> Option<String>;               // .txt vs .bin row count
+pub fn map_prest_rows(prest, map, def: Option<u32>) -> Vec<usize>;   // Def row, else every row listing the map
+pub fn type_files(types, type_id) -> Vec<String>;  pub fn own_path_for(types, type_id, map_path) -> String; // one <type>_custom.dt1 per level type
+pub fn add_tiles_to_map(&AddTilesInput) -> Result<AddTilesOutcome>;
+//   input: map_path, ds1, types, prest, type_id, prest_def, picks + sources, type_dt1s (every DT1 of the type: their numbers are avoided),
+//          existing_own (+ path). Output: own_path, dt1 (appended), plan, remap (old -> new TileId), placed, types, prest, ds1 (file list), registration, changes, warnings.
+//   Walls keep orientation; animation frames / corner-wall halves stay together (plan_custom_dt1). Callers save the DT1 and the three edited files.
+
 // tiles_usage: unused assets and archive plan
 pub fn build_dt1_graph(&[MapRefs], &BTreeMap<String, Vec<TileId>>, protected) -> Vec<Dt1Asset>;
 pub fn unused_report(&ReferenceGraph) -> UnusedReport;   // blocked (empty lists) when the scan had errors

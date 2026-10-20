@@ -402,6 +402,23 @@ fn add_external_floors(
         },
     );
     libs::attach_to_info(state, index, &cpath);
+    // The game only loads DT1s that LvlTypes lists and the map's Dt1Mask selects.
+    let rel = super::super::tools::io::tiles_rel(cpath.as_str());
+    let prev = state.active;
+    state.active = Some(index);
+    let reg = super::super::tools::io::register_for_open_map(state, &rel);
+    state.active = prev;
+    match reg {
+        Ok(r) => {
+            for c in r.changes {
+                state.info(format!("Re-roll floors: {c}"));
+            }
+            for w in r.warnings {
+                state.warn(w);
+            }
+        }
+        Err(e) => state.warn(format!("The game does not load {rel} yet: {e}")),
+    }
     Ok(out
         .choices
         .into_iter()

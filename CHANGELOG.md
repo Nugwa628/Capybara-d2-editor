@@ -5,6 +5,15 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **Add to this map.** Right-click a tile marked "!" in the Tiles panel (or
+  Ctrl+click several) and choose **Add to this map...**. After a preview, the
+  tiles are copied into the level type's own DT1, renumbered where they clash
+  with any DT1 of the type, and the DT1 is registered in the first free
+  LvlTypes File slot and the map's LvlPrest Dt1Mask, so the game really loads
+  it. Saved with CHANGED.txt entries and a history snapshot; Ctrl+Z undoes the
+  map's file list. On Median XL (1.13c) the compiled `lvltypes.bin` and
+  `lvlprest.bin` are patched in place (only the File slot and Dt1Mask), so no
+  recompiling is needed.
 - **Export GIF window** (Viewer, Converter and Editor): choose a frame range
   (thumbnail strip or typed), the current, all or ticked directions (one GIF
   each, or one in sequence), speed (starts at the Viewer's), loop or play
@@ -12,15 +21,24 @@ All notable changes to this project are documented here.
   COF objects and monsters export composed with blend modes, or as one part.
 - `capy-paint`: `animated_gif_with` and `GifOptions` (loop, scale,
   background), `delay_for_fps`, `rgba_to_indexed`, `nearest_index`.
+  `d2-formats`: `excel::patch_bin_field` (change one field of a compiled
+  table, every other byte unchanged).
 - Script commands `sprite-gif-open`, `sprite-gif-set`, `sprite-gif-export`.
 
 ### Changed
 - The Map Editor's status bar shows the palette act the map is drawn with
   beside the DS1's act (`Act 1 · Act 2 palette`).
 - The Tiles panel's "!" warning explains that the tile's DT1 is not loaded by
-  the map's level type, so it would be invisible in game.
+  the map's level type, so it would be invisible in game, and points to
+  **Add to this map**.
 
 ### Fixed
+- **Re-roll floors** and **Presets > Copy tiles to DT1** now register their DT1
+  in LvlTypes and the map's Dt1Mask. In 1.2.0 they only changed the DS1's file
+  list, which the game ignores.
+- On 1.13c profiles the level-table tools (Add to game, Change level type...)
+  refuse to save when the `.txt` has a different number of rows than the
+  compiled `.bin` the game reads, instead of writing out-of-date tables.
 - A COF (object or monster) shown in the Viewer could not be exported as a
   GIF at all; the Converter's export buttons stayed disabled. It now exports
   the composite.

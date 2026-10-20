@@ -25,6 +25,7 @@ pub mod type_package;
 pub mod tiles_actsafe;
 pub mod tiles_dt1;
 pub mod tiles_flags;
+pub mod tiles_register;
 pub mod tiles_review;
 pub mod tiles_settings;
 pub mod tiles_usage;

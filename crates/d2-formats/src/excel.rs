@@ -886,6 +886,87 @@ fn decode_objpreset(bytes: &[u8]) -> Result<TxtTable> {
     Ok(TxtTable::from_parts(headers, rows))
 }
 
+/// Changes one field of one record of a compiled table and returns the new
+/// bytes; every byte outside that field is copied unchanged. `column` is a
+/// name [`decode_bin`] yields (`"File 3"` of LvlTypes, `"Dt1Mask"` of
+/// LvlPrest...), `record` the zero-based record, `value` the text the column
+/// shows. Strings need room for their NUL (`len < field size`) and must be
+/// Latin-1; numbers must fit the field; the `Index` column cannot be set.
+pub fn patch_bin_field(
+    kind: ExcelTableKind,
+    bytes: &[u8],
+    record: usize,
+    column: &str,
+    value: &str,
+) -> Result<Vec<u8>> {
+    let l = layout(kind);
+    let count = record_count(bytes, l.record_size)?;
+    if record >= count {
+        return Err(invalid(
+            "record",
+            format!("record {record} of {count} does not exist"),
+        ));
+    }
+    let col = l
+        .columns
+        .iter()
+        .find(|c| c.name == column)
+        .ok_or_else(|| invalid("column", format!("no column {column}")))?;
+    let at = 4 + record * l.record_size + col.offset;
+    let mut out = bytes.to_vec();
+    let num = |lo: i64, hi: i64| -> Result<i64> {
+        value
+            .trim()
+            .parse::<i64>()
+            .ok()
+            .filter(|v| (lo..=hi).contains(v))
+            .ok_or_else(|| invalid("value", format!("{value:?} does not fit {column}")))
+    };
+    let put = |out: &mut Vec<u8>, n: u32, w: usize| {
+        for (i, b) in n.to_le_bytes().iter().take(w).enumerate() {
+            out[at + i] = *b;
+        }
+    };
+    match col.field {
+        Field::Index => return Err(invalid("column", format!("{column} cannot be set"))),
+        Field::U8 => put(&mut out, num(0, 255)? as u32, 1),
+        Field::I8 => put(&mut out, num(-128, 127)? as i8 as u8 as u32, 1),
+        Field::U16 => put(&mut out, num(0, 65535)? as u32, 2),
+        Field::I16 => put(&mut out, num(-32768, 32767)? as i16 as u16 as u32, 2),
+        Field::I32 => put(
+            &mut out,
+            num(i64::from(i32::MIN), i64::from(i32::MAX))? as i32 as u32,
+            4,
+        ),
+        Field::U32 => put(&mut out, num(0, i64::from(u32::MAX))? as u32, 4),
+        Field::Bit(bit) => {
+            let word = u32::from_le_bytes([out[at], out[at + 1], out[at + 2], out[at + 3]]);
+            let new = match num(0, 1)? {
+                0 => word & !(1 << bit),
+                _ => word | (1 << bit),
+            };
+            put(&mut out, new, 4);
+        }
+        Field::Str(n) | Field::StrPad(n) => {
+            let latin: Option<Vec<u8>> = value
+                .chars()
+                .map(|c| u8::try_from(u32::from(c)).ok())
+                .collect();
+            let latin = latin
+                .filter(|b| b.len() < n && !b.contains(&0))
+                .ok_or_else(|| {
+                    invalid(
+                        "value",
+                        format!("{value:?} does not fit {column} ({} bytes with its NUL)", n),
+                    )
+                })?;
+            out[at..at + n].fill(0);
+            out[at..at + latin.len()].copy_from_slice(&latin);
+        }
+    }
+    Ok(out)
+}
+
 /// Decodes `levels.bin` and `leveldefs.bin` together into one table with the
 /// columns of `Levels.txt` that the two records store: everything
 /// [`ExcelTableKind::Levels`] yields plus `QuestFlag`, `Layer`, the sizes,

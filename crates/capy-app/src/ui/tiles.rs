@@ -354,8 +354,7 @@ fn details(ui: &mut Ui, state: &mut AppState, asset: &AssetRow, alias: Option<&s
         if state.outside_tile_set(asset) {
             ui.colored_label(
                 WARN,
-                "Not in this map's tile set: its DT1 isn't loaded by the map's level type, \
-                 so it would be invisible in game. Right-click \u{2192} Add to this map.",
+                "Not loaded by this map's level type, so the tile would be invisible in game. Right-click > Add to this map copies it into the level type's own DT1.",
             );
         }
     }
@@ -542,6 +541,11 @@ fn handle(state: &mut AppState, key: &str, ev: TileEvents) {
         state.toggle_star(key);
     }
     if ev.clicked && ev.ctrl {
+        // Ctrl+click also picks the tile for "Add to this map".
+        let picked = &mut state.tools.addmap.picked;
+        if !picked.remove(key) {
+            picked.insert(key.to_owned());
+        }
         add_to_mix(state, key);
         return;
     }
@@ -998,6 +1002,7 @@ fn enter_uses_selection(ui: &Ui, state: &mut AppState) {
 /// The tile menu, the text prompt and the "maps that use it" window.
 pub fn windows(ctx: &egui::Context, state: &mut AppState) {
     tile_menu(ctx, state);
+    super::tools::addmap::window(ctx, state);
     prompt(ctx, state);
     used_in_window(ctx, state);
 }
@@ -1016,6 +1021,7 @@ fn tile_menu(ctx: &egui::Context, state: &mut AppState) {
         .map(|(g, _)| (g.id, g.name.clone()))
         .collect();
     let key = menu.key.clone();
+    let has_map = state.active_doc().is_some();
     let shown = egui::Popup::new(
         id,
         ctx.clone(),
@@ -1083,6 +1089,22 @@ fn tile_menu(ctx: &egui::Context, state: &mut AppState) {
         }
         ui.separator();
         let is_tile = crate::browser::brush::parse_tile_key(&key).is_some();
+        let picked = &state.tools.addmap.picked;
+        let n = picked.len() + usize::from(!picked.contains(&key));
+        let label = if n > 1 {
+            format!("Add {n} tiles to this map...")
+        } else {
+            "Add to this map...".to_owned()
+        };
+        if ui
+            .add_enabled(is_tile && has_map, egui::Button::new(label))
+            .on_hover_text(
+                "Copies the tile into this map's level type's own DT1 and registers it in LvlTypes and LvlPrest, so the game loads it. Ctrl+click picks several tiles.",
+            )
+            .clicked()
+        {
+            action = Some(MenuAction::AddToMap);
+        }
         if ui
             .add_enabled(is_tile, egui::Button::new("Find similar"))
             .clicked()
@@ -1150,6 +1172,13 @@ fn tile_menu(ctx: &egui::Context, state: &mut AppState) {
         MenuAction::Similar => state.find_similar(&key),
         MenuAction::UsedIn => state.browser.used_in_window = Some(key.clone()),
         MenuAction::ConvertPalette => state.convert_open_tile_key(&key),
+        MenuAction::AddToMap => {
+            let mut keys: Vec<String> = state.tools.addmap.picked.iter().cloned().collect();
+            if !keys.contains(&key) {
+                keys.push(key.clone());
+            }
+            super::tools::addmap::open(state, keys);
+        }
         MenuAction::Copy => {
             ctx.copy_text(key.clone());
             state.notify(format!("Copied {key}"));
@@ -1188,6 +1217,7 @@ enum MenuAction {
     UsedIn,
     Copy,
     ConvertPalette,
+    AddToMap,
 }
 
 fn prompt(ctx: &egui::Context, state: &mut AppState) {

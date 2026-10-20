@@ -1745,7 +1745,8 @@ Everything else is in the **Search options** section under the filter box
   reorder them, drag a group header to reorder the groups, right-click a
   header to rename or delete the group (the tiles stay in the index).
 - **The results grid.** A tile from outside the active map's tile set has an
-  orange **!** badge: it would be missing in this map.
+  orange **!** badge: the map's level type does not load its DT1, so the tile
+  would be invisible in game. See **Add to this map** below.
 
 On a thumbnail:
 
@@ -1755,6 +1756,42 @@ On a thumbnail:
 | Double-click, or Enter | Use it: a tile becomes the brush (on its layer kind) and the Paint tool is picked; a map opens; a sprite opens in Sprites mode. |
 | The star | Add to or remove from favorites (the first group, or a new "Favorites" group). |
 | Right-click | The tile menu: **Use as brush / open**, **Set alias...**, **Add tag...** / **Remove tag**, **Add note...** / **Edit note...**, **Add to favorites** (a group, or **New group...**), **Remove from** a group, **Find similar**, **Show maps that use it**, **Copy key**. |
+
+**Add to this map.** Right-click a tile with the orange **!** and choose
+**Add to this map...** (Ctrl+click first to pick several tiles; the menu then
+says **Add N tiles to this map...**). A preview lists every change, then
+**Add**:
+
+1. The tiles are copied (pixels, sub-tile flags, animation frames) into the
+   level type's own DT1, one file shared by the whole level type
+   (`<type name>_custom.dt1` in the folder most of its DT1s are in). The
+   file is created, or appended to when it exists.
+2. A tile number that clashes with any DT1 of the level type is renumbered to
+   a free main/sub (walls keep their orientation; animation frames and the two
+   halves of a corner wall stay together). The brush switches to the new
+   numbers.
+3. The DT1 is registered where the game looks: the first free File slot of
+   the map's LvlTypes row and the map's bit in LvlPrest **Dt1Mask** (bits are
+   only turned on, so maps that share the row keep what they load). The
+   DS1's own file list names it too.
+4. The DT1, `lvltypes.txt` and `lvlprest.txt` are saved to `capybara\saves`
+   with CHANGED.txt entries and a History snapshot. **Ctrl+Z** undoes the
+   map's file list; the DT1 and tables are restored from the History panel.
+   The tiles then lose their **!**.
+
+If all 32 File slots are used and no own-tiles DT1 is listed yet, the dialog
+shows a clear error and nothing is written. If no LvlPrest row lists the map,
+LvlTypes is still edited and a warning says the game does not load the map
+(use **Game > Add to game**). **Re-roll floors** and **Presets > Copy tiles to
+DT1** register their DT1 the same way (in 1.2.0 they only updated the DS1's
+file list, which the game ignores).
+
+On a 1.13c profile such as Median XL the game reads compiled `.bin` tables.
+Capybara patches `lvltypes.bin` (the File slot) and `lvlprest.bin` (the
+Dt1Mask) in `capybara\saves`, changing only those fields, and updates the
+`.txt` forms too when they have the rows; no recompiling is needed. The
+Game-menu table tools refuse to save a `.txt` whose row count differs from the
+`.bin` (a stale `.txt` would drop the mod's rows).
 
 Aliases, tags, notes, favorites, saved searches and recents live in
 `capybara\user.db`, keyed by the tile's game path and indices, so they
