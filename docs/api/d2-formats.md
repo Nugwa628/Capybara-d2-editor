@@ -192,6 +192,30 @@ impl<'a> Row<'a> {
     pub fn cells(&self) -> &'a [String];
 }
 
+// ───────────── txt.rs: lossless writer (txt/edit.rs) ─────────────
+/// Byte-exact editable table. Unedited lines (and everything outside an edited
+/// cell) keep their bytes: line endings, BOM, blank/comment rows, ragged rows,
+/// missing final newline. Row r is line r+1; the header is line 0.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxtDoc { /* bom, lines: raw content + own terminator */ }
+impl TxtDoc {
+    pub fn parse(bytes: &[u8]) -> TxtDoc;          // infallible
+    pub fn to_bytes(&self) -> Vec<u8>;             // == input when unedited
+    pub fn headers(&self) -> Vec<String>;
+    pub fn column(&self, name: &str) -> Option<usize>; // ASCII case-insensitive, first
+    pub fn row_count(&self) -> usize;              // includes blank/trailing rows
+    pub fn row_cells(&self, row: usize) -> Option<Vec<&[u8]>>; // as stored, unpadded
+    pub fn cell_bytes(&self, row: usize, col: usize) -> Option<&[u8]>;
+    pub fn cell(&self, row: usize, col: usize) -> Option<String>; // Latin-1
+    /// Err (Invalid) for a missing row, chars > U+00FF, or tab/CR/LF in the value.
+    pub fn set_cell(&mut self, row: usize, col: usize, value: &str) -> Result<()>;
+    pub fn set_cell_bytes(&mut self, row: usize, col: usize, value: &[u8]) -> Result<()>;
+    pub fn insert_row(&mut self, at: usize, cells: &[&str]) -> Result<()>; // at <= row_count()
+    pub fn duplicate_row(&mut self, row: usize) -> Result<()>;  // copy goes after `row`
+    pub fn delete_row(&mut self, row: usize) -> Result<()>;
+    pub fn add_column(&mut self, name: &str, default: &str) -> Result<usize>; // new index
+}
+
 // ───────────── excel.rs ─────────────
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ExcelVersion { V113c, V114d }
@@ -311,6 +335,32 @@ impl StringTable {
     pub fn entry_by_id(&self, id: u16) -> Option<(&str, &str)>;
     pub fn entry_ids(&self) -> &[u16]; // parallel to entries()
 }
+
+// ───────────── tbl.rs: writer (tbl/write.rs) ─────────────
+/// Strings by id (entry i has id i), plus the hash size and version byte of the
+/// source. An unedited loaded table writes back its original bytes; after any
+/// edit the layout is regenerated (see docs/specs/tbl.md section 7), which
+/// reproduces all 40 corpus tables byte for byte.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TblDoc { /* entries, hash_size, version, original: Option<Vec<u8>> */ }
+impl TblDoc {
+    pub fn new() -> TblDoc;
+    /// Err if StringTable::parse fails or active ids are not exactly 0..n.
+    pub fn parse(bytes: &[u8]) -> Result<TblDoc>;
+    pub fn entries(&self) -> &[(String, String)];   // by id
+    pub fn get(&self, key: &str) -> Option<&str>;   // lowest id with `key`
+    pub fn is_modified(&self) -> bool;
+    /// Replace the text of `key` (id kept) or append it; returns the id.
+    pub fn set(&mut self, key: &str, text: &str) -> Result<u16>;
+    /// Append even if `key` exists; returns the id.
+    pub fn add(&mut self, key: &str, text: &str) -> Result<u16>;
+    /// Removes the first `key`; later ids shift down. false if absent.
+    pub fn remove(&mut self, key: &str) -> bool;
+    pub fn to_bytes(&self) -> Result<Vec<u8>>;      // original if unedited
+    pub fn layout(&self) -> Result<Vec<u8>>;        // always regenerated
+}
+// Strings are Latin-1; chars > U+00FF, NUL, empty keys, texts >= 65535 bytes,
+// > 65535 strings or > 65536 slots are Invalid.
 
 // ───────────── palette.rs (wave 2) ─────────────
 #[derive(Clone, Debug, PartialEq, Eq)]

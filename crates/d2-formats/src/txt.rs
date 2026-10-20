@@ -15,6 +15,9 @@
 
 use crate::{FormatError, Result};
 
+mod edit;
+pub use edit::TxtDoc;
+
 const FORMAT: &str = "txt";
 /// Padding cells allowed per input byte, on top of [`PAD_BUDGET_FLOOR`].
 const PAD_BUDGET_PER_BYTE: usize = 4;

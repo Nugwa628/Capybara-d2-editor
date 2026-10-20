@@ -253,3 +253,26 @@ traced in this pass; the required list is `main.c:115-143`.
     new column read must be added to `main.c` first.
 11. Editor palette and DT1 choices depend on LvlTypes row content (see `palette.md` section 8 for
     the Id 35 override).
+
+---
+
+## 9. Lossless writer (`d2_formats::txt::TxtDoc`)
+
+`TxtDoc` is the editing model for `.txt` tables; `TxtTable` stays the read-only typed view.
+
+- Every line keeps its raw bytes and its own terminator (CRLF, LF, bare CR, or none on an unterminated
+  last line). Nothing is normalised: quotes are ordinary bytes (the parser in 2.1 has no quoting), trailing
+  tabs/spaces, comment rows such as `Expansion`, blank rows, short/long rows, a UTF-8 BOM and a missing
+  final newline all survive. All 344 `.txt` files of the vanilla and Median XL corpora re-serialise
+  byte-identically, with no exceptions.
+- Edits: `set_cell` (replaces only that cell's bytes; a short row is padded with empty cells just as far as
+  needed), `insert_row` (padded to the header width), `duplicate_row`, `delete_row`, `add_column`
+  (appended after the header's last cell; short rows are padded to the old width first, completely empty
+  lines are left empty). New lines copy the terminator of the line before them; appending to a file
+  without a final newline adds a terminator to the old last line but leaves the new last line unterminated,
+  and deleting that line does the reverse, so the file's "no final newline" property is kept.
+- Differences from `TxtTable`: trailing blank rows are rows, short rows are not padded, and the header is
+  not required.
+- Edge cases: an unterminated last line that is emptied by an edit gets a terminator (it would otherwise
+  vanish on re-read); emptying a line next to a bare-CR line can fuse CR+LF into one terminator on re-read,
+  as the 2.1 splitter would read it.

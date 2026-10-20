@@ -30,6 +30,9 @@ use std::collections::HashMap;
 
 use crate::{FormatError, Result};
 
+mod write;
+pub use write::TblDoc;
+
 const FORMAT: &str = "tbl";
 const HEADER_LEN: usize = 0x15;
 const NODE_LEN: usize = 17;
