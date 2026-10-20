@@ -167,6 +167,8 @@ pub struct AppState {
     pub shell: crate::ui::shell::ShellState,
     /// ds1-studio parity tools and views (P9/P10).
     pub studio: crate::ui::studio::StudioState,
+    /// Tile libraries, presets, game data and package tool windows.
+    pub tools: crate::ui::tools::ToolsState,
 }
 
 const MAX_LOG: usize = 2000;
@@ -216,6 +218,7 @@ impl AppState {
             objects: crate::objects::ObjectsState::default(),
             shell,
             studio: crate::ui::studio::StudioState::default(),
+            tools: crate::ui::tools::ToolsState::default(),
         }
     }
 
@@ -402,6 +405,40 @@ impl AppState {
             filter: std::mem::take(&mut self.maps_list.filter),
             ..MapsList::default()
         };
+    }
+
+    /// Game tables were saved: rebuild the map catalog in the background
+    /// (maps pick up their new level types and DT1 lists when it is ready).
+    pub fn rebuild_catalog(&mut self) {
+        let Some(session) = &self.session else { return };
+        let overrides = self
+            .config
+            .overrides_for(&session.profile.id)
+            .map(|o| (GamePath::new(&o.ds1), o.lvl_type, o.def))
+            .collect();
+        tasks::spawn_catalog(
+            session.generation,
+            session.overlay.clone(),
+            session.profile.game_version,
+            session.maps.clone(),
+            overrides,
+            self.tx.clone(),
+        );
+        self.catalog = CatalogState::Building;
+    }
+
+    /// A map file now exists in the saves: list it in the Maps tree.
+    pub fn register_map(&mut self, path: &GamePath) {
+        let Some(session) = &mut self.session else {
+            return;
+        };
+        if session.maps.contains(path) {
+            return;
+        }
+        let at = session.maps.partition_point(|p| p < path);
+        session.maps.insert(at, path.clone());
+        self.session_epoch += 1;
+        self.maps_list.source_cache.clear();
     }
 
     // ───────── map catalog ─────────

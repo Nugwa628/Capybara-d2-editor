@@ -351,6 +351,8 @@ pub enum Cmd {
         x: u32,
         y: u32,
     },
+    /// A tool-window action (see `ui::tools::script`).
+    Tool(String),
     /// "Convert to palette" and palette memory (see `script_palette`).
     Palette(super::script_palette::PaletteCmd),
     /// ds1-studio parity tools and views (see `script_studio`).
@@ -986,6 +988,12 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
             need(1, "<ribbon id>")?;
             Cmd::Click(args[0].to_owned())
         }
+        "tool" => {
+            if rest.is_empty() {
+                return Err("tool: expected <verb> [args]".to_owned());
+            }
+            Cmd::Tool(rest.to_owned())
+        }
         "click-ribbon-all" => {
             need(0, "no arguments")?;
             Cmd::ClickRibbonAll
@@ -1003,7 +1011,7 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
             Cmd::Theme(args[0].to_ascii_lowercase())
         }
         "ribbon-tab" => {
-            need(1, "home|view|map|help")?;
+            need(1, "home|view|map|game|diag|help")?;
             Cmd::RibbonTab(args[0].to_ascii_lowercase())
         }
         "splash" => {

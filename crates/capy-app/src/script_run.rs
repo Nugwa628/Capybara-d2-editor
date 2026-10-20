@@ -335,6 +335,9 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
     if let Some(step) = sprite_step(state, cmd) {
         return step;
     }
+    if let Some(step) = tool_step(state, cmd) {
+        return step;
+    }
     if let Some(step) = palette_step(state, cmd) {
         return step;
     }
@@ -596,6 +599,8 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
         | Cmd::RibbonTab(_) => Step::Next,
         // Handled by `splash_step`.
         Cmd::Splash(_) | Cmd::SplashWaitClosed | Cmd::SplashSave { .. } => Step::Next,
+        // Handled by `tool_step`.
+        Cmd::Tool(_) => Step::Next,
         // Handled by `palette_step` and `ui::studio::script`.
         Cmd::Palette(_) | Cmd::Studio(_) => Step::Next,
         Cmd::PaintBrush { x, y } => {
@@ -813,6 +818,17 @@ fn sprite_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
     Some(match result {
         Ok(()) => Step::Next,
         Err(e) => Step::Fail(e),
+    })
+}
+
+/// `tool <verb> ...`: the tool windows' actions (see `ui::tools::script`).
+fn tool_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
+    use crate::ui::tools::script::Outcome;
+    let Cmd::Tool(line) = cmd else { return None };
+    Some(match crate::ui::tools::script::run(state, line) {
+        Ok(Outcome::Done) => Step::Next,
+        Ok(Outcome::Retry) => Step::Retry,
+        Err(e) => Step::Fail(format!("tool {line}: {e}")),
     })
 }
 
@@ -1734,7 +1750,9 @@ fn shell_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
                 state.config.ui.ribbon_tab = tab.clone();
                 return Some(Step::Wait(Wait::Frames(2)));
             }
-            Err(format!("ribbon-tab {tab:?}: home, view, map or help"))
+            Err(format!(
+                "ribbon-tab {tab:?}: home, view, map, game, diag or help"
+            ))
         }
         Cmd::Click(id) => return Some(click_step(state, id)),
         Cmd::Press(text) => return Some(press_step(state, text)),
