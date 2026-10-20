@@ -1,6 +1,6 @@
 # Capybara's D2 Editor (formerly Capybara Map Editor) — Plan
 
-Status: **Release 1.2.1 published** (2026-10-20, github.com/Nugwa628/Capybara-d2-editor): Add to this map (DT1 registration in LvlTypes/Dt1Mask; 1.13c `.bin` field patching) and the Export GIF window, on top of 1.2.0 (ds1-studio parity, P8–P13). Earlier: 1.1.0 (P7 palette tools). Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC. Waiting on the user's DC6 examples to refine palette memory. Limits in 1.2.0 are listed under "P8–P13 acceptance".
+Status: **Release 1.2.2 published** (2026-10-20, github.com/Nugwa628/Capybara-d2-editor): DT1 tiles editable in the sprite editor, the Sprites list as a folder tree with natural order, and saved DT1s indexed right after saving; on top of 1.2.1: Add to this map (DT1 registration in LvlTypes/Dt1Mask; 1.13c `.bin` field patching) and the Export GIF window, on top of 1.2.0 (ds1-studio parity, P8–P13). Earlier: 1.1.0 (P7 palette tools). Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC. Waiting on the user's DC6 examples to refine palette memory. Limits in 1.2.0 are listed under "P8–P13 acceptance".
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.

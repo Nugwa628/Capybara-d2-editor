@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [1.2.2] - 2026-10-20
 
 ### Added
 - **Edit DT1 tiles in the sprite editor.** **Open in editor** now works for a
