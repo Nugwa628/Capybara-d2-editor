@@ -1,6 +1,6 @@
 # Capybara's D2 Editor (formerly Capybara Map Editor) — Plan
 
-Status: **Release 1.1.0 published** (2026-10-20, github.com/Nugwa628/Capybara-d2-editor): 1.0.0 plus P7 palette tools. Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC. Waiting on the user's DC6 examples to refine palette memory. **In progress: ds1-studio parity (P8–P13), started 2026-10-20.**
+Status: **Release 1.1.0 published** (2026-10-20, github.com/Nugwa628/Capybara-d2-editor): 1.0.0 plus P7 palette tools. Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC. Waiting on the user's DC6 examples to refine palette memory. **ds1-studio parity (P8–P13) done on branch `feat/ds1-studio-parity` (2026-10-20), not yet merged to main or released;** gaps listed under "P8–P13 acceptance".
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -170,6 +170,28 @@ Status: **Release 1.1.0 published** (2026-10-20, github.com/Nugwa628/Capybara-d2
 - Fixed on the way: concurrent saves (batch worker + main thread) could drop a CHANGED.txt entry; `SavesDir` now serialises CHANGED.txt updates (test fails without the lock).
 - Lead decisions on the app's open questions: "Use <remembered>" in the save warning switches palette and continues the save; a conversion to "All acts" is remembered as `act1` (it displays identically).
 
+### P8–P13 acceptance (2026-10-20, branch `feat/ds1-studio-parity`)
+- **Whole branch:** `cargo fmt --check` clean, clippy 0 warnings, `CAPY_GPU_TESTS=1 cargo test --workspace` 1,311 passed, 0 failed (full corpora extracted on 2026-10-20, including DC6/DCC).
+- **Writers:**
+  - DT1: 619/631 round-trip byte-identically; the other 12 are v4.1 files the reader rejects. All 895,820 blocks re-encode to the same pixels.
+  - `.txt`: 344/344 round-trip; a single-cell edit changes only that cell.
+  - `.tbl`: 40/40 string tables round-trip and rebuild byte-for-byte; the 32 font `.tbl` files are a different format.
+- **UI:**
+  - Screenshot at 1600×900 matches ds1-studio's `overview.png` section by section. Walkable area on townn1 is 593, the same value ds1-studio shows.
+  - `shell_e2e` clicks 86 ribbon buttons and presses 70 default keys.
+  - `studio_e2e` (P9/P10) and `tools_e2e` (P11–P13) cover every feature that writes files.
+- **Not yet done** (carried to "Pending small fixes"):
+  - Tiles panel: Capybara's scope, saved-search, recent and favourites controls still sit above the grid.
+  - No COF encoder, so custom objects get the DC6 and objects.txt row only.
+  - Tables that exist only as `.bin` are read-only.
+  - Automap and Level light view modes are view-only. Level light is approximated by darkening.
+  - Re-roll only uses the map's own DT1s.
+  - Compatibility: the `ShortenPaths` fix isn't wired, and checks that need collision or render data are skipped.
+  - MCP lacks `regions`, `no_spawn_area`, `list_tiles`, `list_placeable`, `add_layer`, `clear` and `history`.
+  - Preset packages and the no-spawn and walk-paint planners aren't ported.
+  - ds1-studio's stack-paint brush isn't ported.
+  - DS1Edit oracle tests skip because `reference/d2-ds1-edit` is absent in this clone.
+
 ### Crates (crates.io, 2026-10-19)
 | Crate | Version | Note |
 |---|---|---|
@@ -261,7 +283,7 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
   - Planner merged (2026-10-19): act5->act1 default plan keeps every index outside 225-254, re-matches 29, mean error 0.40, worst 10.5 (index 239, a saturated cyan Act 1 lacks). UI decisions (lead): defaults OkLab, keep exact on, lightness weight 1.0 as an advanced slider 0.5-3, Adjust sliders +-0.3 default 0; when Adjust is non-zero and keep exact is on, show a hint with a one-click "turn off keep exact" (never change it silently); overrides outside the allowed target set are honoured but flagged in the plan table; entries above error 5 marked visible, above 10 obvious.
   - Contracts: `docs/api/d2-formats.md` (remap), `capy-paint.md` (remap planner), `capy-index.md` (palette memory). Acceptance: act5 -> act1 DT1 conversion with overrides round-trips (only pixel bytes differ, output indices within the allowed set except explicit overrides, identity table = identical file) on the full corpora; DCC conversions decode to the mapped frames; app e2e converts a real act5 DT1 and a DC6, saves, reopens, and the palette is remembered across restarts.
 
-## ds1-studio parity (P8–P13, user request 2026-10-20, in progress)
+## ds1-studio parity (P8–P13, user request 2026-10-20, done; see "P8–P13 acceptance")
 Goal: give end users ds1-studio's UI and layout for map editing, then add every ds1-studio feature Capybara lacks.
 - **Reference:** ds1-studio v0.2.63, commit `1d01dcd` (MIT, "Copyright (c) 2026 RoofooEvazan"). React + TypeScript + WebGL2 in Tauri 2; all parsing and editing is TypeScript.
   - Nothing is copied. As with DS1Edit, it is a spec and behaviour reference. Each feature is rebuilt in Rust and its vitest cases (`test/*.test.ts`) are translated into Rust tests.
