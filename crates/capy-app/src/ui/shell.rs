@@ -115,7 +115,7 @@ pub struct ShellState {
 }
 
 /// The ribbon's tab ids.
-pub const RIBBON_TABS: [&str; 4] = ["home", "view", "map", "help"];
+pub const RIBBON_TABS: [&str; 6] = ["home", "view", "map", "game", "diag", "help"];
 
 pub use super::ribbon::{click_all_step, click_events};
 
@@ -185,6 +185,7 @@ impl ShellState {
 /// (scripts, between steps).
 pub fn close_dialogs(state: &mut AppState) {
     state.shell.close_windows();
+    state.tools.close_all();
     state.shell.close_popups = true;
     state.settings.open = false;
     state.settings.add = None;
@@ -451,9 +452,16 @@ fn right_contents(ui: &mut Ui, state: &mut AppState) {
                     }
                     return;
                 }
-                column_tab(&mut cols[0], state, "TILES", true, true);
-                column_tab(&mut cols[1], state, "PRESETS", false, false)
-                    .on_hover_text("Presets are coming in a later version");
+                let presets = state.tools.presets_tab;
+                if column_tab(&mut cols[0], state, "TILES", !presets, true).clicked() {
+                    state.tools.presets_tab = false;
+                }
+                if column_tab(&mut cols[1], state, "PRESETS", presets, true)
+                    .on_hover_text("Saved blocks of tiles to place on the map")
+                    .clicked()
+                {
+                    state.tools.presets_tab = true;
+                }
             });
         });
     // The sections take what they needed last frame, up to 60% of the column.
@@ -476,6 +484,8 @@ fn right_contents(ui: &mut Ui, state: &mut AppState) {
         .show(ui, |ui| {
             if objects_tool {
                 objects::show(ui, state);
+            } else if state.tools.presets_tab {
+                super::tools::presets::show(ui, state);
             } else {
                 tiles::show(ui, state);
             }

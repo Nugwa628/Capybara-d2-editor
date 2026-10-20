@@ -216,14 +216,15 @@ The Map Editor's layout follows DS1 Studio's: a ribbon on top, the map list
 on the left, the map in the centre, the Tiles column on the right and a
 status bar at the bottom.
 
-1. **Top bar**: the app name, the ribbon tabs **Home**, **View**, **Map** and
-   **Help**, the **Commands** box (Ctrl+K), the open map's name (`*` when it
+1. **Top bar**: the app name, the ribbon tabs **Home**, **View**, **Map**,
+   **Game**, **Diagnostics** and **Help**, the **Commands** box (Ctrl+K), the
+   open map's name (`*` when it
    has unsaved changes) and game path, and the **Sprites** button, which
    switches to Sprites mode (Sprites mode keeps its own dock layout and a
    **Map Editor** tab to come back).
 2. **Ribbon.** Groups of buttons under the tabs; a button is greyed out when
    it cannot be used right now, and its tooltip shows its key.
-   - **Home**: File (Save, Recent, Profile, Import, Preferences, Saves,
+   - **Home**: File (Save, Recent, Profile, Import, Export, Preferences, Saves,
      Add game), Edit (Paste, Cut, Copy, Delete, Undo, Redo, Flags, Move to
      layer), Tools (Select, **Select ▾** with Lasso, Select by tile ID,
      Select identical and the selection scope, Paint, Erase, Pick),
@@ -232,7 +233,11 @@ status bar at the bottom.
    - **View**: Fit, 100%, zoom in and out, Just the map, the Tiles and
      Objects modes, Show (Grid, Minimap, Sprites, Animate, Markers), the
      floating panels and the **Theme** menu.
-   - **Map**: Resize, Map info, Close map, add floor / wall / tag layers.
+   - **Map**: Resize, Map info, Close map, add floor / wall / tag layers,
+     Tile libraries and Presets.
+   - **Game**: Add to game, Change level type, Type packages, Entering text,
+     Cube recipe, Custom object, Automap editor and Tables.
+   - **Diagnostics**: Compatibility, Crash log, Unused DT1s, Restore assets.
    - **Help**: Find a command, Shortcuts, About.
 3. **Map list** (left, 260 px): every map in the profile grouped by folder
    (`act1/town`) with counts and a filter box.
@@ -241,8 +246,8 @@ status bar at the bottom.
    bottom-left corner (click or drag it to move the view; **K** hides it).
    Right-click the map for Cut, Copy, Paste, Delete, Select all, Deselect,
    Move to layer, flags and Fit.
-5. **Right column** (320 px): the **Tiles** browser (Presets come in a later
-   version), and below it the collapsible **Cell** (the hovered cell's
+5. **Right column** (320 px): the **Tiles** browser and the **Presets** tab (see
+   below), and under them the collapsible **Cell** (the hovered cell's
    layers), **History**, **Tags & groups**, **Layers** and **Map** (map
    facts, tile set override, rendering status) sections. While the Objects
    tool is active the column shows the **Objects** panel instead of Tiles.
@@ -730,6 +735,110 @@ Close a tab with its **x**, by middle-clicking it, or with **Map > Close
 map**. If the map has unsaved changes the editor asks: **Save**, **Discard**
 or **Cancel**. Quitting asks the same for every unsaved map, and asks about
 unsaved sprite edits first.
+
+---
+
+## Tile libraries, presets, game data and packages
+
+These tools open as floating windows from the ribbon (**Map**, **Game** and
+**Diagnostics** tabs, **Home > Import / Export**) and from the command finder.
+Like every other edit they write only to `capybara\saves\<profile>\<game
+path>`, add the file to `CHANGED.txt` and record a history snapshot. Nothing
+touches the game folder, and nothing writes MPQs. A window that edits a file
+shows what it changed; edits inside a window can be undone until you save.
+
+### Tile libraries (Map > Tile libraries)
+
+Pick a DT1 from the drop-down (the open map's libraries, the ones in your
+saves and every library LvlTypes lists) or type its game path, then:
+
+- **DT1 libraries**: a grid of every tile (click selects, Ctrl+click ticks
+  several). **Recolour** rotates hue, changes saturation and brightness or
+  tints the ticked tiles (or the whole library); index 0 stays transparent.
+  **Duplicate** saves a copy under a new name in the same folder; **Rename**
+  writes the library under the new name and points LvlTypes.txt / LvlPrest.txt
+  at it (the old file is left alone). **Save to the saves folder** writes it
+  in place.
+- **Tile settings**: direction, roof height, sound, animation, orientation,
+  main and sub index of the selected tile, and **Export / Import .ini** in
+  DT1 Tools' format.
+- **Collision flags**: paint the 5x5 sub-tiles of the selected tile(s) with
+  the chosen flag bits (Add, Remove, Set or Make walkable); hover a cell for
+  what its flags mean.
+- **Paint tile pixels**: pencil, fill and pick on one block of a tile using
+  the act palette, with undo per stroke; **Apply to the tile** re-encodes the
+  block.
+- **Make act-safe**: replaces the act-specific colours (palette indices
+  225-254) with the nearest colours every act shares, so the tiles look the
+  same in every act.
+- **Review libraries**: duplicate libraries, libraries that clash on the
+  tiles the map places, mixed colour versions, unplaced tiles, and **Collect
+  the placed tiles into an own DT1** (`<map>_custom.dt1`).
+
+### Presets (right column > Presets)
+
+A preset is a block of cells (floors, walls, shadows and the objects on
+them). The tab lists the library with a filter and category box; **Place**
+(or double-click) shows the preset under the mouse like a paste, click the
+map to place it, and Ctrl+Z undoes it. **Save selection...** stores the
+selected cells as a preset; **Builder...** paints a preset on a 20x20 scratch
+map with the tile picked in the Tiles tab (left click paints, right click
+erases); **Suggest...** offers the wall structures that recur in the open map.
+Presets are JSON files in `data\ds1studio\presets\` in your saves (DS1
+Studio's format).
+
+### Game data (Game tab)
+
+- **Add to game**: registers the open map in Levels.txt, LvlPrest.txt and
+  LvlTypes.txt, as a new level (copying another level's settings) or as the
+  map of an existing preset level, and saves the map at the path you give.
+  **Preview the changes** first. The map then appears in the Maps list.
+- **Change level type**: moves the map's level to another tile set (or to a
+  copy of one) and fixes Dt1Mask.
+- **Type packages**: export a level type with its DT1 list, levels and presets
+  to a JSON file, or merge one into this profile by name.
+- **Entering text**: the area name shown on entering a level (patchstring.tbl,
+  LevelName / LevelWarp) and the loading-screen text image (EntryFile),
+  drawn with a game font.
+- **Cube recipe**: adds an item (a copy of a Misc.txt template) and the
+  Horadric Cube recipe that makes it, optionally an item that opens a map.
+- **Custom object**: turns a free objects.txt row into a decoration drawn
+  from your PNG (frames side by side). The COF file is not written yet.
+- **Automap editor**: the automap cel of every tile of the open map from
+  AutoMap.txt, with suggestions, import from another AutoMap.txt and the check
+  that refuses to save a broken table (a `-1` in Cel1 crashes the game).
+- **Tables**: a spreadsheet over any excel `.txt` table with a help text for
+  the columns of the level, object, cube and item tables. Double-click a cell
+  to edit it; **Duplicate / Insert / Delete row**, **Find next**, **Undo**
+  and **Save**. Rows you do not touch keep their exact bytes. **All tables**
+  lists every table the profile has. Tables the game only has as compiled
+  `.bin` files cannot be opened yet.
+
+After a table that decides which tiles a map uses is saved, the map catalog
+rebuilds in the background.
+
+### Diagnostics tab
+
+- **Compatibility**: checks the open map and its tables (tile libraries,
+  level registration, sizes, automap, entry image...) and lists errors,
+  warnings, notes and passed checks, each with one-click fixes. A fix states
+  an end result, so applying it twice changes nothing more.
+- **Crash log**: paste or open the game's crash log; each crash is explained
+  in plain language.
+- **Unused DT1s**: saved DT1s that no map loads and nothing lists, and saved
+  DS1s nothing refers to. **Archive** moves the ones you tick to
+  `capybara\archive\<profile>\<time>\` (a manifest is kept).
+- **Restore assets**: moves an archive's files back into your saves.
+
+### Map packages (Home > Import / Export)
+
+**Export > Map package (.zip)** packs the open map, the tile libraries it
+loads (marked when they come from the base game) and the table rows that
+register it. **Import > Map package...** merges a package into this profile's
+saves: files you already have are left alone unless you tick *Overwrite*, and
+every imported file goes through CHANGED.txt and a snapshot. **Import > DS1
+with its DT1s...** imports a loose DS1 and finds the DT1 libraries it lists in
+a folder you choose.
 
 ---
 
