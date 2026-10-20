@@ -171,3 +171,29 @@ are byte-identical, idempotence, level-type changes, and type-package
 export/import between the two corpora. `tests/other_tools.rs` holds the cube,
 entering-text and custom-object cases translated from the reference editor's
 vitest files.
+
+## Automap, compatibility and crash logs
+
+Pure functions; the caller passes parsed data and applies the results. Behaviour reference: ds1-studio `automap*.ts`, `compat.ts`, `crashLog.ts`.
+
+### `automap`
+
+- `AutomapTable::parse(&TxtDoc)` gives `rules: Vec<Rule>` (row, level, code, style, start, end, cels up to the first -1) and `levels`. `find_rule(level, orientation, main, sub)` is the game's first-match lookup; `level_for(type_name, act, type_id)` picks the `LevelName` for a level type; `unknown_levels()`, `reads_level_numbers()`.
+- `pieces(&Ds1, &AutomapTable, level) -> Vec<Piece>`: each visible floor/wall tile with its rule row and cel.
+- Edits on `&mut TxtDoc`, each returning `EditSummary { changes: Vec<Change>, summary }` (an empty `changes` means the table already had that content, so every edit is idempotent):
+  `set_cel(doc, level, orientation, style, sub, cel, Scope::{Sequence,Style})` (cel < 0 clears by removing or splitting rules, never by writing -1; a wildcard rule is `AutomapError::Wildcard`), `set_cel_for_tiles`, `clear_tiles` (all or nothing), `suggest` / `with_suggestions` / `apply_suggestions`, `usual_cels`.
+  `plan_clear(pieces, CellRect) -> ClearPlan { tiles, shared_elsewhere }`: tiles also used outside the area need a fresh tile id first (DT1/DS1 edit, done by the caller).
+- Unchanged rows keep their bytes (edits go through `TxtDoc`).
+- `automap::import`: `read_rows(bytes)`, `names_by_number(&TxtDoc)`, `merge_rows(&mut TxtDoc, &AutomapSource, &HashMap<String, Option<String>>)`; rows already present are skipped.
+- `automap::safety`: `invalid_rows(&TxtDoc)` (Cel1 negative/non-integer), `remove_invalid_rows`, `validate_save(path, bytes)` (refuses a broken AutoMap.txt).
+- `automap::style`: `AutomapStyle` (serde), `normalize(&serde_json::Value)`, `kind_of_code`, `part_of_code`, `is_water_tile`, `frame`, `cell_origin`. Painting is the renderer's job.
+
+### `compat`
+
+`check_map(&MapInput, &Tables, &Env) -> Vec<Finding>`, errors first. `MapInput` = map path (relative to `data/global/tiles`), `&Ds1`, the loaded libraries (`LoadedDt1 { path, found, tiles }`), candidate libraries for "add", and per-library usage counts. `Tables` holds the four `TxtDoc`s; `Env` holds optional callbacks (`dt1_exists`, `entry_image_exists`, `kept`, `new_level`, `is_waypoint`), the tiles' act and the compiled-bin list.
+`Finding { severity, area, title, detail, cells, columns, fixes }`; `Finding::key()` ignores numbers (for "accepted" warnings). A `Fix` is `FixAction::Edits(Vec<Edit>)` or a UI flow (`OpenTable`, `OpenAutomapEditor`, `Register`, `ShortenPaths`, `Keep`). `Edit` variants state end states (`SetCell`, `ReorderRecords`, `RemoveInvalidAutomapRows`, `RemoveDt1s`/`AddDt1s`, `ClearCells`, `SetSpecial`, `DeleteObjectsOutsideMap`, `SetAct`), so applying a fix twice equals once: `Fix::apply(&mut Tables, Option<&mut Ds1>) -> Result<bool>` (false the second time).
+`compat::verify_in_game` holds the table rules (record order, path length, Files, FillBlanks, town-only AutoMap 1, preset-to-level link, Layer, size = DS1 - 1, act, Pal, quest flag, EntryFile, world position and overlap). Not covered: walkability-based object checks, roof-hiding, open edges, spawn rooms, warp links, arrival by portal, duplicate/clashing/mixed-colour libraries, palette-act detection (pass `Env::tiles_act`).
+
+### `crash_log`
+
+`parse_crash_log(&str) -> Vec<Crash>` (time, `CrashKind`, what, module, offset, line, address, failed files) and `explain_crash(&Crash, Option<&LevelsWithEntry>) -> Explanation { title, detail, known, check, cause }`.

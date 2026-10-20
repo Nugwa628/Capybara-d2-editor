@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::panic)]
 //! Checker, fix and automap behaviour on the private corpus
 //! (`CAPY_PRIVATE_DIR/extracted/{vanilla,mxl}`); skipped when it is absent.
 
@@ -6,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use capy_mod::automap::{self, AutomapTable, Scope};
 use capy_mod::compat::{
-    check_map, Dt1Candidate, Env, Finding, FixAction, LoadedDt1, MapInput, Severity, Tables,
+    Dt1Candidate, Env, Finding, FixAction, LoadedDt1, MapInput, Severity, Tables, check_map,
 };
 use d2_formats::ds1::Ds1;
 use d2_formats::dt1::{Dt1, TileKey};
@@ -74,11 +75,18 @@ fn cases(root: &Path, tables: &Tables, limit: usize) -> Vec<Case> {
         tables.levels.as_ref().unwrap(),
         tables.types.as_ref().unwrap(),
     );
-    let mut dt1s = Dt1Cache { root: root.to_path_buf(), cache: HashMap::new() };
+    let mut dt1s = Dt1Cache {
+        root: root.to_path_buf(),
+        cache: HashMap::new(),
+    };
     let mut out = Vec::new();
     for pr in 0..prest.row_count() {
         let get = |d: &TxtDoc, r: usize, c: &str| {
-            d.column(c).and_then(|i| d.cell(r, i)).unwrap_or_default().trim().to_string()
+            d.column(c)
+                .and_then(|i| d.cell(r, i))
+                .unwrap_or_default()
+                .trim()
+                .to_string()
         };
         let level_id: i64 = get(prest, pr, "LevelId").parse().unwrap_or(0);
         let file1 = get(prest, pr, "File1");
@@ -89,12 +97,16 @@ fn cases(root: &Path, tables: &Tables, limit: usize) -> Vec<Case> {
         let Ok(bytes) = std::fs::read(root.join("data/global/tiles").join(&rel)) else {
             continue;
         };
-        let Ok(ds1) = Ds1::parse(&bytes) else { continue };
+        let Ok(ds1) = Ds1::parse(&bytes) else {
+            continue;
+        };
         // Level -> level type -> files by mask.
         let data: Vec<usize> = (0..levels.row_count())
             .filter(|&r| !get(levels, r, "Id").is_empty())
             .collect();
-        let Some(&lr) = data.get(level_id as usize) else { continue };
+        let Some(&lr) = data.get(level_id as usize) else {
+            continue;
+        };
         let tid: usize = get(levels, lr, "LevelType").parse().unwrap_or(0);
         let tdata: Vec<usize> = (0..types.row_count())
             .filter(|&r| !get(types, r, "Id").is_empty())
@@ -128,8 +140,16 @@ fn run(case: &Case, tables: &Tables) -> Vec<Finding> {
     for (_, k) in capy_mod::compat::placed_tiles(&case.ds1) {
         let hit = case.loaded.iter().find(|l| {
             l.tiles.contains(&k)
-                || (k.orientation == 3 && l.tiles.contains(&TileKey { orientation: 4, ..k }))
-                || (k.orientation == 4 && l.tiles.contains(&TileKey { orientation: 3, ..k }))
+                || (k.orientation == 3
+                    && l.tiles.contains(&TileKey {
+                        orientation: 4,
+                        ..k
+                    }))
+                || (k.orientation == 4
+                    && l.tiles.contains(&TileKey {
+                        orientation: 3,
+                        ..k
+                    }))
         });
         if let Some(l) = hit {
             match used.iter_mut().find(|u| u.0 == l.path) {
@@ -156,7 +176,11 @@ fn run(case: &Case, tables: &Tables) -> Vec<Finding> {
 /// are leftovers (invisible in game), so the "no graphic" error is true but
 /// harmless there. Everything else missing would still fail the test.
 fn legacy_only(c: &Case) -> bool {
-    let have: HashSet<TileKey> = c.loaded.iter().flat_map(|l| l.tiles.iter().copied()).collect();
+    let have: HashSet<TileKey> = c
+        .loaded
+        .iter()
+        .flat_map(|l| l.tiles.iter().copied())
+        .collect();
     capy_mod::compat::placed_tiles(&c.ds1)
         .into_iter()
         .filter(|(_, k)| !have.contains(k))
@@ -168,19 +192,27 @@ fn vanilla_maps_have_no_false_errors() {
     let Some(root) = root("vanilla") else { return };
     let tables = tables_of(&root);
     let cs = cases(&root, &tables, usize::MAX);
-    assert!(cs.len() > 20, "expected the vanilla preset levels, got {}", cs.len());
+    assert!(
+        cs.len() > 20,
+        "expected the vanilla preset levels, got {}",
+        cs.len()
+    );
     let mut errors = Vec::new();
     let mut legacy = 0;
     let mut other = HashMap::<String, usize>::new();
     for c in &cs {
         for f in run(c, &tables) {
             match f.severity {
-                Severity::Error if f.title.ends_with("placed tiles have no graphic") && legacy_only(c) => {
+                Severity::Error
+                    if f.title.ends_with("placed tiles have no graphic") && legacy_only(c) =>
+                {
                     legacy += 1;
                 }
                 Severity::Error => errors.push(format!("{}: {}", c.rel, f.title)),
                 Severity::Warning | Severity::Info => {
-                    *other.entry(format!("{:?}: {}", f.severity, f.key())).or_default() += 1;
+                    *other
+                        .entry(format!("{:?}: {}", f.severity, f.key()))
+                        .or_default() += 1;
                 }
                 Severity::Ok => {}
             }
@@ -193,7 +225,11 @@ fn vanilla_maps_have_no_false_errors() {
         println!("  {n:4} x {k}");
     }
     assert_eq!(legacy, 5, "the five maps with leftover main-49 tiles");
-    assert!(errors.is_empty(), "false errors on vanilla maps:\n{}", errors.join("\n"));
+    assert!(
+        errors.is_empty(),
+        "false errors on vanilla maps:\n{}",
+        errors.join("\n")
+    );
 }
 
 /// Applies every edit fix of every finding twice and checks the second pass
@@ -220,7 +256,11 @@ fn fixes_are_idempotent(c: &Case, tables: &Tables) -> usize {
                     .map(|d| d.as_ref().map(TxtDoc::to_bytes)),
                 ds1.to_bytes().unwrap(),
             );
-            assert!(!changed_again, "fix reported a change the second time: {}", fix.label);
+            assert!(
+                !changed_again,
+                "fix reported a change the second time: {}",
+                fix.label
+            );
             assert!(once == twice, "fix not idempotent: {}", fix.label);
             n += 1;
         }
@@ -303,7 +343,11 @@ fn broken_tables_are_found_and_fixed() {
 fn automap_edits_keep_unchanged_rows_byte_identical() {
     let Some(root) = root("vanilla") else { return };
     let bytes = std::fs::read(root.join("data/global/excel/automap.txt")).unwrap();
-    let lines = |b: &[u8]| -> Vec<Vec<u8>> { b.split_inclusive(|&c| c == b'\n').map(<[u8]>::to_vec).collect() };
+    let lines = |b: &[u8]| -> Vec<Vec<u8>> {
+        b.split_inclusive(|&c| c == b'\n')
+            .map(<[u8]>::to_vec)
+            .collect()
+    };
     let original = lines(&bytes);
     let doc = TxtDoc::parse(&bytes);
     assert_eq!(doc.to_bytes(), bytes);
@@ -318,7 +362,11 @@ fn automap_edits_keep_unchanged_rows_byte_identical() {
     assert_eq!(s.changes.len(), 1);
     let new = lines(&d.to_bytes());
     assert_eq!(new.len(), original.len() + 1);
-    let kept: Vec<_> = new.iter().filter(|l| !l.starts_with(b"1 Town\twl\t40\t7\t7")).cloned().collect();
+    let kept: Vec<_> = new
+        .iter()
+        .filter(|l| !l.starts_with(b"1 Town\twl\t40\t7\t7"))
+        .cloned()
+        .collect();
     assert_eq!(kept, original);
     // Idempotent.
     let again = automap::set_cel(&mut d, "1 Town", 1, 40, 7, 5, Scope::Sequence).unwrap();
@@ -335,56 +383,41 @@ fn automap_edits_keep_unchanged_rows_byte_identical() {
         .unwrap()
         .clone();
     let mid = row.start + 1;
-    let orientation = automap::AUTOMAP_CODES.iter().position(|c| *c == row.code).unwrap();
+    let orientation = automap::AUTOMAP_CODES
+        .iter()
+        .position(|c| *c == row.code)
+        .unwrap();
     let mut d = doc.clone();
-    automap::set_cel(&mut d, &row.level, orientation, row.style, mid, -1, Scope::Sequence).unwrap();
+    automap::set_cel(
+        &mut d,
+        &row.level,
+        orientation,
+        row.style,
+        mid,
+        -1,
+        Scope::Sequence,
+    )
+    .unwrap();
     let new = lines(&d.to_bytes());
     assert_eq!(new.len(), original.len() + 1);
-    let differing = new
-        .iter()
-        .filter(|l| !original.contains(l))
-        .count();
+    let differing = new.iter().filter(|l| !original.contains(l)).count();
     assert_eq!(differing, 2, "only the two halves differ");
     let table2 = AutomapTable::parse(&d);
-    assert!(table2.find_rule(&row.level, orientation, row.style, mid).is_none());
-    assert!(table2.find_rule(&row.level, orientation, row.style, row.start).is_some());
-    assert!(table2.find_rule(&row.level, orientation, row.style, row.end).is_some());
+    assert!(
+        table2
+            .find_rule(&row.level, orientation, row.style, mid)
+            .is_none()
+    );
+    assert!(
+        table2
+            .find_rule(&row.level, orientation, row.style, row.start)
+            .is_some()
+    );
+    assert!(
+        table2
+            .find_rule(&row.level, orientation, row.style, row.end)
+            .is_some()
+    );
     // The result still passes the save-time check.
     automap::safety::validate_save("data\\global\\excel\\AutoMap.txt", &d.to_bytes()).unwrap();
-}
-
-#[test]
-#[ignore]
-fn debug_missing() {
-    let Some(root) = root("vanilla") else { return };
-    let tables = tables_of(&root);
-    let mut stack = vec![root.join("data/global/tiles")];
-    while let Some(d) = stack.pop() {
-        for e in std::fs::read_dir(d).unwrap().flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("dt1")) {
-                let dt1 = Dt1::parse(&std::fs::read(&p).unwrap()).unwrap();
-                for t in &dt1.tiles {
-                    if t.main_index == 49 && t.orientation <= 2 {
-                        println!("has49 {} o{} s{}", p.display(), t.orientation, t.sub_index);
-                    }
-                }
-            }
-        }
-    }
-    for c in cases(&root, &tables, usize::MAX) {
-        let have: HashSet<TileKey> = c.loaded.iter().flat_map(|l| l.tiles.iter().copied()).collect();
-        let miss: Vec<_> = capy_mod::compat::placed_tiles(&c.ds1)
-            .into_iter()
-            .filter(|(_, k)| !have.contains(k))
-            .collect();
-        if !miss.is_empty() && miss.len() < 30 {
-            println!("{} loaded={:?}", c.rel, c.loaded.iter().map(|l| (&l.path, l.found, l.tiles.len())).collect::<Vec<_>>());
-            for (cr, k) in miss.iter().take(6) {
-                println!("   {:?} {:?}", cr, k);
-            }
-        }
-    }
 }
