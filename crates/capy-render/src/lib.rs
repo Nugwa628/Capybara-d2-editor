@@ -10,13 +10,18 @@
 //! The rules are `docs/api/capy-render.md`; the reference they were checked
 //! against is `reference/d2-ds1-edit/src/render/preview.c`.
 
+pub mod anim;
 pub mod compare;
 pub mod compose;
 pub mod error;
+pub mod links;
 pub mod objects;
 pub mod order;
 pub mod palette;
+pub mod pops;
+pub mod rooms;
 pub mod tileset;
+pub mod walk;
 
 #[cfg(test)]
 mod testutil;
@@ -39,3 +44,6 @@ pub use order::{
 };
 pub use palette::{palette_act, tileset_act};
 pub use tileset::{CELL_DIAMOND_TOP_X, TileClass, TileGeometry, TileRef, TileSet, VariantRule};
+
+#[cfg(test)]
+mod analysis_tests;
