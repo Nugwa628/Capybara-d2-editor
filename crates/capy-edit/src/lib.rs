@@ -91,6 +91,7 @@ pub mod document;
 pub mod error;
 pub mod layer;
 pub mod patch;
+pub mod presets;
 pub mod selection;
 pub mod tools;
 

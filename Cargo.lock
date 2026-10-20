@@ -1781,6 +1781,7 @@ dependencies = [
 name = "capy-mod"
 version = "1.1.0"
 dependencies = [
+ "capy-paint",
  "d2-assets",
  "d2-formats",
  "proptest",

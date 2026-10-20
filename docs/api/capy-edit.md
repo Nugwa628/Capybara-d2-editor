@@ -377,3 +377,36 @@ Behaviour:
   its own or a touching 40-sub-tile block, ds1-studio's `unpairedPads`).
   Not ported: the objects.txt checks that need the table itself
   (`directIdsOnGameRows`, `looseOnlyRows`).
+
+## Presets (P11, `capy_edit::presets`)
+
+A preset is a block of cells across floor, wall and shadow layers (never tags)
+plus the objects on it, in tile space relative to its top-left cell. It is
+serde JSON (`format: "ds1studio-preset"`, saved as
+`data/ds1studio/presets/<name>-<id>.json`); `id` is a hash of the content.
+
+```rust
+impl Preset {
+    pub fn from_selection(&Document, &Selection, name, category) -> Option<Preset>; // objects on selected cells come along
+    pub fn from_clipboard(&Clipboard, name, category) -> Preset;
+    pub fn to_clipboard(&self, target: &Ds1) -> Clipboard;   // stamped with the target's act/version
+    pub fn to_json(&self) -> String;  pub fn from_json(&str) -> Option<Preset>;
+    pub fn path(&self) -> String;     pub fn content_id(&self) -> String;
+}
+pub fn preview_place(&Document, &Preset, at: (i32, i32), PasteMode) -> PastePreview;
+/// One undo step "Place preset <name>" (Document::paste inside a group).
+pub fn place_preset(&mut Document, &Preset, at, PasteMode) -> Result<PastePreview>;
+pub fn sort_presets(&mut [Preset]);  pub fn categories(&[Preset]) -> Vec<String>;
+// 20x20 builder: a scratch map (2 floors, 4 walls) painted with the normal tools
+pub struct PresetBuilder;  // new(act), document(), document_mut(), is_empty(), build(name, category, trim) -> Option<Preset>
+// suggestions: recurring wall structures (<= 16x16, >= 2 parts) merged by identity
+pub fn suggestion_groups(&Ds1) -> Vec<Vec<u32>>;
+pub fn suggest_presets(maps: &[(String, &Ds1)], &SuggestOptions) -> Vec<Preset>; // limit, drawable(orientation, main, sub), category
+```
+
+Placing follows `Document::paste` (conflicts, version gates, dropped
+out-of-bounds cells), so save -> place -> undo returns the original map
+exactly. Suggestions match shadows to walls by main/sub index only (ds1-studio
+also compares the DT1 each comes from; the caller can filter with `drawable`).
+Identity ignores the `prop1` byte and objects. Not ported: preset packages and
+copying a preset's tiles between libraries.
