@@ -1,6 +1,6 @@
 # Capybara's D2 Editor (formerly Capybara Map Editor) — Plan
 
-Status: **Release 1.1.0 published** (2026-10-20, github.com/Nugwa628/Capybara-d2-editor): 1.0.0 plus P7 palette tools. Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC. Waiting on the user's DC6 examples to refine palette memory. **ds1-studio parity (P8–P13) done on branch `feat/ds1-studio-parity` (2026-10-20), not yet merged to main or released;** gaps listed under "P8–P13 acceptance".
+Status: **Release 1.1.0 published** (2026-10-20, github.com/Nugwa628/Capybara-d2-editor): 1.0.0 plus P7 palette tools. Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC. Waiting on the user's DC6 examples to refine palette memory. **Release 1.2.0** (2026-10-20): ds1-studio parity (P8–P13), the DS1 Studio interface and tools; limits listed under "P8–P13 acceptance".
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -180,16 +180,11 @@ Status: **Release 1.1.0 published** (2026-10-20, github.com/Nugwa628/Capybara-d2
   - Screenshot at 1600×900 matches ds1-studio's `overview.png` section by section. Walkable area on townn1 is 593, the same value ds1-studio shows.
   - `shell_e2e` clicks 86 ribbon buttons and presses 70 default keys.
   - `studio_e2e` (P9/P10) and `tools_e2e` (P11–P13) cover every feature that writes files.
-- **Not yet done** (carried to "Pending small fixes"):
-  - Tiles panel: Capybara's scope, saved-search, recent and favourites controls still sit above the grid.
-  - No COF encoder, so custom objects get the DC6 and objects.txt row only.
-  - Tables that exist only as `.bin` are read-only.
-  - Automap and Level light view modes are view-only. Level light is approximated by darkening.
-  - Re-roll only uses the map's own DT1s.
-  - Compatibility: the `ShortenPaths` fix isn't wired, and checks that need collision or render data are skipped.
-  - MCP lacks `regions`, `no_spawn_area`, `list_tiles`, `list_placeable`, `add_layer`, `clear` and `history`.
-  - Preset packages and the no-spawn and walk-paint planners aren't ported.
-  - ds1-studio's stack-paint brush isn't ported.
+- **Gaps closed before release (2026-10-20):** the Tiles panel tidy, a COF encoder (8,815/8,817 COFs round-trip byte-identically; the other 2 are `amblxbow.cof`, which is not a COF), editable Automap and Level light modes (real colour multiply), re-roll from other libraries, the stack-paint brush, walk painting and the no-spawn planner, the remaining compatibility rules and the `ShortenPaths` fix, the missing MCP tools, and preset packages.
+- **Release gate (1.2.0):** fmt clean, clippy 0 warnings, `CAPY_FULL_CORPUS=1 CAPY_GPU_TESTS=1 cargo test --workspace` 1,352 passed, 0 failed.
+- **Known limits in 1.2.0:**
+  - Tables and Level light can't be edited where a profile has only `.bin` tables (the `.bin` decoder reads a column subset, so there is no `.bin` writer).
+  - ds1-studio's "set exactly" walk-paint mode and `render_map` overlays in MCP aren't ported.
   - DS1Edit oracle tests skip because `reference/d2-ds1-edit` is absent in this clone.
 
 ### Crates (crates.io, 2026-10-19)

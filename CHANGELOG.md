@@ -2,7 +2,12 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [1.2.0] - 2026-10-20
+
+The Map Editor now has the interface, layout and map-editing tools of
+[DS1 Studio](https://github.com/RoofooEvazan/ds1-studio) by RoofooEvazan,
+rebuilt in Rust on Capybara's engine. All credit for that design goes to
+its author (see NOTICE).
 
 ### Changed
 - **The Tiles panel is tidied like DS1 Studio's:** category chips, the DT1
@@ -86,7 +91,7 @@ All notable changes to this project are documented here.
   ids); Export ▾ writes the map or the selection as PNG, and PrintScreen
   copies the map view to the clipboard.
 - **Views and overlays (P10):** view modes Tiles, Objects, Walkability,
-  Automap and Level light (view only for now) and Roof hiding, cycled with
+  Automap, Level light and Roof hiding, cycled with
   Tab / Shift+Tab or F1-F6; the walkability overlay and a walkable-area
   badge (DS1 Studio's number and colours); spawn regions, warps (click a
   label to open the target level's map) and roof-hiding areas; the 8x8
@@ -138,8 +143,15 @@ All notable changes to this project are documented here.
   move fixes), and rooms that are only partly no-spawn. **Rename the long
   paths** now works: each file is copied to its shorter path and LvlTypes /
   LvlPrest are updated. "Open" fixes open the Tables window at the row.
-- **MCP tools** `regions`, `no_spawn_area`, `list_tiles`, `list_placeable`,
-  `add_layer`, `clear` and `history`.
+- **MCP server**: `CapybarasD2Editor.exe mcp --profile <id>` lets AI tools
+  open, edit, check, render and save maps over stdio, with DS1 Studio's tool
+  names (`list_maps`, `open_map`, `new_map`, `paint`, `set_cell`,
+  `copy_area`, `find_replace`, `reroll`, `resize_map`, `set_cell_flags`,
+  `add_object`, `edit_objects`, `undo`, `redo`, `check_map`, `render_map`,
+  `save_map`, `regions`, `no_spawn_area`, `list_tiles`, `list_placeable`,
+  `add_layer`, `clear`, `history`, plus `map_info`, `get_cells`,
+  `list_objects`). Saves go to your saves folder with CHANGED.txt entries,
+  like the editor. See `docs/cli.md`.
 - **Preset packages**: Export... saves the selected preset (or a category, or
   all) as a .zip with the mod's own tile libraries they use; Import... adds
   them (a clashing library is kept and the import renamed). "Copy tiles to
