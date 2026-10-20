@@ -11,6 +11,8 @@
 //! [`check_map`] runs the map checks; [`tables::verify_in_game`] holds the
 //! table rules (the ones the game's level builder and table loaders follow).
 
+pub mod rename;
+pub mod render_checks;
 pub mod tables;
 
 use std::collections::{HashMap, HashSet};
@@ -199,6 +201,11 @@ pub enum Edit {
         /// Act.
         act: i32,
     },
+    /// Put objects at sub-tile positions: `(object index, x, y)`.
+    MoveObjects {
+        /// The moves.
+        moves: Vec<(usize, i32, i32)>,
+    },
 }
 
 /// What a fix does.
@@ -379,6 +386,9 @@ pub struct Env<'a> {
     pub is_waypoint: Option<&'a dyn Fn(i32, i32) -> bool>,
     /// Tables whose `.bin` sits next to the `.txt` (the game reads the `.bin`).
     pub compiled_bins: Vec<String>,
+    /// Collision data for the walkability, roof, edge, spawn-room, warp and
+    /// arrival checks; when absent those checks are skipped.
+    pub render: Option<render_checks::RenderEnv<'a>>,
 }
 
 impl Edit {
@@ -492,6 +502,18 @@ impl Edit {
             Edit::SetAct { act } => {
                 let changed = ds1.act != *act;
                 ds1.act = *act;
+                changed
+            }
+            Edit::MoveObjects { moves } => {
+                let mut changed = false;
+                for &(i, x, y) in moves {
+                    if let Some(o) = ds1.objects.get_mut(i)
+                        && (o.x, o.y) != (x, y)
+                    {
+                        (o.x, o.y) = (x, y);
+                        changed = true;
+                    }
+                }
                 changed
             }
             _ => false,
@@ -651,9 +673,10 @@ fn plural(n: usize, one: &'static str, many: &'static str) -> &'static str {
 /// LvlPrest, Levels and LvlTypes, it has entry markers, objects are inside it
 /// and the automap tables are sound. Results are ordered errors first.
 ///
-/// Not covered (they need rendering or collision data): walkability of
-/// objects, roof-hiding, open map edges, spawn rooms, warp links and
-/// arrival-by-portal, tile-library copies and colour checks.
+/// The walkability of objects, roof-hiding, open map edges, spawn rooms, warp
+/// links and arrival-by-portal run when the caller passes collision data in
+/// [`Env::render`] (see [`render_checks`]). Not covered: tile-library copies
+/// and colour checks.
 pub fn check_map(map: &MapInput<'_>, tables: &Tables, env: &Env<'_>) -> Vec<Finding> {
     let mut out = Vec::new();
     let ds1 = map.ds1;
@@ -893,6 +916,10 @@ pub fn check_map(map: &MapInput<'_>, tables: &Tables, env: &Env<'_>) -> Vec<Find
                 vec![Edit::DeleteObjectsOutsideMap],
             )),
         );
+    }
+
+    if let Some(render) = &env.render {
+        render_checks::render_checks(&mut out, ds1, tables, prest_row, render);
     }
 
     // --- Automap ---------------------------------------------------------------------

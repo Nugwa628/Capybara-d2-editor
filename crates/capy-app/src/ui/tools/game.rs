@@ -831,10 +831,8 @@ pub fn custom_object_run(
             .map_err(|e| e.to_string())?;
         let plan = custom_object_files(&token, &strip, 0, None).map_err(|e| e.to_string())?;
         io::save_game(state, &GamePath::new(&plan.dc6_path), &plan.dc6)?;
-        msg.push(format!(
-            "wrote {}; the COF {} is not written (no COF encoder yet)",
-            plan.dc6_path, plan.cof.path
-        ));
+        io::save_game(state, &GamePath::new(&plan.cof.path), &plan.cof_bytes)?;
+        msg.push(format!("wrote {} and {}", plan.dc6_path, plan.cof.path));
     }
     io::save_txt(state, "objects.txt", &out.objects)?;
     Ok(msg.join("; "))

@@ -16,6 +16,10 @@
 //! tool add-to-game new|existing <level id> <map path under tiles> <name...>
 //! tool change-type <type id> [copy]
 //! tool wait-catalog
+//! tool custom-object <row> <frames> <act> <png> <name...>
+//! tool preset-export <zip> [preset name]        # all presets without a name
+//! tool preset-import <zip or json>
+//! tool preset-copy-tiles <preset name>          # into the open map's own DT1
 //! tool compat [errors <n>]                      # run the checker; optionally assert the error count
 //! tool package-export <zip>
 //! tool package-import <zip> [overwrite]
@@ -214,6 +218,26 @@ pub fn run(state: &mut AppState, line: &str) -> Result<Outcome, String> {
             }
             Ok(Outcome::Done)
         }
+        "custom-object" => {
+            if args.len() < 5 {
+                return Err(bad("<row> <frames> <act> <png> <name...>"));
+            }
+            let num = |s: &str| {
+                s.parse::<usize>()
+                    .map_err(|_| format!("{s} is not a number"))
+            };
+            let msg = game::custom_object_run(
+                state,
+                num(args[0])?,
+                &args[4..].join(" "),
+                args[3],
+                num(args[1])? as u32,
+                num(args[2])? as u8,
+                false,
+            )?;
+            state.info(format!("custom-object: {msg}"));
+            Ok(Outcome::Done)
+        }
         "package-export" => {
             let msg = package::export_run(state, rest, "")?;
             state.info(format!("package-export: {msg}"));
@@ -234,6 +258,32 @@ pub fn run(state: &mut AppState, line: &str) -> Result<Outcome, String> {
             let name = args.first().ok_or_else(|| bad("<name> [category]"))?;
             let cat = args.get(1).copied().unwrap_or("");
             presets::save_selection(state, name, cat)?;
+            Ok(Outcome::Done)
+        }
+        "preset-export" => {
+            let out = args.first().ok_or_else(|| bad("<zip> [preset name]"))?;
+            let name = args[1..].join(" ");
+            let scope = if name.is_empty() {
+                presets::ExportScope::All
+            } else {
+                presets::ExportScope::Named(&name)
+            };
+            let msg = presets::export_run(state, scope, out)?;
+            state.info(format!("preset-export: {msg}"));
+            Ok(Outcome::Done)
+        }
+        "preset-import" => {
+            let msg = presets::import_run(state, rest)?;
+            state.info(format!("preset-import: {msg}"));
+            Ok(Outcome::Done)
+        }
+        "preset-copy-tiles" => {
+            let preset = presets::load_library(state)
+                .into_iter()
+                .find(|p| p.name == rest)
+                .ok_or_else(|| format!("no preset named {rest}"))?;
+            let msg = presets::copy_tiles_run(state, &preset)?;
+            state.info(format!("preset-copy-tiles: {msg}"));
             Ok(Outcome::Done)
         }
         "preset-place" => {

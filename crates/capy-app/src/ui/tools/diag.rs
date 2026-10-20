@@ -9,7 +9,7 @@ use bevy_egui::egui::{self, Color32, Ui};
 use capy_history::SavesDir;
 use capy_mod::compat::{
     Dt1Candidate, Env, Finding, FixAction, LoadedDt1, MapInput, Severity, TableName as CTable,
-    Tables, check_map, placed_tiles,
+    Tables, check_map, placed_tiles, render_checks::RenderEnv,
 };
 use capy_mod::crash_log::{explain_crash, parse_crash_log};
 use capy_mod::tiles_review::TileId;
@@ -35,6 +35,55 @@ pub struct DiagUi {
     pub crash_path: String,
     pub crash_text: String,
     pub crash_lines: Vec<String>,
+    /// The "shorten long tile paths" form: (path now, new path), tiles-relative.
+    pub shorten: Vec<(String, String)>,
+}
+
+/// Copies each renamed tile file to its new path in the saves and points the
+/// LvlTypes / LvlPrest cells at it. The old file stays (the game folder is
+/// read-only and an old saved copy is harmless).
+pub fn shorten_paths(state: &mut AppState, pairs: &[(String, String)]) -> Result<String, String> {
+    use capy_mod::compat::rename::{Rename, apply_renames, rename_problems};
+    let renames: Vec<Rename> = pairs
+        .iter()
+        .map(|(from, to)| Rename {
+            from: from.clone(),
+            to: to
+                .trim()
+                .replace('\\', "/")
+                .trim_start_matches('/')
+                .to_owned(),
+        })
+        .collect();
+    if let Some(p) = rename_problems(&renames).into_iter().flatten().next() {
+        return Err(p);
+    }
+    let renames: Vec<Rename> = renames.into_iter().filter(|r| r.from != r.to).collect();
+    let mut copied = 0;
+    for r in &renames {
+        let bytes = io::read_game(state, &io::tiles_game(&r.from))?
+            .ok_or_else(|| format!("{} was not found", r.from))?;
+        io::save_game(state, &io::tiles_game(&r.to), &bytes)?;
+        copied += 1;
+    }
+    let mut tables = load_tables(state)?;
+    let before = tables.clone();
+    let rows = apply_renames(&mut tables, &renames);
+    for (t, name) in [
+        (CTable::LvlPrest, "lvlprest.txt"),
+        (CTable::LvlTypes, "lvltypes.txt"),
+    ] {
+        if let (Some(a), Some(b)) = (tables.doc(t), before.doc(t))
+            && a != b
+        {
+            io::save_txt(state, name, a)?;
+        }
+    }
+    state.rebuild_catalog();
+    Ok(format!(
+        "Copied {copied} file(s) to their new paths; {} table row(s) now name them.",
+        rows.len()
+    ))
 }
 
 /// `capybara\archive\<profile>`.
@@ -398,11 +447,62 @@ pub fn run_compat(state: &AppState, kept: &HashSet<String>) -> Result<Vec<Findin
             }
         }
     }
+    let objects = io::read_txt(state, "objects.txt").ok();
+    let catalog = state.object_catalog();
+    let act = ds1.act.clamp(0, 4) as u8;
+    let ds1_version = ds1.version;
+    let is_wp = |kind: i32, id: i32| -> bool {
+        let (Some(c), Some(o)) = (&catalog, &objects) else {
+            return false;
+        };
+        if kind != 2 {
+            return false;
+        }
+        let probe = d2_formats::ds1::Object {
+            kind,
+            id,
+            x: 0,
+            y: 0,
+            flags: 0,
+        };
+        c.resolve(act, ds1_version, &probe)
+            .row
+            .and_then(|row| {
+                capy_mod::custom_object::game_rows(o)
+                    .get(row as usize)
+                    .copied()
+            })
+            .and_then(|line| o.column("Name").and_then(|c| o.cell(line, c)))
+            .is_some_and(|n| n.trim().eq_ignore_ascii_case("waypoint"))
+    };
+    // Collision as the game builds it (FillBlanks adds the hidden blank floor).
+    let tileset = io::doc_tiles(state);
+    let grid = tileset.as_ref().map(|tiles| {
+        let fill = tables.prest.as_ref().is_some_and(|p| {
+            (0..p.row_count()).any(|r| {
+                (1..=6).any(|n| {
+                    p.column(&format!("File{n}"))
+                        .and_then(|c| p.cell(r, c))
+                        .is_some_and(|v| v.replace('\\', "/").eq_ignore_ascii_case(&rel))
+                }) && p
+                    .column("FillBlanks")
+                    .and_then(|c| p.cell(r, c))
+                    .is_some_and(|v| v.trim() == "1")
+            })
+        });
+        let blank = fill.then(|| capy_render::walk::blank_fill_flags(tiles, 0));
+        capy_render::walk::sub_tile_flags(ds1, tiles, capy_render::walk::Collision::Game { blank })
+    });
     let env = Env {
         dt1_exists: Some(&dt1_exists),
         entry_image_exists: Some(&entry_exists),
         kept: Some(&is_kept),
+        is_waypoint: Some(&is_wp),
         compiled_bins: compiled,
+        render: grid.as_ref().map(|grid| RenderEnv {
+            grid,
+            is_waypoint: &is_wp,
+        }),
         ..Env::default()
     };
     Ok(check_map(&input, &tables, &env))
@@ -487,6 +587,46 @@ pub fn compat(ui: &mut Ui, state: &mut AppState) {
     let mut apply: Option<(usize, usize)> = None;
     let mut open: Option<&'static str> = None;
     let mut keep: Option<String> = None;
+    let mut open_at: Option<(&'static str, Option<String>)> = None;
+    let mut shorten: Option<Vec<String>> = None;
+    let mut do_shorten = false;
+    if !d.shorten.is_empty() {
+        let renames: Vec<capy_mod::compat::rename::Rename> = d
+            .shorten
+            .iter()
+            .map(|(f, t)| capy_mod::compat::rename::Rename {
+                from: f.clone(),
+                to: t.clone(),
+            })
+            .collect();
+        let problems = capy_mod::compat::rename::rename_problems(&renames);
+        ui.group(|ui| {
+            ui.strong("Shorten long tile paths");
+            ui.label(
+                "Each file is copied to its new path in your saves and every LvlTypes.txt / \
+                 LvlPrest.txt cell that names it is updated.",
+            );
+            for (i, (from, to)) in d.shorten.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.monospace(format!("{from} ({})", from.len()));
+                    ui.add(egui::TextEdit::singleline(to).desired_width(260.0));
+                    match &problems[i] {
+                        Some(p) => ui.colored_label(Color32::from_rgb(235, 100, 90), p),
+                        None => ui.label(format!("{} / 41", to.trim().len())),
+                    };
+                });
+            }
+            ui.horizontal(|ui| {
+                let ok = problems.iter().all(Option::is_none);
+                if ui.add_enabled(ok, egui::Button::new("Rename")).clicked() {
+                    do_shorten = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    d.shorten.clear();
+                }
+            });
+        });
+    }
     egui::ScrollArea::vertical()
         .id_salt("compat_list")
         .auto_shrink([false, false])
@@ -512,14 +652,13 @@ pub fn compat(ui: &mut Ui, state: &mut AppState) {
                         if ui.small_button(fix.label.as_str()).clicked() {
                             match &fix.action {
                                 FixAction::Edits(_) => apply = Some((i, j)),
-                                FixAction::OpenTable { table, .. } => {
-                                    open = Some("game.tables");
-                                    let _ = table;
+                                FixAction::OpenTable { table, key } => {
+                                    open_at = Some((table.file(), key.clone()));
                                 }
                                 FixAction::OpenAutomapEditor => open = Some("game.automap"),
                                 FixAction::Register => open = Some("game.addToGame"),
                                 FixAction::Keep { key } => keep = Some(key.clone()),
-                                FixAction::ShortenPaths { .. } => {}
+                                FixAction::ShortenPaths { paths } => shorten = Some(paths.clone()),
                             }
                         }
                     }
@@ -537,6 +676,31 @@ pub fn compat(ui: &mut Ui, state: &mut AppState) {
         if let Ok(f) = run_compat(state, &d.kept) {
             d.findings = f;
         }
+    }
+    if let Some(paths) = shorten {
+        d.shorten = capy_mod::compat::rename::suggest_renames(&paths)
+            .into_iter()
+            .map(|r| (r.from, r.to))
+            .collect();
+    }
+    if do_shorten {
+        let pairs = std::mem::take(&mut d.shorten);
+        d.msg = match shorten_paths(state, &pairs) {
+            Ok(m) => m,
+            Err(e) => {
+                d.shorten = pairs;
+                e
+            }
+        };
+        if let Ok(f) = run_compat(state, &d.kept) {
+            d.findings = f;
+        }
+    }
+    if let Some((table, key)) = open_at {
+        if let Err(e) = super::tables::open_table_at(state, table, key.as_deref()) {
+            d.msg = e;
+        }
+        open = Some("game.tables");
     }
     if let Some(k) = keep {
         d.kept.insert(k);

@@ -562,6 +562,17 @@ fn custom_object_pictures() -> TestResult {
         (-2, 2, -1, 2)
     );
     assert_eq!(plan.cof.frames_per_direction, 2);
+    let cof = d2_formats::cof::Cof::parse(&plan.cof_bytes)?;
+    assert_eq!(
+        (cof.directions, cof.frames_per_direction, cof.layers.len()),
+        (1, 2, 1)
+    );
+    assert_eq!(cof.layers[0].weapon_class_token(), "hth");
+    assert_eq!(
+        cof.header,
+        d2_formats::cof::Cof::object_header(-2, 2, -1, 2, 256)
+    );
+    assert_eq!(cof.to_bytes()?, plan.cof_bytes);
     let dc6 = Dc6::parse(&plan.dc6)?;
     assert_eq!(dc6.frames.len(), 2);
     for (i, fr) in dc6.frames.iter().enumerate() {

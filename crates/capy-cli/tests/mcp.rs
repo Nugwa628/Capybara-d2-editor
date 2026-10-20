@@ -96,6 +96,13 @@ fn protocol_lists_the_tools() {
         "check_map",
         "render_map",
         "save_map",
+        "regions",
+        "no_spawn_area",
+        "list_tiles",
+        "list_placeable",
+        "add_layer",
+        "clear",
+        "history",
     ] {
         assert!(names.contains(&n), "{n}");
     }
@@ -314,4 +321,63 @@ fn errors_are_tool_errors_not_protocol_errors() {
     assert_eq!(r[0]["result"]["isError"], true);
     assert!(text_of(&r[0]).contains("No map is open"));
     assert_eq!(r[1]["result"]["isError"], true);
+}
+
+#[test]
+fn spawn_tile_layer_clear_and_history_tools_in_a_scripted_session() {
+    let Some(root) = corpus() else {
+        eprintln!("skipped: corpus not found");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let profile = Profile {
+        id: "t".into(),
+        name: "t".into(),
+        game_version: GameVersion::V113c,
+        layers: vec![LayerSpec::Saves, LayerSpec::Folder { path: root.clone() }],
+    };
+    let rect = json!({"x0":0,"y0":0,"x1":7,"y1":7});
+    let r = run(
+        tmp.path(),
+        &profile,
+        &[
+            call(1, "open_map", json!({"path": MAP})),
+            call(2, "regions", json!({"rect": rect})),
+            call(3, "list_tiles", json!({"kind":"floor","limit":5})),
+            call(
+                4,
+                "list_tiles",
+                json!({"kind":"wall","orientation":1,"limit":3}),
+            ),
+            call(5, "list_placeable", json!({"type":2,"limit":5})),
+            call(6, "no_spawn_area", json!({"cells":[[2,2]]})),
+            call(7, "regions", json!({"rect": rect, "spawning_only": true})),
+            call(8, "add_layer", json!({"kind":"wall"})),
+            call(
+                9,
+                "clear",
+                json!({"rect":{"x0":0,"y0":0,"x1":3,"y1":3},"layers":["floor1"],"objects":true}),
+            ),
+            call(10, "history", json!({})),
+            call(11, "undo", json!({"steps":3})),
+            call(12, "history", json!({})),
+            call(13, "add_layer", json!({"kind":"floor","count":3})),
+            call(14, "no_spawn_area", json!({})),
+        ],
+    );
+    let t = |i: usize| text_of(&r[i]);
+    assert!(t(1).contains("room") && t(1).contains("seed"), "{}", t(1));
+    assert!(t(2).contains("tile"), "{}", t(2));
+    assert!(t(3).contains("orientation 1 (left wall)"), "{}", t(3));
+    assert!(r[4]["result"]["isError"].is_null(), "{}", t(4));
+    assert!(t(5).contains("covered"), "{}", t(5));
+    assert!(t(6).contains("room"), "{}", t(6));
+    assert!(t(7).contains("added 1 wall layer"), "{}", t(7));
+    assert!(t(8).contains("cleared"), "{}", t(8));
+    let h = t(9);
+    assert!(h.contains("1. ") && h.contains("Clear area"), "{h}");
+    assert!(t(10).contains("Undid"), "{}", t(10));
+    assert!(t(11).contains("(undone)"), "{}", t(11));
+    assert_eq!(r[12]["result"]["isError"], true, "too many floor layers");
+    assert_eq!(r[13]["result"]["isError"], true, "no cells given");
 }

@@ -92,6 +92,6 @@ time and edited through `capy_edit::Document` (so a session equals the same
 direct calls, tested); `save_map` writes `capybara\saves\<profile>` +
 `CHANGED.txt` + a history snapshot and never the game folder. Tool failures are
 results with `isError`; protocol errors are JSON-RPC errors. `render_map`
-returns a PNG image content. Not ported from ds1-studio: `regions`,
-`no_spawn_area`, `list_tiles`, `list_placeable`, `add_layer`, `clear`,
-`history`, overlay rendering.
+returns a PNG image content. Also `regions`, `no_spawn_area`, `list_tiles`,
+`list_placeable`, `add_layer`, `clear` and
+`history` are ported; overlay rendering in `render_map` is not.

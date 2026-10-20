@@ -404,6 +404,8 @@ pub fn suggestion_groups(&Ds1) -> Vec<Vec<u32>>;
 pub fn suggest_presets(maps: &[(String, &Ds1)], &SuggestOptions) -> Vec<Preset>; // limit, drawable(orientation, main, sub), category
 ```
 
+`capy_edit::no_spawn` (ds1-studio `noSpawnPlan`): `no_spawn_plan(&Ds1, cells: &[(u32,u32)], NoSpawnOptions { whole_rooms, void_tile }) -> NoSpawnPlan { floors, edits: Vec<(floor, x, y, Cell)>, rooms, copied, voids, skipped }` gives every region seed of the 8x8 rooms touching the cells a hidden floor-1 tile (a floored seed is copied to floor 2 first; a seed with no floor gets a hidden unwalkable tile); `Document::apply_no_spawn(&plan)` applies it as one undo step, adding floor 2 when needed. `Document::history() -> (done labels, undone labels)`.
+
 Placing follows `Document::paste` (conflicts, version gates, dropped
 out-of-bounds cells), so save -> place -> undo returns the original map
 exactly. Suggestions match shadows to walls by main/sub index only (ds1-studio

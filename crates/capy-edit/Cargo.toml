@@ -8,13 +8,13 @@ publish.workspace = true
 
 [dependencies]
 d2-formats.workspace = true
+capy-render.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-capy-render.workspace = true
 d2-assets.workspace = true
 tempfile.workspace = true
 

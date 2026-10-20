@@ -302,6 +302,11 @@ impl TileSet {
         self.index.get(&key).map_or(&[], Vec::as_slice)
     }
 
+    /// Every key the set has with the tiles that carry it (unordered).
+    pub fn keys(&self) -> impl Iterator<Item = (&TileKey, &[TileRef])> {
+        self.index.iter().map(|(k, v)| (k, v.as_slice()))
+    }
+
     fn rarity(&self, r: &TileRef) -> i32 {
         self.tile(r).map_or(0, |t| t.rarity)
     }

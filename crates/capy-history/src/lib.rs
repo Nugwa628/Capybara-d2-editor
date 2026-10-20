@@ -14,7 +14,7 @@ pub mod error;
 pub mod package;
 pub mod saves;
 pub mod store;
-mod zip;
+pub mod zip;
 
 #[cfg(feature = "milestones")]
 pub mod milestone;

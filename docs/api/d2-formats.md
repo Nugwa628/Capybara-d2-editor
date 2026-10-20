@@ -443,9 +443,15 @@ impl Dcc { pub fn parse(bytes: &[u8]) -> Result<Dcc>; }
 pub fn dcc::cell_spans(frame_min: i64, dir_min: i64, frame_len: i64) -> Vec<(i64, i64)>;
 
 pub struct CofLayer { pub component: u8, pub shadow: u8, pub selectable: u8, pub transparent: u8, pub draw_effect: u8, pub weapon_class: [u8; 4] }
-pub struct Cof { pub directions: u8, pub frames_per_direction: u8, pub layers: Vec<CofLayer>, pub keyframes: Vec<u8>, pub layer_order: Vec<u8> }
+pub struct Cof { pub directions: u8, pub frames_per_direction: u8, pub layers: Vec<CofLayer>, pub keyframes: Vec<u8>, pub layer_order: Vec<u8>,
+                 pub missing_bytes: usize, pub header: [u8; 25] /* bytes 3..28 */, pub trailing: Vec<u8> }
 impl Cof {
     pub fn parse(bytes: &[u8]) -> Result<Cof>;
+    /// Byte-identical write-back of a parsed file (short files stay short, trailing bytes kept).
+    /// Errors on a key-frame/priority table of the wrong length or more than 255 layers.
+    pub fn to_bytes(&self) -> Result<Vec<u8>>;
+    /// Header bytes 3..28 of the game's object COFs: version 0x14, box (4 x i32), rate (i16).
+    pub fn object_header(x_min: i32, x_max: i32, y_min: i32, y_max: i32, rate: i16) -> [u8; 25];
     pub fn draw_order(&self, dir: u8, frame: u8) -> Option<&[u8]>;
     /// The record that counts for `component`: the LAST one when a COF repeats it (cof.c:306-318).
     pub fn component_layer(&self, component: u8) -> Option<&CofLayer>;

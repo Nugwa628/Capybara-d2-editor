@@ -111,7 +111,7 @@ All notable changes to this project are documented here.
   preset, Place (preview, then click; undoable), a 20x20 preset builder and
   Suggest.
 - **Game tab**: Add to game, Change level type, Type packages, Entering text,
-  Cube recipe, Custom object (the COF is not written yet), an Automap editor
+  Cube recipe, Custom object (writes the DC6, the COF and the objects.txt row), an Automap editor
   and a **Tables** spreadsheet editor with column help. Tables the game only
   has as compiled `.bin` cannot be opened yet. Edited files go to your saves
   with a CHANGED.txt entry and a history snapshot, like maps.
@@ -127,6 +127,24 @@ All notable changes to this project are documented here.
   come from the Lucide icon font (ISC).
 - Right-click menu on the map (Cut, Copy, Paste, Delete, Select all,
   Deselect, Move to layer, flags, Fit), and Help > About.
+
+- **COF writer.** `Cof::to_bytes` writes every COF of the vanilla and Median
+  XL corpora back byte-for-byte. Custom object now writes the COF next to the
+  DC6 and the objects.txt row (all three land in your saves with CHANGED.txt
+  entries).
+- **Compatibility check, more rules**: players arriving by portal, warp
+  links and ways out, roof hiding (Pops), walkable edges that border void,
+  NPCs on unwalkable ground and objects stacked on one sub-tile (one-click
+  move fixes), and rooms that are only partly no-spawn. **Rename the long
+  paths** now works: each file is copied to its shorter path and LvlTypes /
+  LvlPrest are updated. "Open" fixes open the Tables window at the row.
+- **MCP tools** `regions`, `no_spawn_area`, `list_tiles`, `list_placeable`,
+  `add_layer`, `clear` and `history`.
+- **Preset packages**: Export... saves the selected preset (or a category, or
+  all) as a .zip with the mod's own tile libraries they use; Import... adds
+  them (a clashing library is kept and the import renamed). "Copy tiles to
+  DT1" copies the tiles a preset needs and the open map lacks into the map's
+  own DT1. Presets now record which DT1 each tile comes from.
 
 ### Fixed
 - Tile labels, list rows and the Log's INFO tag used fixed light greys that

@@ -152,15 +152,15 @@ pub fn object_slots(presets, objects, act, uses: &HashMap<usize,u32>, groups: &H
 pub fn free_token(objects, folders: &HashSet<String>) -> Result<String>;
 pub fn custom_object_row(objects, row, &CustomObjectOptions) -> Result<ObjectRowOutcome>; // { objects, changes }
 pub fn split_strip(w, h, pixels, count) -> Result<Vec<IndexedImage>>;   pub fn guess_frames(w, h, solid) -> u32;
-pub fn custom_object_files(token, frames, feet, anchor_x) -> Result<ObjectFilePlan>; // { cof: CofPlan, dc6_path, dc6: Vec<u8> }
+pub fn custom_object_files(token, frames, feet, anchor_x) -> Result<ObjectFilePlan>; // { cof: CofPlan, cof_bytes, dc6_path, dc6: Vec<u8> }
 ```
 
 The row becomes a plain one-mode decoration (marked `Capybara custom: <name>` in
 `description - not loaded`; the reference editor's mark is recognised). The DC6
-is encoded with `Dc6::from_frames`. **Deferred:** `d2-formats` has no COF
-encoder, so the COF is returned as a `CofPlan` (path, box, one TR layer, rate
-256) for the caller to encode once it exists. Converting a PNG to palette
-indices and the object-use scan over DS1s are the caller's.
+is encoded with `Dc6::from_frames` and the COF with `Cof::to_bytes`
+(`cof_bytes`, written at `cof.path`; `CofPlan` is the readable form: path, box,
+one TR layer, rate 256). Converting a PNG to palette indices and the
+object-use scan over DS1s are the caller's.
 
 ### Tests
 
@@ -267,7 +267,22 @@ Pure functions; the caller passes parsed data and applies the results. Behaviour
 
 `check_map(&MapInput, &Tables, &Env) -> Vec<Finding>`, errors first. `MapInput` = map path (relative to `data/global/tiles`), `&Ds1`, the loaded libraries (`LoadedDt1 { path, found, tiles }`), candidate libraries for "add", and per-library usage counts. `Tables` holds the four `TxtDoc`s; `Env` holds optional callbacks (`dt1_exists`, `entry_image_exists`, `kept`, `new_level`, `is_waypoint`), the tiles' act and the compiled-bin list.
 `Finding { severity, area, title, detail, cells, columns, fixes }`; `Finding::key()` ignores numbers (for "accepted" warnings). A `Fix` is `FixAction::Edits(Vec<Edit>)` or a UI flow (`OpenTable`, `OpenAutomapEditor`, `Register`, `ShortenPaths`, `Keep`). `Edit` variants state end states (`SetCell`, `ReorderRecords`, `RemoveInvalidAutomapRows`, `RemoveDt1s`/`AddDt1s`, `ClearCells`, `SetSpecial`, `DeleteObjectsOutsideMap`, `SetAct`), so applying a fix twice equals once: `Fix::apply(&mut Tables, Option<&mut Ds1>) -> Result<bool>` (false the second time).
-`compat::verify_in_game` holds the table rules (record order, path length, Files, FillBlanks, town-only AutoMap 1, preset-to-level link, Layer, size = DS1 - 1, act, Pal, quest flag, EntryFile, world position and overlap). Not covered: walkability-based object checks, roof-hiding, open edges, spawn rooms, warp links, arrival by portal, duplicate/clashing/mixed-colour libraries, palette-act detection (pass `Env::tiles_act`).
+`compat::verify_in_game` holds the table rules (record order, path length, Files, FillBlanks, town-only AutoMap 1, preset-to-level link, Layer, size = DS1 - 1, act, Pal, quest flag, EntryFile, world position and overlap). Not covered: duplicate/clashing/mixed-colour libraries, palette-act detection (pass `Env::tiles_act`).
+
+**Render checks** (`compat::render_checks`, run when `Env::render = Some(RenderEnv { grid, is_waypoint })`; `grid` is `capy_render::walk::sub_tile_flags(ds1, tiles, Collision::Game { blank })`): arrival by portal (`links::arrival_problem`), warp links and ways out (`links::exit_problems`, with `Levels.txt` rows via `level_row`), roof hiding (`pops::pop_problems`, with LvlPrest `Pops`/`PopPad`), open map edges (`rooms::open_void`), objects on unwalkable ground and several objects on one sub-tile (fixes `Edit::MoveObjects { moves: Vec<(index, x, y)> }`, end-state so idempotent), and partly no-spawn rooms (`rooms::partly_no_spawn_rooms`, with LvlPrest `Logicals`). "Open table" fixes carry the row key (`FixAction::OpenTable { table, key }`) and the app opens the Tables window at it.
+
+**`ShortenPaths`** (`compat::rename`): `suggest_renames(&[String]) -> Vec<Rename { from, to }>`, `rename_problems(&[Rename]) -> Vec<Option<String>>` (empty, still too long, wrong extension, two files sharing a path), `apply_renames(&mut Tables, &[Rename]) -> Vec<String>` (points every LvlTypes `File 1..32` and LvlPrest `File1..6` cell at the new path; the second application changes nothing). The app copies each file to its new path in the saves and saves both tables.
+
+### `preset_package` (ds1-studio `presetPackage.ts`, `presetLibrary.ts`)
+
+```rust
+pub fn fill_sources(&mut Preset, source_of: &dyn Fn(TileId) -> Option<String>);   // tile_sources + dt1s
+pub fn build_preset_package(&[Preset], locate: &dyn Fn(&str) -> Option<TileFile>) -> PresetPackage; // files [(zip path, bytes)], dt1s, missing
+pub fn plan_preset_import(bytes, zip_entries: Option<&[(String, Vec<u8>)]>, existing: &[Preset], read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<PresetImportPlan>;
+pub fn prepare_preset_library(&Preset, path, target: &dyn Fn(TileId) -> Vec<String>, read, keep: &BTreeSet<TileId>, taken: &BTreeSet<TileId>) -> Result<PreparedLibrary>; // { plan, dt1: Option<Dt1>, preset }
+```
+
+Package layout: `ds1studio-presets.json` (`{ format, version: 1, presets, dt1s }`), `presets/<file>.json`, `tiles/<path>` (the mod's own DT1s; the game's are left out). Import keeps a library already there unchanged, writes a free one, renames a clashing one (`name2.dt1`) and repoints the presets, skips unchanged presets, gives a taken id a new one, and lists libraries this game or mod lacks. `prepare_preset_library` copies only the tile numbers the map lacks (variants, animation frames and corner partners come along), renumbering clashes, and returns the preset with its cells and sources pointing at `path`. The zip is `capy_history::zip`.
 
 ### `crash_log`
 

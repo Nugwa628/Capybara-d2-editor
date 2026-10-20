@@ -18,6 +18,20 @@ pub fn excel_path(name: &str) -> GamePath {
     GamePath::new(&format!("data\\global\\excel\\{name}"))
 }
 
+/// The open map's tile set: the one the renderer loaded, or (before it has)
+/// loaded here from the map's DT1 list.
+pub fn doc_tiles(state: &AppState) -> Option<std::sync::Arc<capy_render::TileSet>> {
+    let doc = state.active_doc()?;
+    if let Some(t) = &doc.tiles {
+        return Some(t.clone());
+    }
+    let info = doc.info.as_ref()?;
+    let overlay = &state.session.as_ref()?.overlay;
+    capy_render::TileSet::load(overlay, &info.dt1_files)
+        .ok()
+        .map(|(t, _)| std::sync::Arc::new(t))
+}
+
 /// The bytes of a game file as the profile sees them.
 pub fn read_game(state: &AppState, path: &GamePath) -> Result<Option<Vec<u8>>, String> {
     let session = state.session.as_ref().ok_or("No profile is open yet")?;
