@@ -413,6 +413,29 @@ Goal: give end users ds1-studio's UI and layout for map editing, then add every 
     - The work is: case-sensitive paths for loose mod folders and saves; install detection for Wine, Lutris and Steam prefixes instead of the registry; cfg-gating `winresource`; a Linux release script (AppImage or tar.gz); running the GPU e2e suites under Linux (WSL2 is enough).
     - Decisions currently say Linux is "not a goal now".
 
+## 1.2.1 (user request 2026-10-20, in progress)
+- **Add to this map.** Right-click a tile marked "!" in Tiles (or a Ctrl+click multi-selection) and choose **Add to this map**. A preview dialog lists every change, then:
+  1. The tiles are copied (pixels, sub-tile flags, animation frames) into the level type's own DT1, as ds1-studio's `ownTiles.ts` does. One file is shared by the whole level type, and new tiles are appended if it exists.
+  2. Tile numbers that clash with any DT1 of the level type are renumbered to free main/sub values (walls keep their orientation), and painting uses the new numbers.
+  3. The DT1 is registered where the game looks: the first free LvlTypes File1–File32 slot of the map's level type, and the map's Dt1Mask bit in LvlPrest. The DS1's own file list is updated too.
+  4. Everything is saved to `capybara\saves` with CHANGED.txt entries and a history snapshot, and one Ctrl+Z undoes it.
+  - **Edge cases:**
+    - All 32 slots full: append to an existing own-tiles DT1, or give a clear error.
+    - No LvlPrest row: add to LvlTypes and warn.
+    - 1.13c profiles (Median XL) read compiled `.bin` tables: write the `.txt` and tell the user it needs recompiling (e.g. D2 with `-direct -txt`).
+  - Re-roll floors and Presets → Copy tiles to DT1 are fixed to register their DT1 the same way. In 1.2.0 they only updated the DS1's file list, which the game ignores.
+- **Export GIF dialog** (Viewer, Converter and Editor):
+  - **Frames:** a range picker (click a thumbnail, Shift+click to extend the range, or type start–end).
+  - **Directions:** current, all, or a ticked list. Output is one GIF per direction (`name_dNN.gif`) or one GIF playing them in sequence.
+  - **Playback:** speed defaults to AnimData, with an fps override and loop or play once.
+  - **Look:** scale 1–4× without smoothing, transparent or solid background, the current palette. COF objects and monsters are exported composed with blend modes, or as one part.
+  - **Preview:** a live preview of the chosen range.
+  - **Bug:** the user reports that 1.2.0 exports a single frame; reproduce and fix it.
+- **Small fixes:** the act palette in the status bar; clearer wording on the "not in this map's tile set" tooltip (the tile's DT1 isn't loaded by the map's level type, so the tile would be invisible in game).
+- **Tests:**
+  - Add tiles from `act1/barracks/barset.dt1` to a vanilla map and to Median XL `shire.ds1`. LvlTypes and LvlPrest change only the intended cells, the catalog then resolves the tiles, and undo restores everything.
+  - Export a real DCC and a COF with a frame range, decode the GIF back, and check the frame count, frame order and pixels.
+
 ## Asset index (`capy-index`, built in P1, used by P3)
 1. **Crawl:**
    - Build the file list from three sources:
