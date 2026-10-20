@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Edit DT1 tiles in the sprite editor.** **Open in editor** now works for a
+  `.dt1` in the Viewer: every tile is a frame with all the paint tools,
+  selections, palette, undo and onion skin. Pixels outside the tile's blocks
+  are locked. Saving re-encodes only the changed blocks; everything else in
+  the file is byte-identical.
+
 ### Changed
 - **Sprites list is a folder tree.** The Sprites list groups DC6/DCC/COF/DT1
   files into collapsible folders (`global`, `local`, ...) with file counts,

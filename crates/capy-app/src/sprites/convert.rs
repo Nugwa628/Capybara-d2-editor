@@ -337,6 +337,24 @@ pub fn format_of(path: &str) -> Option<SpriteFormat> {
 /// Checks a game path typed by the user: relative, under `data\`, with a
 /// `.dc6` or `.dcc` extension.
 pub fn check_game_path(text: &str) -> Result<(GamePath, SpriteFormat), String> {
+    let path = check_game_root(text)?;
+    let format = format_of(path.as_str())
+        .ok_or_else(|| format!("{:?} must end in .dc6 or .dcc", text.trim()))?;
+    Ok((path, format))
+}
+
+/// [`check_game_path`] for a tile set: ends in `.dt1`.
+pub fn check_dt1_game_path(text: &str) -> Result<GamePath, String> {
+    let path = check_game_root(text)?;
+    if !path.as_str().to_ascii_lowercase().ends_with(".dt1") {
+        return Err(format!("{:?} must end in .dt1", text.trim()));
+    }
+    Ok(path)
+}
+
+/// The checks common to every sprite game path: typed, relative, under
+/// `data\`.
+fn check_game_root(text: &str) -> Result<GamePath, String> {
     let t = text.trim();
     if t.is_empty() {
         return Err("type the game path, e.g. data\\global\\items\\invfoo.dc6".to_owned());
@@ -351,8 +369,7 @@ pub fn check_game_path(text: &str) -> Result<(GamePath, SpriteFormat), String> {
     if !s.starts_with("data\\") {
         return Err(format!("{t:?} must start with data\\"));
     }
-    let format = format_of(s).ok_or_else(|| format!("{t:?} must end in .dc6 or .dcc"))?;
-    Ok((path, format))
+    Ok(path)
 }
 
 /// Encodes and writes the profile's copy of `game_path` (format from the

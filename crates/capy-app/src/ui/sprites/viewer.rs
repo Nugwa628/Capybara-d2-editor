@@ -50,8 +50,8 @@ fn toolbar(ui: &mut Ui, state: &mut AppState) {
         );
         let can_convert = v.sprite().is_some() || v.dt1().is_some();
         if ui
-            .add_enabled(can_edit, egui::Button::new("Open in editor"))
-            .on_disabled_hover_text("Open a DC6/DCC (a COF layer has its own button)")
+            .add_enabled(can_edit || v.dt1().is_some(), egui::Button::new("Open in editor"))
+            .on_disabled_hover_text("Open a DC6, DCC or DT1 (a COF layer has its own button)")
             .clicked()
             && let Err(e) = state.edit_viewer_sprite(None)
         {

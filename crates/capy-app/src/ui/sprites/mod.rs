@@ -461,8 +461,12 @@ fn save_prompt(ctx: &Context, state: &mut AppState) {
         }
     } else if save {
         let (target, text) = (prompt.target, prompt.text.clone());
-        match crate::sprites::convert::check_game_path(&text) {
-            Err(e) => prompt.error = Some(e),
+        match state.check_save_path(target, &text) {
+            Err(e) => {
+                if let Some(p) = state.sprites.save_prompt.as_mut() {
+                    p.error = Some(e);
+                }
+            }
             Ok(_) => {
                 state.sprites.save_prompt = None;
                 state.sprite_write_checked(target, crate::sprites::DccWrite::Game(text));

@@ -16,6 +16,8 @@ pub struct TileInfo {
 }
 
 pub struct Dt1View {
+    /// The parsed file, kept for the editor.
+    pub dt1: Dt1,
     pub tiles: Vec<TileInfo>,
     pub images: Vec<IndexedImage>,
 }
@@ -51,7 +53,7 @@ impl Dt1View {
             // A tile whose blocks cannot be composed shows as empty.
             images.push(t.render().unwrap_or_else(|_| IndexedImage::new(0, 0, 0, 0)));
         }
-        Ok(Dt1View { tiles, images })
+        Ok(Dt1View { dt1, tiles, images })
     }
 
     pub fn len(&self) -> usize {

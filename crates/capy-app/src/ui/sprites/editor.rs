@@ -98,12 +98,17 @@ fn top_bar(ui: &mut Ui, state: &mut AppState) {
         };
         let dirty = if e.is_dirty() { "\u{25CF} " } else { "" };
         ui.strong(format!("{dirty}{}", e.source.label()));
-        ui.weak(format!(
-            "{} | {} dirs x {} frames",
-            e.format.extension().to_ascii_uppercase(),
-            e.directions(),
-            e.frames()
-        ));
+        let tiles = e.is_dt1();
+        if tiles {
+            ui.weak(format!("DT1 | {} tiles", e.frames()));
+        } else {
+            ui.weak(format!(
+                "{} | {} dirs x {} frames",
+                e.format.extension().to_ascii_uppercase(),
+                e.directions(),
+                e.frames()
+            ));
+        }
         let undo = e.session.undo_label().map(str::to_owned);
         let redo = e.session.redo_label().map(str::to_owned);
         ui.separator();
@@ -139,19 +144,24 @@ fn top_bar(ui: &mut Ui, state: &mut AppState) {
         }
         ui.menu_button("Export", |ui| {
             let busy = state.sprites.dialogs.is_open();
-            for (p, label) in [
-                (Purpose::ExportFrames, "Frames + sprite.json..."),
-                (Purpose::ExportSheet, "Sprite sheet..."),
-                (Purpose::ExportPng, "Indexed PNG (this frame)..."),
-                (Purpose::ExportSprite, "Sprite file (DC6/DCC)..."),
-            ] {
+            let entries: &[(Purpose, &str)] = if tiles {
+                &[(Purpose::ExportSprite, "Tile set file (DT1)...")]
+            } else {
+                &[
+                    (Purpose::ExportFrames, "Frames + sprite.json..."),
+                    (Purpose::ExportSheet, "Sprite sheet..."),
+                    (Purpose::ExportPng, "Indexed PNG (this frame)..."),
+                    (Purpose::ExportSprite, "Sprite file (DC6/DCC)..."),
+                ]
+            };
+            for &(p, label) in entries {
                 if ui.add_enabled(!busy, egui::Button::new(label)).clicked() {
                     state.sprites.converter.target = Target::Editor;
                     state.sprite_dialog(p);
                     ui.close();
                 }
             }
-            if ui.button("Animated GIF...").clicked() {
+            if !tiles && ui.button("Animated GIF...").clicked() {
                 state.sprites.converter.target = Target::Editor;
                 if let Err(e) = state.open_gif_dialog(true) {
                     state.error(e);
@@ -159,12 +169,14 @@ fn top_bar(ui: &mut Ui, state: &mut AppState) {
                 ui.close();
             }
         });
-        ui.menu_button("Format", |ui| {
-            if let Some(e) = editor(state) {
-                ui.radio_value(&mut e.format, capy_sprite::SpriteFormat::Dcc, "DCC");
-                ui.radio_value(&mut e.format, capy_sprite::SpriteFormat::Dc6, "DC6");
-            }
-        });
+        if !tiles {
+            ui.menu_button("Format", |ui| {
+                if let Some(e) = editor(state) {
+                    ui.radio_value(&mut e.format, capy_sprite::SpriteFormat::Dcc, "DCC");
+                    ui.radio_value(&mut e.format, capy_sprite::SpriteFormat::Dc6, "DC6");
+                }
+            });
+        }
     });
     super::paint_badge_row(ui, state, crate::sprites::Focus::Editor);
     ui.horizontal_wrapped(|ui| {
@@ -199,6 +211,7 @@ fn tools(ui: &mut Ui, state: &mut AppState) {
     let mut result: Result<(), String> = Ok(());
     {
         let Some(e) = editor(state) else { return };
+        let tiles = e.is_dt1();
         ui.strong("Tools");
         egui::Grid::new("sprite_tools_grid")
             .num_columns(2)
@@ -206,10 +219,13 @@ fn tools(ui: &mut Ui, state: &mut AppState) {
             .show(ui, |ui| {
                 for (i, t) in PaintTool::ALL.into_iter().enumerate() {
                     let label = format!("{} ({})", t.label(), t.key());
+                    // A tile's position is fixed.
+                    let usable = !(tiles && t == PaintTool::Offset);
                     if ui
-                        .add_sized(
-                            [88.0, 22.0],
-                            egui::Button::selectable(e.tool == t, short(t)),
+                        .add_enabled(
+                            usable,
+                            egui::Button::selectable(e.tool == t, short(t))
+                                .min_size(Vec2::new(88.0, 22.0)),
                         )
                         .on_hover_text(label)
                         .clicked()
@@ -355,25 +371,32 @@ fn tools(ui: &mut Ui, state: &mut AppState) {
             }
         });
         ui.separator();
-        ui.strong("Canvas");
-        if let Some(f) = e.frame()
-            && e.canvas_size == (0, 0)
-        {
-            e.canvas_size = (f.width, f.height);
-        }
-        ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut e.canvas_size.0).range(1..=4096));
-            ui.label("x");
-            ui.add(egui::DragValue::new(&mut e.canvas_size.1).range(1..=4096));
-            if ui
-                .button("Resize")
-                .on_hover_text("Bottom-centre stays put, so the anchor does not move")
-                .clicked()
+        if tiles {
+            ui.weak(
+                "Tile set: the tiles, their sizes and positions are fixed. Dimmed pixels \
+                 lie outside the tile's blocks and cannot be changed.",
+            );
+        } else {
+            ui.strong("Canvas");
+            if let Some(f) = e.frame()
+                && e.canvas_size == (0, 0)
             {
-                let (w, h) = e.canvas_size;
-                result = e.resize_canvas(w, h);
+                e.canvas_size = (f.width, f.height);
             }
-        });
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut e.canvas_size.0).range(1..=4096));
+                ui.label("x");
+                ui.add(egui::DragValue::new(&mut e.canvas_size.1).range(1..=4096));
+                if ui
+                    .button("Resize")
+                    .on_hover_text("Bottom-centre stays put, so the anchor does not move")
+                    .clicked()
+                {
+                    let (w, h) = e.canvas_size;
+                    result = e.resize_canvas(w, h);
+                }
+            });
+        }
     }
     report(state, result);
 }
@@ -546,6 +569,9 @@ fn dcc_check(ui: &mut Ui, state: &mut AppState) {
     let mut reduce = false;
     {
         let Some(e) = editor(state) else { return };
+        if e.is_dt1() {
+            return;
+        }
         let is_dcc = e.format == capy_sprite::SpriteFormat::Dcc;
         let force_open = std::mem::take(&mut state.sprites.open_cell_check);
         let Some(e) = state.sprites.editor.as_mut() else {
@@ -624,26 +650,35 @@ fn frames_strip(ui: &mut Ui, state: &mut AppState) {
     let mut result: Result<(), String> = Ok(());
     {
         let Some(e) = editor(state) else { return };
+        let tiles = e.is_dt1();
         ui.horizontal_wrapped(|ui| {
-            ui.label("Direction");
             let dirs = e.directions();
-            let mut dir = e.cur.dir;
-            egui::ComboBox::from_id_salt("editor_dir")
-                .selected_text(format!("{dir} / {dirs}"))
-                .show_ui(ui, |ui| {
-                    for d in 0..dirs {
-                        ui.selectable_value(&mut dir, d, d.to_string());
-                    }
-                });
-            if dir != e.cur.dir {
-                e.go_to(dir, e.cur.frame);
+            if !tiles {
+                ui.label("Direction");
+                let mut dir = e.cur.dir;
+                egui::ComboBox::from_id_salt("editor_dir")
+                    .selected_text(format!("{dir} / {dirs}"))
+                    .show_ui(ui, |ui| {
+                        for d in 0..dirs {
+                            ui.selectable_value(&mut dir, d, d.to_string());
+                        }
+                    });
+                if dir != e.cur.dir {
+                    e.go_to(dir, e.cur.frame);
+                }
             }
-            ui.label(format!("Frame {} / {}", e.cur.frame, e.frames()));
+            ui.label(match &e.dt1 {
+                Some(doc) => doc.label(e.cur.frame),
+                None => format!("Frame {} / {}", e.cur.frame, e.frames()),
+            });
             if ui.small_button("<").on_hover_text(",").clicked() {
                 e.step_frame(-1);
             }
             if ui.small_button(">").on_hover_text(".").clicked() {
                 e.step_frame(1);
+            }
+            if tiles {
+                return;
             }
             ui.separator();
             if ui
@@ -694,6 +729,11 @@ fn frames_strip(ui: &mut Ui, state: &mut AppState) {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     for frame in 0..e.frames() {
+                        let (r, resp) = ui.allocate_exact_size(Vec2::splat(52.0), Sense::click());
+                        // A tile set has hundreds of frames: only draw the visible ones.
+                        if !ui.is_rect_visible(r) {
+                            continue;
+                        }
                         let fresh = e.thumbs.get(&(dir, frame)).is_some_and(|(k, _)| *k == rev);
                         if !fresh {
                             let tex = e
@@ -719,7 +759,6 @@ fn frames_strip(ui: &mut Ui, state: &mut AppState) {
                                 }
                             }
                         }
-                        let (r, resp) = ui.allocate_exact_size(Vec2::splat(52.0), Sense::click());
                         paint_checker(&ui.painter_at(r), r, 4.0);
                         if let Some((_, t)) = e.thumbs.get(&(dir, frame)) {
                             let sz = t.size_vec2();
@@ -738,7 +777,11 @@ fn frames_strip(ui: &mut Ui, state: &mut AppState) {
                             Stroke::new(1.0, Color32::from_gray(80))
                         };
                         ui.painter().rect_stroke(r, 0.0, stroke, StrokeKind::Inside);
-                        if resp.on_hover_text(format!("frame {frame}")).clicked() {
+                        let tip = match &e.dt1 {
+                            Some(doc) => doc.label(frame),
+                            None => format!("frame {frame}"),
+                        };
+                        if resp.on_hover_text(tip).clicked() {
                             go = Some(frame);
                         }
                     }
@@ -999,6 +1042,29 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
             Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
             Color32::WHITE,
         );
+    }
+    // A tile set: dim the pixels no block can draw.
+    if e.dt1.is_some()
+        && let Some(m) = e.session.editable(e.cur.frame)
+    {
+        if e.lock_tex.as_ref().map(|t| t.0) != Some(e.cur.frame) {
+            let mut rgba = vec![0u8; m.bits.len() * 4];
+            for (px, &free) in rgba.as_chunks_mut::<4>().0.iter_mut().zip(&m.bits) {
+                if !free {
+                    *px = [10, 10, 30, 150];
+                }
+            }
+            e.lock_tex = rgba_texture(ui.ctx(), "sprite-editor-lock", m.width, m.height, &rgba)
+                .map(|t| (e.cur.frame, t));
+        }
+        if let Some((_, t)) = &e.lock_tex {
+            painter.image(
+                t.id(),
+                frame_rect,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
     }
     painter.rect_stroke(
         frame_rect,

@@ -19,6 +19,7 @@ use d2_formats::IndexedImage;
 use d2_formats::palette::Palette;
 
 use super::SpriteSource;
+use super::dt1edit::Dt1Doc;
 
 pub type Pt = (i32, i32);
 
@@ -242,6 +243,10 @@ pub struct EditorState {
     pub thumbs: HashMap<(usize, usize), (u64, egui::TextureHandle)>,
     /// Size typed in the "Canvas" box.
     pub canvas_size: (u32, u32),
+    /// The tile set when this is a DT1 (tiles are the frames, fixed).
+    pub dt1: Option<Dt1Doc>,
+    /// Dimmed-pixel overlay of the locked area: (frame, texture).
+    pub lock_tex: Option<(usize, egui::TextureHandle)>,
 }
 
 fn first_opaque(palette: &Palette, prefer: [u8; 3]) -> u8 {
@@ -327,7 +332,39 @@ impl EditorState {
             canvas_tex: None,
             thumbs: HashMap::new(),
             canvas_size: (0, 0),
+            dt1: None,
+            lock_tex: None,
         })
+    }
+
+    /// A DT1 as a document: one frame per tile, pixels outside the blocks
+    /// locked, frame structure fixed.
+    pub fn new_dt1(
+        doc: Dt1Doc,
+        source: SpriteSource,
+        palette: Palette,
+    ) -> Result<EditorState, String> {
+        let sprite = Sprite {
+            directions: doc.frames(),
+        };
+        let mut e = EditorState::new(sprite, SpriteFormat::Dc6, source, palette)?;
+        e.session.lock_structure(doc.editable());
+        e.dt1 = Some(doc);
+        Ok(e)
+    }
+
+    pub fn is_dt1(&self) -> bool {
+        self.dt1.is_some()
+    }
+
+    /// The DT1 file with the edited tiles written back, and the number of
+    /// tiles that changed.
+    pub fn dt1_bytes(&mut self) -> Result<(Vec<u8>, usize), String> {
+        let frames = self.session.frames().to_vec();
+        self.dt1
+            .as_mut()
+            .ok_or_else(|| "this document is not a DT1".to_owned())?
+            .save(&frames)
     }
 
     // ───────── colours ─────────
@@ -654,6 +691,9 @@ impl EditorState {
                 }
             }
             PaintTool::Offset => {
+                if self.is_dt1() {
+                    return Err("a tile's position is fixed".to_owned());
+                }
                 self.gesture = Some(Gesture::Offset { start: pt, end: pt });
                 Ok(())
             }
