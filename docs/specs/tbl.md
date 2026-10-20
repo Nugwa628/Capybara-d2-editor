@@ -212,3 +212,33 @@ No row is **DIFFERS** because the repo has no `.tbl` implementation to differ fr
    `tools/d2mpq.py` extractions, which are not in this tree.
 8. **Companion ledger not reconciled.** `tbl-string-tables.verification.md` may hold corrections to the
    guide. Read it before implementing, especially for the P and CRC claims.
+
+---
+
+## 7. Writer (`d2_formats::tbl::TblDoc`)
+
+Checked against the 40 string tables of the vanilla and Median XL corpora (the other 32 `.tbl` files
+under `data/local/font` are glyph tables, a different format, and are not handled here).
+
+- **Layout reproduced exactly.** Re-laying out any of the 40 tables from its `(key, text)` list alone
+  (`TblDoc::layout`) gives back the original bytes. So the compiler's rules are:
+  - `N` (header 0x04) is kept; it grows only when there are more strings than slots.
+  - Strings go in id order to `key_hash(key, N)` or the next free slot (linear, wrapping). The lowest id of
+    a duplicate key therefore owns the home slot.
+  - ID table entry `i` = node slot of string `i`; node id field = `i`.
+  - `P` (0x0D) = longest probe sequence **plus one** (a lone string in its home slot has `P = 1`).
+  - Node `+3` (the "unknown" dword) = the key's hash value (`key_hash(key, N)`, before probing).
+  - Node text length = text bytes + 1. String data: `key NUL text NUL` per id, in id order.
+  - CRC (0x00) = CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection) over `[X, S)`;
+    `S` (0x11) = file size.
+  This settles open points 4 (CRC) and 5 (node `+3`) for the writer.
+- **Unedited tables write back the loaded bytes**, so a layout the compiler did not produce still
+  round-trips; after an edit the table is re-laid out as above.
+- **Ids.** Strings are addressed by id = position. `set` on an existing key keeps its id; a new key is
+  appended (`add` appends even a duplicate). `remove` shifts later ids down (no gaps), which invalidates
+  compiled excel tables that store string ids. `TblDoc::parse` refuses tables whose active ids are not
+  exactly `0..n` (none in the corpus).
+- **Encoding.** Latin-1, one char per byte (as the reader). Chars above U+00FF, NUL, empty keys and
+  texts of 65535+ bytes are rejected.
+- **Lookup.** The test suite emulates the game (hash, then up to `P` slots, empty slots do not end the
+  walk) and finds every key after edits, including heavily colliding and fully packed tables.
