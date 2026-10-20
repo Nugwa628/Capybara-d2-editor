@@ -7,7 +7,8 @@ use bevy::prelude::*;
 use bevy::render::render_resource::BlendState;
 use bevy::window::{PrimaryWindow, WindowResolution};
 use bevy_egui::{
-    EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext,
+    EguiContexts, EguiGlobalSettings, EguiInput, EguiPlugin, EguiPreUpdateSet,
+    EguiPrimaryContextPass, PrimaryEguiContext,
 };
 use d2_assets::Profile;
 
@@ -80,7 +81,7 @@ pub fn prepare(paths: Paths) -> Prepared {
         }
     };
 
-    let (dock, dock_problems) = Dock::load(&paths.layout_file, &paths.sprites_layout_file);
+    let (dock, dock_problems) = Dock::load(&paths.sprites_layout_file);
     let mut state = AppState::new(paths.clone(), config, profiles);
     state.info(format!("Data folder: {}", paths.root.display()));
     for (is_error, text) in notes {
@@ -145,10 +146,17 @@ pub fn run(startup: Prepared) -> AppExit {
         Splash::new(state.config.show_loading_screen && !hooks.automated() && !script.active());
     let window = Window {
         title: crate::PRODUCT.into(),
-        resolution: WindowResolution::new(
-            state.config.window.width as u32,
-            state.config.window.height as u32,
-        ),
+        resolution: match hooks.scale_factor {
+            Some(f) => WindowResolution::new(
+                state.config.window.width as u32,
+                state.config.window.height as u32,
+            )
+            .with_scale_factor_override(f),
+            None => WindowResolution::new(
+                state.config.window.width as u32,
+                state.config.window.height as u32,
+            ),
+        },
         ..default()
     };
     App::new()
@@ -182,6 +190,12 @@ pub fn run(startup: Prepared) -> AppExit {
                 persist,
             )
                 .chain(),
+        )
+        .add_systems(
+            PreUpdate,
+            inject_input
+                .after(EguiPreUpdateSet::ProcessInput)
+                .before(EguiPreUpdateSet::BeginPass),
         )
         .add_systems(EguiPrimaryContextPass, ui_system)
         .add_systems(
@@ -251,6 +265,23 @@ fn begin_startup_profile(
     }
     if let Some(id) = id {
         state.open_profile_by_id(&id);
+    }
+}
+
+/// Feeds the input events scripts queued (`click`, `press`) to egui, one
+/// batch per frame, as if they came from the mouse and keyboard.
+fn inject_input(
+    mut state: ResMut<AppState>,
+    mut inputs: Query<&mut EguiInput, With<PrimaryEguiContext>>,
+) {
+    if state.shell.inject.is_empty() {
+        return;
+    }
+    let Ok(mut input) = inputs.single_mut() else {
+        return;
+    };
+    if let Some(batch) = state.shell.inject.pop_front() {
+        input.0.events.extend(batch);
     }
 }
 
@@ -333,9 +364,8 @@ fn write_out(state: &mut AppState, dock: &mut Dock) {
             }
         }
     }
-    let layout_file = state.paths.layout_file.clone();
     let sprites_file = state.paths.sprites_layout_file.clone();
-    if let Err(e) = dock.save_if_changed(&layout_file, &sprites_file) {
+    if let Err(e) = dock.save_if_changed(&sprites_file) {
         state.warn(format!("Could not save the panel layout: {e}"));
     }
 }

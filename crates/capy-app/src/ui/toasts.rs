@@ -33,7 +33,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
                     .show(ui, |ui| {
                         ui.set_max_width(420.0);
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new(&toast.text).color(Color32::WHITE));
+                            ui.label(RichText::new(&toast.text).color(state.shell.shades.text));
                             if ui.small_button("x").on_hover_text("Dismiss").clicked() {
                                 dismiss = Some(i);
                             }

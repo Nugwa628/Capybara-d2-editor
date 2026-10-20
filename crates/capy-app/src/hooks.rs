@@ -5,7 +5,7 @@
 //! * `CAPY_ZOOM=<divisor>`      zoom to 1:N (one of the zoom steps) after the fit
 //! * `CAPY_LVLTYPE=<id>` `CAPY_DEF=<def>`  use this LvlType (and LvlPrest Def)
 //!   for every map that is opened instead of the catalog's choice (not saved)
-//! * `CAPY_TAB=<panel title>`   bring that panel's tab to the front (e.g. `Properties`)
+//! * `CAPY_TAB=<panel title>`   show that panel (Tiles, Layers, Properties, History, Log, Objects, Sprite preview)
 //! * `CAPY_EXIT_WHEN_INDEXED=1` quit once the asset index is ready (timing runs)
 //! * `CAPY_NO_INDEX=1`          do not build the asset index
 //! * `CAPY_SCREENSHOT=<file>`   save a PNG of the window a moment after the map
@@ -15,6 +15,7 @@
 //!   16, default 1), into an off-screen image of the size the reference
 //!   renderer would produce, and save that. This is what the GPU-vs-CPU
 //!   parity test compares.
+//! * `CAPY_SCALE_FACTOR=<f>`    UI scale instead of the monitor's (screenshots)
 
 use std::path::PathBuf;
 
@@ -27,7 +28,6 @@ use crate::doc::RenderState;
 use crate::iso::ZOOM_STEPS;
 use crate::render::{MapRender, map_camera_extras};
 use crate::state::AppState;
-use crate::ui::{Dock, Panel};
 
 /// Frames to let the freshly built meshes and UI settle before the shot.
 const SETTLE_FRAMES: u32 = 30;
@@ -62,6 +62,9 @@ pub struct DebugHooks {
     pub map_only: bool,
     pub forced_context: Option<(u32, Option<u32>)>,
     pub no_index: bool,
+    /// `CAPY_SCALE_FACTOR`: the window's UI scale instead of the monitor's
+    /// (1 gives a 1600x900 shot of a 1600x900 window on a 150% display).
+    pub scale_factor: Option<f32>,
     tab: Option<String>,
     exit_when_indexed: bool,
     frames_since_map: u32,
@@ -87,6 +90,9 @@ impl DebugHooks {
             tab: var("CAPY_TAB"),
             exit_when_indexed: var("CAPY_EXIT_WHEN_INDEXED").is_some_and(|v| v != "0"),
             no_index: var("CAPY_NO_INDEX").is_some_and(|v| v != "0"),
+            scale_factor: var("CAPY_SCALE_FACTOR")
+                .and_then(|v| v.parse::<f32>().ok())
+                .filter(|f| f.is_finite() && *f > 0.0),
             ..DebugHooks::default()
         }
     }
@@ -113,7 +119,6 @@ pub fn run_hooks(
     mut state: ResMut<AppState>,
     render: Res<MapRender>,
     mut images: ResMut<Assets<Image>>,
-    mut dock: ResMut<Dock>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if hooks.exit_when_indexed
@@ -126,24 +131,10 @@ pub fn run_hooks(
     {
         exit.write(AppExit::Success);
     }
-    if let Some(title) = hooks.tab.take() {
-        let panel = [
-            Panel::Map,
-            Panel::Maps,
-            Panel::Tiles,
-            Panel::Layers,
-            Panel::Properties,
-            Panel::Log,
-            Panel::SpritePreview,
-        ]
-        .into_iter()
-        .find(|p| p.title().eq_ignore_ascii_case(&title));
-        match panel.and_then(|p| dock.map.find_tab(&p)) {
-            Some(location) => {
-                let _ = dock.map.set_active_tab(location);
-            }
-            None => state.warn(format!("CAPY_TAB={title:?} is not a panel")),
-        }
+    if let Some(title) = hooks.tab.take()
+        && !crate::ui::shell::focus_panel(&mut state, &title)
+    {
+        state.warn(format!("CAPY_TAB={title:?} is not a panel"));
     }
     if state.session.is_some()
         && let Some(path) = hooks.open_map.take()

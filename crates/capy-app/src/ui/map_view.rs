@@ -5,8 +5,8 @@
 use bevy_egui::egui::{self, Color32, Key, PointerButton, Pos2, Sense, Stroke, Ui, Vec2};
 
 use super::map_tools::{self, ViewFrame};
-use super::toolbar;
-use crate::iso::{self, View, ZOOM_STEPS};
+use super::{minimap, ribbon};
+use crate::iso::{self, View};
 use crate::state::AppState;
 
 /// Arrow-key pan speed in screen pixels per second.
@@ -15,9 +15,6 @@ const KEY_PAN_SPEED: f32 = 900.0;
 const NOTCH: f32 = 40.0;
 
 pub fn show(ui: &mut Ui, state: &mut AppState) {
-    tab_strip(ui, state);
-    toolbar::show(ui, state);
-
     let size = ui.available_size().max(Vec2::splat(1.0));
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     state.map_rect = Some(rect);
@@ -29,12 +26,16 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         ui.painter_at(rect).text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "Pick a map in the Maps panel",
+            "Pick a map in the list on the left",
             egui::FontId::proportional(18.0),
-            Color32::from_gray(150),
+            state.shell.shades.muted,
         );
         return;
     }
+    // The minimap takes the pointer over its corner.
+    let minimap_rect = state.config.ui.minimap.then(|| minimap::rect_in(rect));
+    let over_minimap =
+        minimap_rect.is_some_and(|m| response.hover_pos().is_some_and(|p| m.contains(p)));
 
     let viewport_px = [
         f64::from(rect.width() * ppp),
@@ -55,7 +56,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     }
 
     // Input.
-    let hover_pos = response.hover_pos();
+    let hover_pos = response.hover_pos().filter(|_| !over_minimap);
     let typing = ui.ctx().text_edit_focused();
     let (scroll, space, dt) = ui.input(|i| {
         (
@@ -142,12 +143,15 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         view: doc.view,
     });
     if let Some(frame) = frame {
-        map_tools::handle_input(ui, state, &frame, &response, panning);
+        if !over_minimap || state.edit.gesture.is_some() {
+            map_tools::handle_input(ui, state, &frame, &response, panning);
+        }
         map_tools::paint_overlays(ui, state, &frame);
-        if response.hovered() && !space && !panning {
+        if response.hovered() && !space && !panning && !over_minimap {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
     }
+    response.context_menu(|ui| ribbon::map_context_menu(ui, state));
 
     // Overlay: hovered cell outline and zoom label.
     if let Some(doc) = state.active_doc() {
@@ -178,20 +182,16 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 Color32::from_rgb(140, 200, 255),
             );
         }
-        let z = ZOOM_STEPS[doc.view.zoom.min(ZOOM_STEPS.len() - 1)];
-        painter.text(
-            rect.left_bottom() + Vec2::new(8.0, -6.0),
-            egui::Align2::LEFT_BOTTOM,
-            format!("1:{z}"),
-            egui::FontId::monospace(13.0),
-            Color32::from_gray(210),
-        );
+    }
+    if minimap_rect.is_some() {
+        minimap::show(ui, state, rect);
     }
 }
 
-/// Open maps as tabs: click to switch, x to close.
-fn tab_strip(ui: &mut Ui, state: &mut AppState) {
-    if state.docs.is_empty() {
+/// Open maps as tabs: click to switch, x to close. Shown only while more
+/// than one map is open (the top bar names a single map; Map > Close map).
+pub fn tab_strip(ui: &mut Ui, state: &mut AppState) {
+    if state.docs.len() < 2 {
         return;
     }
     let mut activate = None;

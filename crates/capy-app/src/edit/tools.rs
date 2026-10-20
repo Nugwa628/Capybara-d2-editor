@@ -24,17 +24,6 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub const ALL: [Tool; 8] = [
-        Tool::SelectBox,
-        Tool::Lasso,
-        Tool::SelectById,
-        Tool::SelectIdentical,
-        Tool::Paint,
-        Tool::Erase,
-        Tool::Eyedropper,
-        Tool::Objects,
-    ];
-
     pub fn label(self) -> &'static str {
         match self {
             Tool::SelectBox => "Select box",
@@ -46,40 +35,6 @@ impl Tool {
             Tool::Eyedropper => "Eyedropper",
             Tool::Objects => "Objects",
         }
-    }
-
-    /// Short text for the toolbar button (the default font has no icons).
-    pub fn glyph(self) -> &'static str {
-        match self {
-            Tool::SelectBox => "Box",
-            Tool::Lasso => "Lasso",
-            Tool::SelectById => "Tile ID",
-            Tool::SelectIdentical => "Identical",
-            Tool::Paint => "Paint",
-            Tool::Erase => "Erase",
-            Tool::Eyedropper => "Pick",
-            Tool::Objects => "Objects",
-        }
-    }
-
-    /// The single letter that picks the tool.
-    pub fn shortcut(self) -> char {
-        match self {
-            Tool::SelectBox => 'M',
-            Tool::Lasso => 'L',
-            Tool::SelectById => 'T',
-            Tool::SelectIdentical => 'S',
-            Tool::Paint => 'P',
-            Tool::Erase => 'E',
-            Tool::Eyedropper => 'I',
-            Tool::Objects => 'O',
-        }
-    }
-
-    #[cfg(test)]
-    pub fn from_shortcut(c: char) -> Option<Tool> {
-        let c = c.to_ascii_uppercase();
-        Tool::ALL.into_iter().find(|t| t.shortcut() == c)
     }
 
     /// Tools that change the selection.
@@ -446,17 +401,8 @@ mod tests {
     }
 
     #[test]
-    fn shortcuts_are_unique_and_round_trip() {
-        let mut seen = std::collections::HashSet::new();
-        for t in Tool::ALL {
-            assert!(seen.insert(t.shortcut()), "{t:?} reuses a letter");
-            assert_eq!(Tool::from_shortcut(t.shortcut()), Some(t));
-            assert_eq!(
-                Tool::from_shortcut(t.shortcut().to_ascii_lowercase()),
-                Some(t)
-            );
-        }
-        assert_eq!(Tool::from_shortcut('z'), None);
+    fn tool_kinds() {
+        // Keys live in the command registry (`ui::commands`) now.
         assert!(Tool::SelectBox.selects() && !Tool::Paint.selects());
         assert!(Tool::Erase.brushes() && !Tool::Eyedropper.brushes());
     }

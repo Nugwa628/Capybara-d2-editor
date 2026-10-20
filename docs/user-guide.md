@@ -41,8 +41,7 @@ game install.
 ```
 CapybarasD2Editor.exe
 capybara\
-  config.toml          settings, recent maps, your tile-set overrides
-  layout.json          panel layout of the Map Editor
+  config.toml          settings, recent maps, tile-set overrides, theme, shortcuts
   layout-sprites.json  panel layout of Sprites mode
   profiles\<id>.toml   one game profile per file
   saves\<profile>\     your edited files, at their game paths, plus CHANGED.txt
@@ -69,7 +68,7 @@ start-up (for example **Add game install**) closes it first, so nothing hides
 behind it. Without game files it shows the capybara and the name on a dark
 background.
 
-Turn it off in **File > Settings... > Start-up > Show loading screen**.
+Turn it off in **Home > Preferences... > Start-up > Show loading screen**.
 
 ### Game profiles
 
@@ -92,7 +91,7 @@ The registry is only read, never written. It is checked under
 It only does this when `config.toml` doesn't exist yet or `capybara\profiles\`
 holds no `.toml` files. It never overwrites a profile file.
 
-If your game lives somewhere else, use **File > Add game install...** (see
+If your game lives somewhere else, use **Home > Add game...** (see
 below), write the profile yourself, or copy a generated one and change the
 paths. Profile files you write by hand are read when the editor starts, so
 restart it after adding or editing one.
@@ -104,7 +103,7 @@ of id.
 
 #### Add game install
 
-**File > Add game install...** (also in **File > Settings...**) makes a
+**Home > Add game...** (also in **Home > Preferences...**) makes a
 profile for an install folder:
 
 1. Click **Choose folder...**, type the folder, or click **Use** next to an
@@ -213,48 +212,83 @@ maps green and marks them `saves`.
 
 ## The window
 
-<!-- screenshot: the whole window, with the mode tabs, menu bar, dock panels and status bar labelled -->
+The Map Editor's layout follows DS1 Studio's: a ribbon on top, the map list
+on the left, the map in the centre, the Tiles column on the right and a
+status bar at the bottom.
 
-From top to bottom:
+1. **Top bar**: the app name, the ribbon tabs **Home**, **View**, **Map** and
+   **Help**, the **Commands** box (Ctrl+K), the open map's name (`*` when it
+   has unsaved changes) and game path, and the **Sprites** button, which
+   switches to Sprites mode (Sprites mode keeps its own dock layout and a
+   **Map Editor** tab to come back).
+2. **Ribbon.** Groups of buttons under the tabs; a button is greyed out when
+   it cannot be used right now, and its tooltip shows its key.
+   - **Home**: File (Save, Recent, Profile, Import, Preferences, Saves,
+     Add game), Edit (Paste, Cut, Copy, Delete, Undo, Redo, Flags, Move to
+     layer), Tools (Select, **Select ▾** with Lasso, Select by tile ID,
+     Select identical and the selection scope, Paint, Erase, Pick),
+     Paint / erase (brush size and the value Paint writes) and the
+     **Active layer**.
+   - **View**: Fit, 100%, zoom in and out, Just the map, the Tiles and
+     Objects modes, Show (Grid, Minimap, Sprites, Animate, Markers), the
+     floating panels and the **Theme** menu.
+   - **Map**: Resize, Map info, Close map, add floor / wall / tag layers.
+   - **Help**: Find a command, Shortcuts, About.
+3. **Map list** (left, 260 px): every map in the profile grouped by folder
+   (`act1/town`) with counts and a filter box.
+4. **Centre**: the **Show** bar of layer chips over the map, a tab strip
+   when more than one map is open, the map, and the **minimap** in the
+   bottom-left corner (click or drag it to move the view; **K** hides it).
+   Right-click the map for Cut, Copy, Paste, Delete, Select all, Deselect,
+   Move to layer, flags and Fit.
+5. **Right column** (320 px): the **Tiles** browser (Presets come in a later
+   version), and below it the collapsible **Cell** (the hovered cell's
+   layers), **History**, **Tags & groups**, **Layers** and **Map** (map
+   facts, tile set override, rendering status) sections. While the Objects
+   tool is active the column shows the **Objects** panel instead of Tiles.
+6. **Status bar** (26 px): what the current tool does on the left; on the
+   right background work (catalog, asset index with **Cancel**, last
+   autosave), the selection count, tool and active layer, hovered cell,
+   zoom in percent, and map size, DS1 version and act.
 
-1. **Mode tabs**: **Map Editor** and **Sprites**. Each mode has its own
-   panels and its own saved layout. Sprites mode works without a map open.
-2. **Menu bar**: **File**, **Edit** and **View** menus, and the **Profile**
-   box.
-3. **Dock panels.** Drag a panel's tab to move it, or drop it on an edge to
-   split the area. The layout is saved automatically.
-   **View > Reset panel layout** restores the default for the current mode.
-4. **Status bar**:
-   - the open profile and how many maps it has;
-   - a spinner while the map catalog builds;
-   - asset index progress, with a **Cancel** button;
-   - on the right, the time of the last autosave (`autosaved 14:32`), the
-     hovered cell and the zoom (`1:4`).
+Drag the edge of a side column to resize it; the arrow buttons fold it to a
+30 px strip and back. **Shift+F** (View > Just the map) folds both. Column
+widths, folded columns, open sections, the ribbon tab and the theme are
+saved in `config.toml`.
 
-Map Editor panels (default layout):
+The **Log**, **Objects** and **Sprite preview** panels are floating windows,
+opened from **View > Panels**.
 
-| Panel | Where | What it does |
-|---|---|---|
-| Maps | left | Every map in the profile, with a filter. |
-| Tiles | left, second tab | The asset browser: search every tile (and sprite) of the profile, Recent tiles, Favorites and saved searches. See [The Tiles browser](#the-tiles-browser-and-ctrlk-search). |
-| Map | centre | Open maps as tabs, the tool strip, and the map itself. |
-| Layers | right | Choose the active layer, toggle visibility, layer actions. |
-| Objects | right, second tab | The selected object's properties and NPC path, and the **Add object** picker. See [Objects and NPC paths](#objects-and-npc-paths). |
-| Properties | right, third tab | Facts about the map, its tile set (with override), rendering status, hovered cell. |
-| History | right, fourth tab | The map's snapshots, checkpoints, the diff against a snapshot, restore, milestones. **View > History** shows or hides it. |
-| Log | bottom | Everything the editor reports. |
-| Sprite preview | optional | The selected object's animation. Turn it on with **View > Sprite preview**. |
+### Show bar and layers
 
-Only the Sprite preview, History and Objects panels can be closed. The others
-can be moved but not closed. A layout saved by an older version may lack the
-History or Objects tab: **View > History** and **View > Objects panel** add
-them, and picking the Objects tool (**O**) brings the Objects panel up too.
+Click a chip to show or hide that layer, **Shift+click** to show only that
+layer (Shift+click it again to put everything back). The keys **1**-**0**
+toggle Floor 1, Floor 2, Wall 1-4, Shadows, Roofs, (Lower walls, later) and
+Special tiles; **Shift+1**-**Shift+0** show only that layer; **Backspace**
+shows every layer. **Ctrl+1**-**Ctrl+7** pick the active layer.
+
+### Themes
+
+Nine built-in themes (DS1 Studio, the default, Sanctuary, Midnight,
+Graphite, Nord, Ember, Verdant, Parchment, Snow) are in **View > Theme** and
+**Preferences**. In Preferences, paste a share code (`ffthemes:...`, as made
+by DS1 Studio or PD2 Filter Forge) and press **Add** to add a custom theme;
+**Copy this theme's share code** copies the current one. Right-click a custom
+theme to delete it. The UI uses Segoe UI when Windows has it.
+
+### The command finder (Ctrl+K)
+
+**Ctrl+K** (or the **Commands** box) lists every command; type part of its
+name, Up/Down to pick, Enter to run, Esc to close. Commands that cannot run
+right now are greyed out. The last row, **Search every asset**, opens the
+asset search with what you typed (see [Ctrl+K](#ctrlk)); the same query
+language works in the Tiles column's search box.
 
 ### The Log and notifications
 
-The **Log** panel lists every info line, warning and error, newest at the
-bottom. **Clear** empties it. Sprites mode has its own Log tab showing the
-same entries.
+The **Log** window (View > Panels > Log) lists every info line, warning and
+error, newest at the bottom. **Clear** empties it. Sprites mode has its own
+Log tab showing the same entries.
 
 Errors and some confirmations also pop up as notifications in the
 bottom-right corner. They disappear after about 7 seconds, or click **x**.
@@ -281,7 +315,7 @@ Type in **Filter** to keep only paths containing that text. The filter
 ignores case, and backslashes work, for example `act1\town`.
 
 Click a row to open the map as a tab in the Map panel. Clicking a map that is
-already open switches to its tab. **File > Open recent** lists the last 20
+already open switches to its tab. **Home > Recent** lists the last 20
 maps you opened in the current profile.
 
 ### How the tile set and palette are chosen
@@ -336,7 +370,7 @@ DS1Edit keeps LvlType/Def choices in `assets\*.ini` files, one
 `<LvlTypesId> <LvlPrestDef> <path>` per line, for example
 `1 2 assets/tiles/ACT1/TOWN/townE1.ds1`. To bring them over:
 
-1. **File > Import DS1Edit ini mappings...** and pick one or more `.ini`
+1. **Home > Import > DS1Edit ini mappings...** and pick one or more `.ini`
    files (Ctrl or Shift selects several).
 2. Every line that names a map of the open profile becomes an override, as
    if you had chosen that LvlType and Def in **Properties > Map context**.
@@ -367,8 +401,8 @@ them.
 | Zoom in or out at the cursor | Mouse wheel. Steps are 1:1, 1:2, 1:3, 1:4, 1:6, 1:8, 1:12 and 1:16, the same as DS1Edit. |
 | Pan | Middle-drag, or hold **Space** and drag with the left button. |
 | Pan with the keyboard | Arrow keys. |
-| Fit the map to the panel | **View > Fit map to window**. |
-| Cell grid | **G**, or **View > Cell grid**. The grid hides when cells are too small to see. |
+| Fit the map to the panel | **View > Fit** (**F**). |
+| Cell grid | **G**, or **View > Grid**. The grid hides when cells are too small to see. |
 
 The zoom is shown in the panel's bottom-left corner and in the status bar.
 The status bar also shows the cell under the cursor, and **Properties >
@@ -401,20 +435,20 @@ order: their shadows, objects that stand behind walls, then each object
 between the walls of its tile, as DS1Edit draws them. Transparent, additive
 (flames, glows) and other blended layers look as they do in DS1Edit.
 
-- **Animation.** **View > Animate objects** plays every object and NPC at its
+- **Animation.** **View > Animate** (**Shift+N**) plays every object and NPC at its
   own game speed (on by default; the choice is saved). Turn it off to see
   the first frame of each animation, which is also what saved screenshots
   and DS1Edit's headless renders show.
 - **Markers.** With the Objects tool (**O**) every object also gets an orange
   diamond marker on its sub-tile, a handle you can click even when the
-  sprite is small or hidden behind a wall. **View > Object markers** shows
+  sprite is small or hidden behind a wall. **View > Markers** (**M**) shows
   them all the time. Objects that draw nothing (no sprite in this profile,
   or an id the game tables don't know) always get a **purple** marker.
 - The object tables load in the background when a profile opens. Until
   they are ready, objects show as markers only.
 
 To look at one object closely, select it with the Objects tool and turn on
-**View > Sprite preview**: it shows the object's name, type, id, token, mode
+**View > Panels > Sprite preview**: it shows the object's name, type, id, token, mode
 and class, lets you pick a direction, play or pause, and **Open in Sprites
 mode** to inspect its COF. Editing objects is described in
 [Objects and NPC paths](#objects-and-npc-paths).
@@ -474,14 +508,14 @@ layers it looks at:
 - **All visible layers**: every layer whose checkbox is on in the Layers
   panel.
 
-Which one the editor starts with is set in **File > Settings...**.
+Which one the editor starts with is set in **Home > Preferences...**.
 
 Select by tile ID and Select identical read the clicked cell from the active
 layer if it has a tile there. Otherwise they use the topmost layer in scope
 that has one. Clicking an empty cell clears the selection (unless you hold a
 modifier).
 
-**Edit > Select all on the active layer** (**Ctrl+A**) selects every non-empty
+Right-click the map > **Select all on the active layer** (**Ctrl+A**) selects every non-empty
 cell of the active layer. **Ctrl+D** deselects.
 
 #### Paint, erase and the eyedropper
@@ -544,7 +578,7 @@ The mode you pick is remembered for the next paste. To finish:
 Use this to move tiles between layers, for example Wall 1 to Wall 3:
 
 1. Select the cells.
-2. Choose **Edit > Move selection to layer...**.
+2. Choose **Home > Move to layer...**.
 3. Pick **From** (a layer that has selected cells) and **To**. Target layers
    the map doesn't have yet are marked **(new)** and are added
    automatically.
@@ -585,12 +619,12 @@ way DS1Edit does.
 
 ### Cell flags
 
-With cells selected, **Edit > Selection flags** sets or clears the **hidden**
+With cells selected, **Home > Flags** sets or clears the **hidden**
 and **unwalkable** bits of every selected cell.
 
 ### Resizing the map
 
-**Edit > Resize map...** sets a new width and height (1 to 1024 cells). The
+**Map > Resize...** sets a new width and height (1 to 1024 cells). The
 top-left corner stays in place. Shrinking cuts off cells beyond the new edge;
 **Ctrl+Z** brings them back. Objects outside the new size are kept as they
 are.
@@ -692,7 +726,7 @@ the mark.
 
 ### Closing maps and quitting
 
-Close a tab with its **x**, by middle-clicking it, or with **File > Close
+Close a tab with its **x**, by middle-clicking it, or with **Map > Close
 map**. If the map has unsaved changes the editor asks: **Save**, **Discard**
 or **Cancel**. Quitting asks the same for every unsaved map, and asks about
 unsaved sprite edits first.
@@ -703,7 +737,7 @@ unsaved sprite edits first.
 
 ### Where files go
 
-**Ctrl+S** (or **File > Save**) writes the active map to:
+**Ctrl+S** (or **Home > Save**) writes the active map to:
 
 ```
 capybara\saves\<profile>\<game path>
@@ -732,14 +766,14 @@ and save** to upgrade and save in one step.
 ### CHANGED.txt
 
 `CHANGED.txt` lists, one per line, the game paths you have saved since you
-last marked them as packed. **File > CHANGED.txt: N file(s)** shows how many.
+last marked them as packed. **Home > Saves** shows how many.
 Sprites saved with "Save to game path" are listed here too.
 
 ### Packing by hand
 
 The editor never writes MPQ archives. Packing is up to you:
 
-1. Choose **File > Open saves folder**. Explorer opens
+1. Choose **Home > Saves > Open saves folder**. Explorer opens
    `capybara\saves\<profile>\`.
 2. Open your mod's MPQ in an MPQ editor.
 3. Drag the `data` folder from Explorer into the MPQ editor. The paths inside
@@ -749,7 +783,7 @@ The editor never writes MPQ archives. Packing is up to you:
 
 ### Mark as packed
 
-After packing, choose **File > Mark as packed (N)** and confirm. This empties
+After packing, choose **Home > Saves > Mark as packed (N)** and confirm. This empties
 `CHANGED.txt`. Your saved files stay where they are, and they still override
 the archives in the editor.
 
@@ -781,7 +815,7 @@ and restores never touch them, so nothing new needs packing until you save.
 
 ### Autosave
 
-Every few minutes (5 by default; set it in **File > Settings...**, 0 turns it
+Every few minutes (5 by default; set it in **Home > Preferences...**, 0 turns it
 off), each open map with **unsaved changes** is recorded as an Autosave
 snapshot. Maps without unsaved changes are skipped, and so is a map that has
 not changed since its last autosave. The writing happens in the background,
@@ -842,7 +876,7 @@ you are happy with it.
 
 The newest saves, autosaves and before-restore snapshots of each map are kept
 (100 by default). You can also drop those older than a number of days.
-Checkpoints are never removed. Set both in **File > Settings...**; the policy
+Checkpoints are never removed. Set both in **Home > Preferences...**; the policy
 is applied whenever a profile opens, and **Prune now** applies it at once and
 reports how much was freed.
 
@@ -865,7 +899,7 @@ example to see what changed between two milestones.
 
 <!-- screenshot: the Settings window -->
 
-**File > Settings...** holds:
+**Home > Preferences...** holds:
 
 | Section | Setting |
 |---|---|
@@ -1524,13 +1558,13 @@ for that map in this profile.
 
 ### Where is the Log?
 
-In the Map Editor it is the bottom panel. In Sprites mode it is the **Log**
+In the Map Editor it is a floating window: **View > Panels > Log**. In Sprites mode it is the **Log**
 tab at the bottom. If you moved it and lost it, use **View > Reset panel
 layout**.
 
 ### Other problems
 
-- **The panel layout is broken**: **View > Reset panel layout**.
+- **The Sprites panel layout is broken**: **View > Reset panel layout** (Sprites mode).
 - **config.toml was unreadable**: the editor renames it to
   `config.toml.bad`, starts with default settings, and says so in the Log.
 - **The asset index failed**: the status bar says so; hover it or read the
@@ -1547,6 +1581,13 @@ dialog is open.
 
 ### Map Editor
 
+The Map Editor uses DS1 Studio's default keys. **Help > Shortcuts** lists
+every command: click a key and press the new one to change it (a key taken
+from another command moves), **Clear** removes it and **Reset all** restores
+the defaults. Changes are saved in `config.toml` (`[ui.keys]`). Keys of
+commands that come in a later version (rectangle, fill, replace, view modes)
+are listed greyed out and already reserved.
+
 | Keys | Action |
 |---|---|
 | Ctrl+S | Save the active map |
@@ -1560,16 +1601,30 @@ dialog is open.
 | Ctrl+D | Deselect (cells and objects) |
 | Delete | Path mode: delete the selected path point; else delete the selected objects, else empty the selected cells |
 | Esc | Cancel the paste preview, else the drag in progress, else close the Move/Resize window, else deselect |
-| M | Select box |
-| L | Lasso |
+| V | Select (box) |
+| Q | Lasso |
 | T | Select by tile ID |
 | S | Select identical |
-| P | Paint |
+| B | Paint |
 | E | Erase |
-| I | Eyedropper |
-| O | Objects |
+| I | Pick (eyedropper) |
+| O, F2 | Objects tool |
+| Shift+O | Switch between the Objects tool and the previous tool |
+| F1 | Leave the Objects tool (Tiles mode) |
+| F | Fit the map |
+| Home | Zoom to 100% |
+| = and - | Zoom in / out a step |
 | G | Cell grid on/off |
-| Ctrl+K | Search every asset (see [Ctrl+K](#ctrlk)) |
+| M | Object markers on/off |
+| N | Object sprites on/off |
+| Shift+N | Animate objects on/off |
+| K | Minimap on/off |
+| Shift+F | Just the map (fold both side columns, or bring them back) |
+| 1-8, 0 | Show/hide Floor 1, Floor 2, Wall 1-4, Shadows, Roofs, Special tiles |
+| Shift+1-8, Shift+0 | Show only that layer (again: back as it was) |
+| Backspace | Show every layer |
+| Ctrl+1-7 | Work on Floor 1, Floor 2, Wall 1-4, Shadows |
+| Ctrl+K | Find a command (the last row searches every asset) |
 | Mouse wheel | Zoom at the cursor |
 | Middle-drag, Space + drag | Pan |
 | Arrow keys | Pan |
@@ -1647,20 +1702,20 @@ settings change.
 
 | Key | Meaning |
 |---|---|
-| `gamma` | Gamma of the map view and the object preview (default 1.30, DS1Edit's default). Also in **File > Settings...**. |
+| `gamma` | Gamma of the map view and the object preview (default 1.30, DS1Edit's default). Also in **Home > Preferences...**. |
 | `autosave_minutes` | Minutes between autosaves of maps with unsaved changes (default 5); `0` turns autosave off. |
 | `keep_last` | History retention: newest saves/autosaves/before-restore snapshots kept per map (default 100, at least 1). |
 | `max_age_days` | History retention: also drop those older than this many days; `0` (the default) means no age limit. |
 | `select_scope` | `"active"` or `"visible"`: the layers selection tools start on. |
 | `browser_thumb` | Thumbnail size of the Tiles browser in points. |
-| `animate_objects` | **View > Animate objects** (default `true`). |
-| `object_markers` | **View > Object markers** (default `false`). |
+| `animate_objects` | **View > Animate** (**Shift+N**) (default `true`). |
+| `object_markers` | **View > Markers** (**M**) (default `false`). |
 | `show_loading_screen` | **Settings > Show loading screen** (default `true`). |
 | `[layer_visibility]` | `floor`, `wall`, `shadow`, `tag`, `objects`: which layer kinds start visible when a map opens. `tag` is `false` by default. |
 | `last_profile` | The profile opened at start-up. |
 | `mode` | `"map"` or `"sprites"`: the mode shown at start-up. |
 | `[window]` | `width` and `height` of the window. |
-| `[[recent_maps]]` | The File > Open recent list. |
+| `[[recent_maps]]` | The Home > Recent list. |
 | `[[overrides]]` | Your LvlType/Def choices, per profile and map, including the ones imported from DS1Edit `.ini` files. |
 | `[[palette_presets]]` | Named **Convert to palette** presets: `name` and `[palette_presets.settings]` (`distance`, `allowed`, `keep_exact`, `lightness_weight`, `brightness`, `contrast`, `saturation`, `hue`, `overrides` as `[source, target]` pairs). |
 

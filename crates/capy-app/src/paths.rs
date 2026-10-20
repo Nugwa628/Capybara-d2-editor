@@ -49,8 +49,8 @@ fn err(path: &Path, action: &'static str, source: std::io::Error) -> PathsError 
 pub struct Paths {
     pub root: PathBuf,
     pub config_file: PathBuf,
-    pub layout_file: PathBuf,
-    /// Dock layout of the Sprites mode (the Map Editor's is `layout_file`).
+    /// Dock layout of the Sprites mode. The Map Editor has a fixed layout
+    /// (its sizes live in `config.toml`); an old `layout.json` is ignored.
     pub sprites_layout_file: PathBuf,
     pub profiles: PathBuf,
     pub saves: PathBuf,
@@ -76,7 +76,6 @@ impl Paths {
         let root = root.into();
         Paths {
             config_file: root.join("config.toml"),
-            layout_file: root.join("layout.json"),
             sprites_layout_file: root.join("layout-sprites.json"),
             profiles: root.join("profiles"),
             saves: root.join("saves"),

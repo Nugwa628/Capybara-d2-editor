@@ -67,6 +67,70 @@ pub enum AppMode {
     Sprites,
 }
 
+/// Column widths the Map Editor's side panels may take (points).
+pub const SIDE_WIDTH: std::ops::RangeInclusive<f32> = 180.0..=640.0;
+
+/// Which collapsible sections of the right column are open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Sections {
+    pub cell: bool,
+    pub history: bool,
+    pub tags: bool,
+    pub layers: bool,
+    /// Capybara's map properties (LvlType, Def, render status).
+    pub map: bool,
+}
+
+impl Default for Sections {
+    fn default() -> Self {
+        Sections {
+            cell: true,
+            history: false,
+            tags: false,
+            layers: false,
+            map: false,
+        }
+    }
+}
+
+/// The Map Editor's look and layout (`[ui]`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiConfig {
+    /// Theme id: a built-in one or one of `custom_themes`.
+    pub theme: String,
+    pub left_width: f32,
+    pub right_width: f32,
+    /// Folded to a 30 px strip.
+    pub left_folded: bool,
+    pub right_folded: bool,
+    /// The ribbon tab last used.
+    pub ribbon_tab: String,
+    pub minimap: bool,
+    pub sections: Sections,
+    /// Shortcuts changed from the defaults: command id -> key (`""` = none).
+    pub keys: std::collections::BTreeMap<String, String>,
+    pub custom_themes: Vec<crate::ui::theme::CustomTheme>,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        UiConfig {
+            theme: crate::ui::theme::DEFAULT_THEME.to_owned(),
+            left_width: 260.0,
+            right_width: 320.0,
+            left_folded: false,
+            right_folded: false,
+            ribbon_tab: "home".to_owned(),
+            minimap: true,
+            sections: Sections::default(),
+            keys: std::collections::BTreeMap::new(),
+            custom_themes: Vec::new(),
+        }
+    }
+}
+
 /// A user-picked LvlType/Def for one map, persisted per profile. This is what
 /// `MapCatalog::set_override` is fed with when a profile opens.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +180,8 @@ pub struct Config {
     pub mode: AppMode,
     pub window: WindowConfig,
     pub layer_visibility: LayerVisibility,
+    /// Theme, column sizes, sections and shortcuts of the Map Editor.
+    pub ui: UiConfig,
     pub recent_maps: Vec<RecentMap>,
     pub overrides: Vec<MapOverride>,
     /// Named "Convert to palette" settings.
@@ -138,6 +204,7 @@ impl Default for Config {
             mode: AppMode::default(),
             window: WindowConfig::default(),
             layer_visibility: LayerVisibility::default(),
+            ui: UiConfig::default(),
             recent_maps: Vec::new(),
             overrides: Vec::new(),
             palette_presets: Vec::new(),
@@ -181,6 +248,17 @@ impl Config {
         self.autosave_minutes = self.autosave_minutes.min(MAX_AUTOSAVE_MINUTES);
         if self.keep_last == 0 {
             self.keep_last = 1; // keep_last = 0 would drop every save snapshot
+        }
+        let defaults = UiConfig::default();
+        for (width, default) in [
+            (&mut self.ui.left_width, defaults.left_width),
+            (&mut self.ui.right_width, defaults.right_width),
+        ] {
+            *width = if width.is_finite() {
+                width.clamp(*SIDE_WIDTH.start(), *SIDE_WIDTH.end())
+            } else {
+                default
+            };
         }
     }
 
@@ -266,6 +344,19 @@ mod tests {
             height: 720.0,
         };
         c.layer_visibility.tag = true;
+        c.ui.theme = "nord".into();
+        c.ui.right_folded = true;
+        c.ui.keys.insert("tool.select".into(), "Ctrl+Q".into());
+        c.ui.keys.insert("tool.paint".into(), String::new());
+        c.ui.custom_themes.push(crate::ui::theme::CustomTheme {
+            id: "custom-1".into(),
+            name: "Mine".into(),
+            bg: "#000000".into(),
+            panel: "#111111".into(),
+            text: "#eeeeee".into(),
+            accent: "#ff8800".into(),
+            line: "#222222".into(),
+        });
         c.push_recent("mxl", r"data\global\tiles\a.ds1");
         c.push_recent("vanilla", r"data\global\tiles\b.ds1");
         c.save(&file).expect("save");
