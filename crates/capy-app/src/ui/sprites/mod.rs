@@ -21,6 +21,7 @@ mod browser;
 pub mod convert_palette;
 mod converter;
 mod editor;
+pub mod gif_dialog;
 pub mod preview;
 mod viewer;
 
@@ -366,6 +367,7 @@ pub fn shortcuts(ctx: &Context, state: &mut AppState) {
 
 pub fn dialogs(ctx: &Context, state: &mut AppState) {
     convert_palette::window(ctx, state);
+    gif_dialog::window(ctx, state);
     save_prompt(ctx, state);
     palette_warning(ctx, state);
     dcc_warning(ctx, state);

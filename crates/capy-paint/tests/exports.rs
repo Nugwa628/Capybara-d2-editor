@@ -5,7 +5,8 @@
 mod common;
 
 use capy_paint::{
-    PaintError, animated_gif, indexed_png, onion_composite, palette_act, palette_gpl, palette_jasc,
+    GifOptions, PaintError, animated_gif, animated_gif_with, delay_for_fps, indexed_png,
+    nearest_index, onion_composite, palette_act, palette_gpl, palette_jasc, rgba_to_indexed,
 };
 use common::*;
 use d2_formats::IndexedImage;
@@ -146,6 +147,66 @@ fn animated_gif_roundtrips_a_full_frame_and_rejects_nothing() {
         Err(PaintError::Encode(_))
     ));
     assert!(animated_gif(&[IndexedImage::new(0, 0, 0, 0)], &pal, 4).is_err());
+}
+
+#[test]
+fn gif_options_scale_loop_background_and_delay() {
+    let pal = test_palette();
+    let img = image(&["1.", ".2"]);
+    // Defaults equal the plain call.
+    assert_eq!(
+        animated_gif_with(std::slice::from_ref(&img), &pal, &GifOptions::new(5)).unwrap(),
+        animated_gif(std::slice::from_ref(&img), &pal, 5).unwrap()
+    );
+    let opts = GifOptions {
+        delay_cs: 9,
+        looping: false,
+        scale: 3,
+        background: Some([1, 2, 3]),
+    };
+    let bytes = animated_gif_with(&[img.clone(), img.clone()], &pal, &opts).unwrap();
+    let mut o = gif::DecodeOptions::new();
+    o.set_color_output(gif::ColorOutput::Indexed);
+    let dec = o.read_info(std::io::Cursor::new(&bytes)).unwrap();
+    assert_eq!(dec.repeat(), gif::Repeat::Finite(0), "no loop extension");
+    let (table, w, h, frames) = decode_gif(&bytes);
+    assert_eq!((w, h, frames.len()), (6, 6, 2));
+    assert_eq!(&table[..3], &[1, 2, 3], "colour 0 is the background");
+    assert_eq!(frames[0].transparent, None);
+    assert_eq!(frames[0].delay, 9);
+    // The transparent corner shows the background; scaled 3x nearest.
+    assert_eq!(frames[0].buffer[3], 0);
+    assert_eq!(frames[0].buffer[0], 1);
+    assert_eq!(frames[0].buffer[2 * 6 + 2], 1);
+    assert_eq!(frames[0].buffer[3 * 6 + 3], 2);
+    assert_eq!(frames[0].buffer[5 * 6 + 5], 2);
+    // Looping is the default.
+    let looped = animated_gif(&[img], &pal, 5).unwrap();
+    let mut o2 = gif::DecodeOptions::new();
+    o2.set_color_output(gif::ColorOutput::Indexed);
+    let dec = o2.read_info(std::io::Cursor::new(&looped)).unwrap();
+    assert_eq!(dec.repeat(), gif::Repeat::Infinite);
+}
+
+#[test]
+fn delay_and_rgba_helpers() {
+    assert_eq!(delay_for_fps(25.0), 4);
+    assert_eq!(delay_for_fps(12.5), 8);
+    assert_eq!(delay_for_fps(1000.0), 2);
+    assert_eq!(delay_for_fps(0.0), 1000);
+    let pal = test_palette();
+    // Exact colour, a near colour, and a transparent pixel.
+    let rgba = [
+        60, 10, 10, 255, //
+        61, 12, 9, 255, //
+        0, 0, 0, 0, //
+        10, 10, 228, 255,
+    ];
+    let img = rgba_to_indexed(2, 2, -1, -2, &rgba, &pal);
+    assert_eq!((img.offset_x, img.offset_y), (-1, -2));
+    assert_eq!(img.pixels, vec![1, 1, 0, 24]);
+    assert_eq!(img.alpha, vec![255, 255, 0, 255]);
+    assert_eq!(nearest_index(&pal, [0, 0, 0]), 1, "index 0 is never chosen");
 }
 
 #[test]

@@ -1706,6 +1706,7 @@ dependencies = [
  "d2-assets",
  "d2-formats",
  "egui_dock",
+ "gif",
  "image",
  "jiff",
  "rfd",

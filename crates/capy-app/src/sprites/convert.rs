@@ -432,23 +432,6 @@ pub fn export_sheet(sprite: &Sprite, palette: &Palette, file: &Path) -> ExportRe
     ))
 }
 
-pub fn export_gif(
-    frames: &[IndexedImage],
-    palette: &Palette,
-    fps: f32,
-    file: &Path,
-) -> ExportResult {
-    let file = with_extension(file, "gif");
-    let delay = (100.0 / fps.max(1.0)).round().clamp(2.0, 6000.0) as u16;
-    let gif = capy_paint::animated_gif(frames, palette, delay).map_err(|e| e.to_string())?;
-    write(&file, &gif)?;
-    Ok(format!(
-        "Exported {} frames to {}",
-        frames.len(),
-        file.display()
-    ))
-}
-
 pub fn export_indexed_png(img: &IndexedImage, palette: &Palette, file: &Path) -> ExportResult {
     let file = with_extension(file, "png");
     let png = capy_paint::indexed_png(img, palette).map_err(|e| e.to_string())?;
@@ -829,13 +812,6 @@ mod tests {
         export_sheet(&sprite, &pal, &tmp.path().join("sheet")).expect("sheet");
         assert!(tmp.path().join("sheet.png").is_file());
         assert!(tmp.path().join("sheet.json").is_file());
-        export_gif(
-            &sprite.directions[0],
-            &pal,
-            25.0,
-            &tmp.path().join("anim.gif"),
-        )
-        .expect("gif");
         export_indexed_png(&img, &pal, &tmp.path().join("one")).expect("png");
         for (f, n) in [
             (PaletteFormat::Gpl, "p.gpl"),

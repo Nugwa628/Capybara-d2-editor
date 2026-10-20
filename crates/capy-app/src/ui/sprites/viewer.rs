@@ -43,6 +43,7 @@ fn toolbar(ui: &mut Ui, state: &mut AppState) {
             ui.weak("DT1");
         }
         let can_edit = v.sprite().is_some();
+        let can_gif = can_edit || v.cof().is_some();
         let converted = matches!(
             v.source,
             Some(crate::sprites::SpriteSource::Converted { .. })
@@ -61,6 +62,15 @@ fn toolbar(ui: &mut Ui, state: &mut AppState) {
             .clicked()
         {
             state.begin_sprite_save(crate::sprites::Target::Viewer);
+        }
+        if ui
+            .add_enabled(can_gif, egui::Button::new("Export GIF..."))
+            .on_hover_text("Animated GIF: frame range, directions, speed, scale, background")
+            .on_disabled_hover_text("Open a DC6, DCC or COF")
+            .clicked()
+            && let Err(e) = state.open_gif_dialog(false)
+        {
+            state.error(e);
         }
         if ui
             .add_enabled(can_convert, egui::Button::new("Convert to palette..."))

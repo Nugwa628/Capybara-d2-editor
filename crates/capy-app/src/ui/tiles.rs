@@ -352,7 +352,11 @@ fn details(ui: &mut Ui, state: &mut AppState, asset: &AssetRow, alias: Option<&s
         };
         ui.label(used);
         if state.outside_tile_set(asset) {
-            ui.colored_label(WARN, "Not in this map's tile set: it would be missing here");
+            ui.colored_label(
+                WARN,
+                "Not in this map's tile set: its DT1 isn't loaded by the map's level type, \
+                 so it would be invisible in game. Right-click \u{2192} Add to this map.",
+            );
         }
     }
 }

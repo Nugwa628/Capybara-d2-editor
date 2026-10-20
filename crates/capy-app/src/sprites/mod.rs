@@ -9,6 +9,9 @@ pub mod convert_palette;
 pub mod dialog;
 pub mod dt1view;
 pub mod editor;
+pub mod gif_export;
+#[cfg(test)]
+mod gif_export_corpus;
 pub mod palette;
 pub mod palette_memory;
 pub mod preview;
@@ -269,6 +272,8 @@ pub struct SpritesState {
     pub open_cell_check: bool,
     /// An editor session waiting for "discard the unsaved one?".
     pub pending_editor: Option<Box<EditorState>>,
+    /// The Export GIF window.
+    pub gif: Option<gif_export::GifDialog>,
     pub quit_prompt: bool,
     pub quit_confirmed: bool,
     pub focus: Option<Focus>,
@@ -304,6 +309,7 @@ impl Default for SpritesState {
             dcc_warning: None,
             open_cell_check: false,
             pending_editor: None,
+            gif: None,
             quit_prompt: false,
             quit_confirmed: false,
             focus: None,
@@ -395,7 +401,6 @@ pub struct TargetData {
     pub source: Option<SpriteSource>,
     pub dir: usize,
     pub frame: usize,
-    pub fps: f32,
 }
 
 impl AppState {
@@ -710,7 +715,6 @@ impl AppState {
                     source: v.source.clone(),
                     dir: v.dir,
                     frame: v.frame,
-                    fps: v.fps,
                 })
             }
             Target::Editor => {
@@ -721,10 +725,80 @@ impl AppState {
                     source: Some(e.source.clone()),
                     dir: e.cur.dir,
                     frame: e.cur.frame,
-                    fps: self.sprites.viewer.fps,
                 })
             }
         }
+    }
+
+    /// Opens the Export GIF window on the Viewer's sprite or COF, or on a
+    /// copy of the Editor's sprite.
+    pub fn open_gif_dialog(&mut self, from_editor: bool) -> Result<(), String> {
+        let v = &self.sprites.viewer;
+        let (sprite, dir, frames, dirs, stem) = if from_editor {
+            let e = self
+                .sprites
+                .editor
+                .as_ref()
+                .ok_or("open a sprite in the Editor first")?;
+            let s = e.to_sprite();
+            let (f, d) = (s.frames_per_direction(), s.directions.len());
+            (Some(s), e.cur.dir, f, d, e.source.stem())
+        } else {
+            let stem = v
+                .source
+                .as_ref()
+                .map_or_else(|| "sprite".to_owned(), SpriteSource::stem);
+            match &v.loaded {
+                Some(Loaded::Sprite(s)) => (
+                    Some(s.sprite.clone()),
+                    v.dir,
+                    s.sprite.frames_per_direction(),
+                    s.sprite.directions.len(),
+                    stem,
+                ),
+                Some(Loaded::Cof(c)) => (None, v.dir, c.frames(), c.directions(), stem),
+                _ => return Err("open a DC6, DCC or COF first".to_owned()),
+            }
+        };
+        if frames == 0 || dirs == 0 {
+            return Err("the sprite has no frames".to_owned());
+        }
+        let settings = gif_export::GifSettings::new(frames, dirs, v.fps);
+        self.sprites.gif = Some(gif_export::GifDialog::new(
+            from_editor,
+            dir,
+            sprite,
+            stem,
+            settings,
+        ));
+        Ok(())
+    }
+
+    /// Encodes what the Export GIF window selects and writes it at `picked`
+    /// (several directions become `<name>_dNN.gif` beside it).
+    pub fn gif_export(&mut self, picked: &Path) -> Result<String, String> {
+        let palette = self.sprite_palette();
+        let result = (|| {
+            let dlg = self
+                .sprites
+                .gif
+                .as_ref()
+                .ok_or("open the Export GIF window first")?;
+            let source = gif_export::source_of(&self.sprites.viewer, dlg)
+                .ok_or("nothing to export: the sprite is gone")?;
+            let files = gif_export::build(source, &dlg.settings, dlg.current_dir, &palette)?;
+            gif_export::write(picked, &files)
+        })();
+        match &result {
+            Ok(text) => self.info(text.clone()),
+            Err(e) => {
+                if let Some(d) = self.sprites.gif.as_mut() {
+                    d.error = Some(e.clone());
+                }
+                self.error(format!("Export failed: {e}"));
+            }
+        }
+        result
     }
 
     /// The Converter's Import button: asks first when the export's
@@ -1101,10 +1175,6 @@ impl AppState {
                             path,
                         ),
                         Purpose::ExportSheet => convert::export_sheet(&d.sprite, &palette, path),
-                        Purpose::ExportGif => match d.sprite.directions.get(d.dir) {
-                            Some(frames) => convert::export_gif(frames, &palette, d.fps, path),
-                            None => Err("no such direction".to_owned()),
-                        },
                         Purpose::ExportPng => match current {
                             Some(img) => convert::export_indexed_png(img, &palette, path),
                             None => Err("no such frame".to_owned()),
@@ -1135,7 +1205,13 @@ impl AppState {
             .map_or_else(|| "sprite".to_owned(), |s| s.stem());
         let name = match purpose {
             Purpose::ExportSheet => Some(format!("{stem}-sheet.png")),
-            Purpose::ExportGif => Some(format!("{stem}.gif")),
+            Purpose::ExportGif => Some(format!(
+                "{}.gif",
+                self.sprites
+                    .gif
+                    .as_ref()
+                    .map_or(stem.clone(), |g| g.stem.clone())
+            )),
             Purpose::ExportPng => Some(format!("{stem}-frame.png")),
             Purpose::ExportPaletteGpl => {
                 Some(format!("{}.gpl", self.sprites.palette.choice.slug()))
@@ -1293,6 +1369,11 @@ impl AppState {
             Purpose::ExportSprite => {
                 if let Some(p) = paths.first() {
                     self.sprite_write_checked(target, DccWrite::Export(p.clone()));
+                }
+            }
+            Purpose::ExportGif => {
+                if let Some(p) = paths.first() {
+                    let _ = self.gif_export(p);
                 }
             }
             export => {

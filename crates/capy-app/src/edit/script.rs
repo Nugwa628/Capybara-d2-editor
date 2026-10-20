@@ -207,6 +207,12 @@ pub enum Cmd {
     },
     SpriteSaveGame(String),
     SpriteExportFrames(PathBuf),
+    /// Opens the Export GIF window (from the Editor when it is open).
+    SpriteGifOpen,
+    /// `key=value` settings of the Export GIF window.
+    SpriteGifSet(Vec<String>),
+    /// Exports with the window's settings to this file.
+    SpriteGifExport(PathBuf),
     SpriteEdit,
     SpriteTab(String),
     PaintPencil {
@@ -701,6 +707,22 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
                 return Err("sprite-export-frames: expected <folder>".to_owned());
             }
             Cmd::SpriteExportFrames(PathBuf::from(rest))
+        }
+        "sprite-gif-open" => {
+            need(0, "no arguments")?;
+            Cmd::SpriteGifOpen
+        }
+        "sprite-gif-set" => {
+            if args.is_empty() {
+                return Err("sprite-gif-set: expected key=value ...".to_owned());
+            }
+            Cmd::SpriteGifSet(args.iter().map(|a| (*a).to_owned()).collect())
+        }
+        "sprite-gif-export" => {
+            if rest.is_empty() {
+                return Err("sprite-gif-export: expected <file>".to_owned());
+            }
+            Cmd::SpriteGifExport(PathBuf::from(rest))
         }
         "sprite-edit" => {
             need(0, "no arguments")?;
