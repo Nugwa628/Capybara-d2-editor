@@ -75,7 +75,7 @@ pub struct PastePreview {
 
 /// `Object` lives in `d2-formats` without serde; this mirrors it for the
 /// clipboard's JSON.
-mod object_list {
+pub(crate) mod object_list {
     use d2_formats::ds1::Object;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
