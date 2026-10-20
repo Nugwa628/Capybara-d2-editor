@@ -22,6 +22,52 @@ fn put_u32(rec: &mut [u8], off: usize, v: u32) {
 }
 
 #[test]
+fn patch_bin_field_changes_only_that_field() {
+    let types = file(3, LVLTYPES_SIZE, |i, r| {
+        put_str(r, 0, &format!("a\\f{i}.dt1"));
+        put_str(r, 60, "a\\g.dt1");
+    });
+    let out = patch_bin_field(
+        ExcelTableKind::LvlTypes,
+        &types,
+        1,
+        "File 3",
+        "a\\own_custom.dt1",
+    )
+    .unwrap();
+    let t = decode_bin(ExcelTableKind::LvlTypes, ExcelVersion::V113c, &out).unwrap();
+    assert_eq!(t.row(1).unwrap().get("File 3"), Some("a\\own_custom.dt1"));
+    let at = 4 + LVLTYPES_SIZE + 2 * 60;
+    for (i, (a, b)) in types.iter().zip(&out).enumerate() {
+        if !(at..at + 60).contains(&i) {
+            assert_eq!(a, b, "byte {i}");
+        }
+    }
+    let long = "x".repeat(60);
+    assert!(patch_bin_field(ExcelTableKind::LvlTypes, &types, 0, "File 1", &long).is_err());
+    let fits = "x".repeat(59);
+    assert!(patch_bin_field(ExcelTableKind::LvlTypes, &types, 0, "File 1", &fits).is_ok());
+    assert!(patch_bin_field(ExcelTableKind::LvlTypes, &types, 3, "File 1", "a").is_err());
+    assert!(patch_bin_field(ExcelTableKind::LvlTypes, &types, 0, "Id", "1").is_err());
+
+    let prest = file(2, LVLPREST_SIZE, |i, r| put_u32(r, 428, i as u32 + 1));
+    let out =
+        patch_bin_field(ExcelTableKind::LvlPrest, &prest, 1, "Dt1Mask", "4294967295").unwrap();
+    let t = decode_bin(ExcelTableKind::LvlPrest, ExcelVersion::V113c, &out).unwrap();
+    assert_eq!(t.row(1).unwrap().get("Dt1Mask"), Some("4294967295"));
+    assert_eq!(t.row(0).unwrap().get("Dt1Mask"), Some("1"));
+    let at = 4 + LVLPREST_SIZE + 428;
+    assert!(
+        prest
+            .iter()
+            .zip(&out)
+            .enumerate()
+            .all(|(i, (a, b))| (at..at + 4).contains(&i) || a == b)
+    );
+    assert!(patch_bin_field(ExcelTableKind::LvlPrest, &prest, 0, "Dt1Mask", "-1").is_err());
+}
+
+#[test]
 fn every_column_lies_inside_its_record() {
     for kind in ExcelTableKind::all() {
         if *kind == ExcelTableKind::ObjPreset {

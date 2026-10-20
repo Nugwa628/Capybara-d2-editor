@@ -11,8 +11,9 @@ All notable changes to this project are documented here.
   with any DT1 of the type, and the DT1 is registered in the first free
   LvlTypes File slot and the map's LvlPrest Dt1Mask, so the game really loads
   it. Saved with CHANGED.txt entries and a history snapshot; Ctrl+Z undoes the
-  map's file list. Median XL (1.13c) profiles get a note that the `.bin` tables
-  need recompiling.
+  map's file list. On Median XL (1.13c) the compiled `lvltypes.bin` and
+  `lvlprest.bin` are patched in place (only the File slot and Dt1Mask), so no
+  recompiling is needed.
 
 ### Fixed
 - **Re-roll floors** and **Presets > Copy tiles to DT1** now register their DT1
@@ -20,8 +21,9 @@ All notable changes to this project are documented here.
   list, which the game ignores.
 - The "!" tooltip now says the tile's DT1 is not loaded by the map's level type
   and would be invisible in game.
-- On 1.13c profiles the level tables tools read the compiled `.bin` tables when
-  no edited `.txt` is saved yet (the shipped `.txt` can be stale).
+- On 1.13c profiles the level-table tools (Add to game, Change level type...)
+  refuse to save when the `.txt` has a different number of rows than the
+  compiled `.bin` the game reads, instead of writing out-of-date tables.
 
 ## [1.2.0] - 2026-10-20
 

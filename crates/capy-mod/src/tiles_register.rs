@@ -28,8 +28,69 @@ pub struct Registration {
     pub slot_added: bool,
     /// LvlPrest rows whose Dt1Mask now has the slot's bit.
     pub mask_rows: Vec<usize>,
+    /// The text put in the File slot (when `slot_added`).
+    pub slot_value: String,
+    /// LvlPrest rows and their new Dt1Mask (same rows as `mask_rows`).
+    pub masks: Vec<(usize, u32)>,
     pub changes: Vec<String>,
     pub warnings: Vec<String>,
+}
+
+/// Repeats a registration (made on other tables, e.g. the decoded compiled
+/// ones) on `.txt` tables so they stay in sync: the same File slot of the
+/// type's row and the same mask bit on the rows that list `map`. Anything the
+/// tables do not have (the row, the column, a free slot) is skipped; returns
+/// what changed.
+pub fn mirror_registration(
+    types: &mut TxtDoc,
+    prest: &mut TxtDoc,
+    type_id: u32,
+    map: &str,
+    def: Option<u32>,
+    reg: &Registration,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if reg.slot == 0 {
+        return out;
+    }
+    if reg.slot_added
+        && let Some(row) = row_of_record(types, type_id as usize)
+    {
+        let col = format!("File {}", reg.slot);
+        let cur = cell(types, row, &col);
+        let cur = cur.trim();
+        if (cur.is_empty() || cur == "0")
+            && matches!(set(types, row, &col, &reg.slot_value), Ok(true))
+        {
+            out.push(format!(
+                "LvlTypes.txt type {type_id}: {col} = {}",
+                reg.slot_value
+            ));
+        }
+    }
+    let bit = 1u32 << (reg.slot - 1);
+    for r in map_prest_rows(prest, &tiles_rel(map), def) {
+        let old = mask(&cell(prest, r, "Dt1Mask"));
+        if old & bit == 0 && matches!(set(prest, r, "Dt1Mask", &(old | bit).to_string()), Ok(true))
+        {
+            out.push(format!(
+                "LvlPrest.txt row {r}: Dt1Mask {old} -> {}",
+                old | bit
+            ));
+        }
+    }
+    out
+}
+
+/// Why a hand-edited `.txt` table cannot stand in for the compiled one: it
+/// has fewer (or more) data rows than the `.bin` the game reads.
+pub fn stale_against(name: &str, txt: &TxtDoc, compiled_rows: usize) -> Option<String> {
+    let rows = crate::txt_util::data_rows(txt).len();
+    (rows != compiled_rows).then(|| {
+        format!(
+            "{name} has {rows} rows but the compiled table the game reads has {compiled_rows}: the .txt is out of date, so saving it would damage the mod's tables"
+        )
+    })
 }
 
 /// Makes the game load `dt1_path`: puts it in the first free File slot of
@@ -61,6 +122,7 @@ pub fn register_dt1(
             let slot = s.slots.get(&key).copied().unwrap_or(0);
             if let Some(a) = s.added.first() {
                 out.slot_added = true;
+                out.slot_value = a.value.clone();
                 out.changes.push(format!(
                     "LvlTypes \"{tname}\" (type {type_id}): File {} = {}",
                     a.slot, a.value
@@ -85,6 +147,7 @@ pub fn register_dt1(
             let new = old | bit;
             if set(&mut p, r, "Dt1Mask", &new.to_string())? {
                 out.mask_rows.push(r);
+                out.masks.push((r, new));
                 out.changes.push(format!(
                     "LvlPrest \"{}\": Dt1Mask {old} -> {new}",
                     cell(&p, r, "Name")

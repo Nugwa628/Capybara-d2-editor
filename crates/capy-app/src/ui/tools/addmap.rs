@@ -32,7 +32,10 @@ pub struct Plan {
     own_game: GamePath,
     /// The brush after the addition: the first picked tile's new key.
     brush_key: Option<String>,
-    bin_note: bool,
+    compiled: bool,
+    type_id: u32,
+    def: Option<u32>,
+    map_path: String,
 }
 
 pub struct Dialog {
@@ -63,7 +66,7 @@ fn compute(state: &AppState, keys: &[String]) -> Result<Plan, String> {
         .lvl_type
         .ok_or("This map has no level type, so there is nowhere to register the tiles")?;
     let map_path = doc.path.as_str().to_owned();
-    let tables = io::level_tables(state)?;
+    let (types_doc, prest_doc, compiled) = io::tables_for_tiles(state)?;
 
     // the picked tiles' source libraries
     let mut src_paths: Vec<String> = Vec::new();
@@ -105,7 +108,7 @@ fn compute(state: &AppState, keys: &[String]) -> Result<Plan, String> {
 
     // every DT1 of the level type, and the type's own-tiles DT1 if it exists
     let mut type_libs: Vec<(String, Dt1)> = Vec::new();
-    for rel in type_files(&tables.types, type_id) {
+    for rel in type_files(&types_doc, type_id) {
         if let Some(b) = io::read_game(state, &io::tiles_game(&rel))?
             && let Ok(d) = Dt1::parse(&b)
         {
@@ -113,7 +116,7 @@ fn compute(state: &AppState, keys: &[String]) -> Result<Plan, String> {
         }
     }
     let type_dt1s: Vec<(String, &Dt1)> = type_libs.iter().map(|(p, d)| (p.clone(), d)).collect();
-    let own_rel = own_path_for(&tables.types, type_id, &map_path);
+    let own_rel = own_path_for(&types_doc, type_id, &map_path);
     let own_game = io::tiles_game(&own_rel);
     let existing = match io::read_game(state, &own_game)? {
         Some(b) => Some(Dt1::parse(&b).map_err(|e| format!("{own_game}: {e}"))?),
@@ -122,8 +125,8 @@ fn compute(state: &AppState, keys: &[String]) -> Result<Plan, String> {
     let out = add_tiles_to_map(&AddTilesInput {
         map_path: &map_path,
         ds1: doc.edit.ds1(),
-        types: &tables.types,
-        prest: &tables.prest,
+        types: &types_doc,
+        prest: &prest_doc,
         type_id,
         prest_def: info.lvlprest_def,
         picks: &picks,
@@ -165,7 +168,10 @@ fn compute(state: &AppState, keys: &[String]) -> Result<Plan, String> {
         out,
         own_game,
         brush_key,
-        bin_note: io::reads_bin_tables(state),
+        compiled,
+        type_id,
+        def: info.lvlprest_def,
+        map_path,
     })
 }
 
@@ -175,20 +181,25 @@ fn apply(state: &mut AppState, plan: Plan) -> Result<String, String> {
         out,
         own_game,
         brush_key,
-        bin_note,
+        compiled,
+        type_id,
+        def,
+        map_path,
     } = plan;
-    let tables = io::level_tables(state)?;
     let bytes = out
         .dt1
         .to_bytes()
         .map_err(|e| format!("cannot write the DT1: {e}"))?;
     io::save_game(state, &own_game, &bytes)?;
-    if out.types != tables.types {
-        io::save_txt(state, "lvltypes.txt", &out.types)?;
-    }
-    if out.prest != tables.prest {
-        io::save_txt(state, "lvlprest.txt", &out.prest)?;
-    }
+    io::save_registration(
+        state,
+        &out.registration,
+        type_id,
+        def,
+        &io::tiles_rel(&map_path),
+        (&out.types, &out.prest),
+        compiled,
+    )?;
     let doc = state.active_doc().ok_or("Open a map first")?;
     if out.ds1.files != doc.edit.ds1().files {
         super::game::replace_map(state, "Add tiles to this map", out.ds1.clone())?;
@@ -196,15 +207,13 @@ fn apply(state: &mut AppState, plan: Plan) -> Result<String, String> {
     if let Some(i) = state.active {
         crate::ui::studio::libs::attach_to_info(state, i, &own_game);
     }
-    if !bin_note {
-        // The game (and so the catalog) now loads the DT1 for the map.
-        state.rebuild_catalog();
-    }
+    // The game (and so the catalog) now loads the DT1 for the map.
+    state.rebuild_catalog();
     if let Some(key) = brush_key {
         state.set_brush_from_key(&key)?;
     }
     state.tools.addmap.picked.clear();
-    let mut msg = format!(
+    let msg = format!(
         "Added {} tile(s) to {} ({} renumbered)",
         out.added,
         io::tiles_rel(own_game.as_str()),
@@ -212,11 +221,6 @@ fn apply(state: &mut AppState, plan: Plan) -> Result<String, String> {
     );
     for w in &out.warnings {
         state.warn(w.clone());
-    }
-    if bin_note {
-        state.warn(io::BIN_NOTE);
-        msg.push_str(". ");
-        msg.push_str(io::BIN_NOTE);
     }
     Ok(msg)
 }
@@ -268,8 +272,10 @@ pub fn window(ctx: &egui::Context, state: &mut AppState) {
                     for w in &p.out.warnings {
                         ui.add(egui::Label::new(RichText::new(w).color(WARN)).wrap());
                     }
-                    if p.bin_note {
-                        ui.add(egui::Label::new(RichText::new(io::BIN_NOTE).color(WARN)).wrap());
+                    if p.compiled {
+                        ui.weak(
+                            "This profile reads compiled .bin tables: lvltypes.bin and lvlprest.bin are patched in place (only the File slot and Dt1Mask), no recompiling is needed.",
+                        );
                     }
                     ui.weak(
                         "Ctrl+Z undoes the map's file list; the DT1 and tables can be restored from History.",

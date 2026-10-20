@@ -180,6 +180,105 @@ fn common_tables(
     n
 }
 
+/// Median XL: patching the compiled tables in place registers the DT1, changes
+/// only the two fields' bytes, and the 1.13c catalog (reading the saves layer)
+/// then loads the tiles' DT1; the stale `.txt` is refused.
+#[test]
+fn median_xl_compiled_tables_are_patched_in_place() -> TestResult {
+    use d2_formats::excel::{ExcelVersion, decode_bin, patch_bin_field};
+    let Some(root) = corpus("mxl") else {
+        return Ok(());
+    };
+    let map = r"data\global\tiles\mxl\zone\whimsy\shire.ds1";
+    let excel = |n: &str| format!(r"data\global\excel\{n}");
+    let types_bin = read_game_file(&root, &excel("lvltypes.bin"))?;
+    let prest_bin = read_game_file(&root, &excel("lvlprest.bin"))?;
+    let t = tables_from_bins(&root)?;
+
+    // the shipped lvlprest.txt is stale against the .bin
+    let txt = common::read_doc(&root, "lvlprest.txt")?;
+    assert!(
+        capy_mod::tiles_register::stale_against("lvlprest.txt", &txt, t.prest.row_count())
+            .is_some()
+    );
+
+    let base = catalog_with(&root, &t, &[], &[map])?;
+    let info = best(&base, map).expect("shire resolves");
+    let type_id = info.lvl_type.unwrap();
+    let (mut types, mut prest) = (t.types.clone(), t.prest.clone());
+    let rows = capy_mod::tiles_register::map_prest_rows(
+        &prest,
+        "mxl/zone/whimsy/shire.ds1",
+        info.lvlprest_def,
+    );
+    let own = "mxl/zone/whimsy/test_custom.dt1";
+    let reg = capy_mod::tiles_register::register_dt1(&mut types, &mut prest, type_id, &rows, own)?;
+    assert!(reg.slot_added && !reg.masks.is_empty());
+
+    let types_new = patch_bin_field(
+        ExcelTableKind::LvlTypes,
+        &types_bin,
+        type_id as usize,
+        &format!("File {}", reg.slot),
+        &reg.slot_value,
+    )?;
+    let mut prest_new = prest_bin.clone();
+    for (row, m) in &reg.masks {
+        prest_new = patch_bin_field(
+            ExcelTableKind::LvlPrest,
+            &prest_new,
+            *row,
+            "Dt1Mask",
+            &m.to_string(),
+        )?;
+    }
+    let diff = |a: &[u8], b: &[u8]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+    assert_eq!(types_bin.len(), types_new.len());
+    assert!(
+        diff(&types_bin, &types_new) <= 60,
+        "only one File field changes"
+    );
+    assert!(diff(&prest_bin, &prest_new) <= 4 * reg.masks.len());
+    let dt = decode_bin(ExcelTableKind::LvlTypes, ExcelVersion::V113c, &types_new)?;
+    assert_eq!(
+        dt.row(type_id as usize)
+            .unwrap()
+            .get(&format!("File {}", reg.slot)),
+        Some(reg.slot_value.as_str())
+    );
+
+    // the 1.13c catalog over a saves-like top layer loads the own DT1 for the map
+    let own_game = format!(r"data\global\tiles\{}", own.replace('/', "\\"));
+    let dt1 = d2_formats::dt1::Dt1 {
+        version: (7, 6),
+        tiles: Vec::new(),
+    };
+    let mut files = std::collections::HashMap::new();
+    files.insert(d2_assets::GamePath::new(&excel("lvltypes.bin")), types_new);
+    files.insert(d2_assets::GamePath::new(&excel("lvlprest.bin")), prest_new);
+    files.insert(d2_assets::GamePath::new(&own_game), dt1.to_bytes()?);
+    let overlay = Overlay::new(vec![
+        Box::new(common::MemorySource { files }),
+        Box::new(FolderSource::new(&root, "corpus")),
+    ]);
+    let (cat, _) = d2_assets::MapCatalog::build(
+        &overlay,
+        GameVersion::V113c,
+        &[d2_assets::GamePath::new(map)],
+    )?;
+    let after = cat.best(&d2_assets::GamePath::new(map)).unwrap();
+    assert!(
+        after
+            .dt1_files
+            .iter()
+            .any(|p| p.as_str().eq_ignore_ascii_case(&own_game)),
+        "{:?}",
+        after.dt1_files
+    );
+    assert!(after.missing_dt1.is_empty());
+    Ok(())
+}
+
 #[test]
 fn barset_tiles_into_a_vanilla_map() -> TestResult {
     run(

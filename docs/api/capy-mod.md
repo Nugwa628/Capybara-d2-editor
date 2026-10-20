@@ -223,6 +223,10 @@ pub fn own_tiles_path(map_path, Option<(type_name, listed)>, own_files) -> Strin
 pub fn register_dt1(types: &mut TxtDoc, prest: &mut TxtDoc, type_id: u32, prest_rows: &[usize], dt1_path: &str) -> Result<Registration>;
 //   first free LvlTypes File slot (or the DT1's own) + that bit OR-ed into Dt1Mask of each row; atomic, refuses when all 32 slots are used;
 //   no rows => LvlTypes only + a warning. Registration { slot, slot_added, mask_rows, changes, warnings }
+//   Registration also has slot_value and masks: Vec<(row, new mask)> so a caller can patch compiled tables
+//   (d2_formats::excel::patch_bin_field(kind, bytes, record, "File 3" | "Dt1Mask", value), one field only).
+pub fn mirror_registration(types, prest, type_id, map, def, &Registration) -> Vec<String>; // same slot/bit on .txt tables that have the rows
+pub fn stale_against(name, txt: &TxtDoc, compiled_rows) -> Option<String>;               // .txt vs .bin row count
 pub fn map_prest_rows(prest, map, def: Option<u32>) -> Vec<usize>;   // Def row, else every row listing the map
 pub fn type_files(types, type_id) -> Vec<String>;  pub fn own_path_for(types, type_id, map_path) -> String; // one <type>_custom.dt1 per level type
 pub fn add_tiles_to_map(&AddTilesInput) -> Result<AddTilesOutcome>;

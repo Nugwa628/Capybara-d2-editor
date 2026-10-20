@@ -1764,10 +1764,12 @@ LvlTypes is still edited and a warning says the game does not load the map
 DT1** register their DT1 the same way (in 1.2.0 they only updated the DS1's
 file list, which the game ignores).
 
-On a 1.13c profile such as Median XL the game reads compiled `.bin` tables:
-Capybara writes the `.txt` forms and tells you they need recompiling (for
-example, start D2 with `-direct -txt`). Until then the editor keeps showing the
-tile as missing from the catalog, but paints it with the new numbers.
+On a 1.13c profile such as Median XL the game reads compiled `.bin` tables.
+Capybara patches `lvltypes.bin` (the File slot) and `lvlprest.bin` (the
+Dt1Mask) in `capybara\saves`, changing only those fields, and updates the
+`.txt` forms too when they have the rows; no recompiling is needed. The
+Game-menu table tools refuse to save a `.txt` whose row count differs from the
+`.bin` (a stale `.txt` would drop the mod's rows).
 
 Aliases, tags, notes, favorites, saved searches and recents live in
 `capybara\user.db`, keyed by the tile's game path and indices, so they
