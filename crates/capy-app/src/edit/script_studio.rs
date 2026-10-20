@@ -83,7 +83,29 @@ pub enum StudioCmd {
         selection: bool,
     },
     CopyView,
+    /// The editable modes and the library tools (`ui::studio::modes::script`).
+    Mode {
+        word: String,
+        args: Vec<String>,
+    },
 }
+
+/// Words of `ui::studio::modes::script`.
+const MODE_WORDS: [&str; 13] = [
+    "stack-paint",
+    "automap-cel",
+    "automap-save",
+    "light-set",
+    "walk-cell",
+    "walk-sub",
+    "no-spawn",
+    "reroll-lib",
+    "assert-flag",
+    "assert-layers",
+    "assert-subtile",
+    "automap-open",
+    "assert-light",
+];
 
 fn num<T: std::str::FromStr>(text: &str, what: &str) -> Result<T, String> {
     let t = text.trim();
@@ -219,6 +241,10 @@ pub fn parse(word: &str, args: &[&str], rest: &str) -> Option<Result<StudioCmd, 
                 }
             }
             "copy-view" => StudioCmd::CopyView,
+            w if MODE_WORDS.contains(&w) => StudioCmd::Mode {
+                word: w.to_owned(),
+                args: args.iter().map(|a| (*a).to_owned()).collect(),
+            },
             _ => return Err(String::new()),
         })
     })();

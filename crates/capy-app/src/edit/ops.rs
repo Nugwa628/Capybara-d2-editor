@@ -128,6 +128,12 @@ pub enum EditOp {
         group: Group,
     },
     DeleteGroup(usize),
+    /// Swap the whole model for `after` (one undo step): walk painting and
+    /// other edits that change cells, layers and the file list together.
+    ReplaceModel {
+        label: String,
+        after: Box<d2_formats::ds1::Ds1>,
+    },
 }
 
 impl EditOp {
@@ -166,6 +172,7 @@ impl EditOp {
             EditOp::AddGroup(_) => "Add group".to_owned(),
             EditOp::SetGroup { .. } => "Edit group".to_owned(),
             EditOp::DeleteGroup(_) => "Delete group".to_owned(),
+            EditOp::ReplaceModel { label, .. } => label.clone(),
         }
     }
 }
@@ -350,6 +357,11 @@ pub fn run(doc: &mut Document, selection: &Selection, op: &EditOp) -> OpResult {
             wrap(doc.set_group(*index, *group), |()| OpOutcome::Done)
         }
         EditOp::DeleteGroup(index) => wrap(doc.delete_group(*index), |()| OpOutcome::Done),
+        EditOp::ReplaceModel { label, after } => {
+            let patch =
+                capy_edit::Patch::replace(label.clone(), doc.ds1().clone(), (**after).clone());
+            wrap(doc.apply_patch(patch), |()| OpOutcome::Done)
+        }
     }
 }
 

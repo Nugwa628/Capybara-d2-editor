@@ -63,15 +63,23 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     resize_with_ctrl_wheel(ui, state, panel);
     studio_bar(ui, state);
     query_bar(ui, state);
-    scope_bar(ui, state);
-    saved_searches(ui, state);
     status_line(ui, state);
     if state.session.is_none() {
         return;
     }
-    recent_section(ui, state);
-    favorites_section(ui, state);
-    ui.separator();
+    if state.browser.scope == Scope::MapTileSet && state.map_dt1s().is_empty() {
+        state.browser.scope = Scope::Profile;
+    }
+    egui::CollapsingHeader::new("Search options")
+        .id_salt("tiles_search_options")
+        .default_open(false)
+        .show(ui, |ui| {
+            scope_bar(ui, state);
+            saved_searches(ui, state);
+            recent_section(ui, state);
+            favorites_section(ui, state);
+        });
+    ui.add_space(2.0);
     results_grid(ui, state, panel);
     enter_uses_selection(ui, state);
 }

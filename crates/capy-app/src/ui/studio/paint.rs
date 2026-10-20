@@ -272,6 +272,11 @@ pub fn map_input(
         return true;
     }
 
+    // The paint tools of the Automap and Walkability modes.
+    if super::modes::input(ui, state, f, response, space) {
+        return true;
+    }
+
     let tool = state.edit.tool;
     // Double-click with the Select tool: every copy of the tile.
     if tool == Tool::SelectBox
@@ -326,6 +331,7 @@ pub fn map_input(
     match paint_mode {
         PaintMode::Rect => {
             if brushes(state, layer, erase).is_some() {
+                state.studio.stack_rect = ui.input(|i| i.modifiers.alt);
                 state.studio.drag = Some(Drag::Rect {
                     doc: doc_id,
                     layer,
@@ -400,6 +406,21 @@ pub fn paint_rect(
     rect: CellRect,
     erase: bool,
 ) {
+    if std::mem::take(&mut state.studio.stack_rect)
+        && !erase
+        && super::stack::stackable(layer)
+        && !layer.is_empty_value(state.edit.current)
+    {
+        let cells: Vec<(u32, u32)> = (rect.y0..=rect.y1)
+            .flat_map(|y| (rect.x0..=rect.x1).map(move |x| (x, y)))
+            .collect();
+        state.docs[index]
+            .edit
+            .begin_group("Paint rectangle (stacked)");
+        super::stack::paint_cells(state, index, layer, &cells, &mut Default::default());
+        state.docs[index].edit.end_group();
+        return;
+    }
     let Some(mix) = brushes(state, layer, erase) else {
         return;
     };

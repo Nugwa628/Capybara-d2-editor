@@ -94,6 +94,10 @@ pub struct TileMaterial {
     #[sampler(1)]
     pub atlas: Handle<Image>,
     pub blend: BlendClass,
+    /// Colour multiply (Level light mode): the texel's colour times `rgb`,
+    /// alpha untouched. White leaves the map as it is.
+    #[uniform(2)]
+    pub tint: Vec4,
 }
 
 /// The pipeline key: one pipeline per blend class.

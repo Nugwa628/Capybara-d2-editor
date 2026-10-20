@@ -210,7 +210,36 @@ fn spawn_texture(ctx: &egui::Context, state: &mut AppState, index: usize) -> Opt
     state.studio.analysis.spawn.clone()
 }
 
-/// The automap preview: walls light, floors dark, one texel per cell.
+/// The colour of automap picture `cel`: a different hue per picture,
+/// `value` bright.
+fn hue(cel: i32, value: u8) -> [u8; 4] {
+    let h = (cel.rem_euclid(24) as f32) / 24.0;
+    let (r, g, b) = hsv(h, 0.35, f32::from(value) / 255.0);
+    [r, g, b, 255]
+}
+
+fn hsv(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+    let i = (h * 6.0).floor();
+    let f = h * 6.0 - i;
+    let (p, q, t) = (v * (1.0 - s), v * (1.0 - f * s), v * (1.0 - (1.0 - f) * s));
+    let (r, g, b) = match (i as i32).rem_euclid(6) {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    };
+    ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+}
+
+/// Drops the automap preview so it is rebuilt from the edited table.
+pub fn invalidate_automap(state: &mut AppState) {
+    state.studio.analysis.automap = None;
+}
+
+/// The automap preview: pictures coloured by cel (walls light, floors
+/// dark), one texel per cell.
 fn automap_texture(
     ctx: &egui::Context,
     state: &mut AppState,
@@ -222,6 +251,18 @@ fn automap_texture(
     if state.studio.analysis.automap.is_none() {
         let ds1 = state.docs[index].ds1.clone();
         let (w, h) = (ds1.width as usize, ds1.height as usize);
+        // With AutoMap.txt open (the mode opens it) a cell is lit by its
+        // tile's picture; a tile without one is red.
+        let pieces = super::modes::automap_pieces(state, index);
+        let mut by_cell: std::collections::HashMap<(u32, u32), (bool, Option<i32>)> =
+            std::collections::HashMap::new();
+        for p in pieces.iter().flatten() {
+            let wall = p.layer == capy_mod::automap::PieceLayer::Wall;
+            let e = by_cell.entry((p.x, p.y)).or_insert((wall, p.cel));
+            if wall || !e.0 {
+                *e = (wall, p.cel);
+            }
+        }
         let mut px = vec![0u8; w * h * 4];
         for y in 0..h {
             for x in 0..w {
@@ -239,12 +280,14 @@ fn automap_texture(
                     .floors
                     .iter()
                     .any(|l| l.get(ux, uy).is_some_and(|c| !c.is_empty()));
-                let c = if wall {
-                    [215, 205, 170, 255]
-                } else if floor {
-                    [52, 56, 62, 255]
-                } else {
-                    [0, 0, 0, 0]
+                let c = match by_cell.get(&(ux, uy)) {
+                    Some((true, Some(cel))) => hue(*cel, 215),
+                    Some((false, Some(cel))) => hue(*cel, 120),
+                    Some((_, None)) => [150, 50, 50, 255],
+                    None if pieces.is_some() => [0, 0, 0, 0],
+                    None if wall => [215, 205, 170, 255],
+                    None if floor => [52, 56, 62, 255],
+                    None => [0, 0, 0, 0],
                 };
                 let o = (y * w + x) * 4;
                 px[o..o + 4].copy_from_slice(&c);
@@ -393,7 +436,8 @@ pub fn paint_overlays(ui: &mut Ui, state: &mut AppState, f: &ViewFrame) {
                 map_quad(&painter, f, w, h, &t);
             }
         }
-        ViewMode::Light => draw_light(&painter, state, index, f),
+        // Level light is a colour multiply in the tile shader (render::sync_light).
+        ViewMode::Light => {}
         ViewMode::Roofs => draw_pops(&painter, state, index, f),
         ViewMode::Tiles | ViewMode::Objects => {}
     }
@@ -411,6 +455,7 @@ pub fn paint_overlays(ui: &mut Ui, state: &mut AppState, f: &ViewFrame) {
     if state.studio.game_view {
         draw_game_view(&painter, state, f);
     }
+    super::modes::panel(ui, state, f);
     badges(ui, state, index, f, view);
 }
 
@@ -425,32 +470,6 @@ fn draw_rooms(painter: &Painter, f: &ViewFrame, w: u32, h: u32) {
             f64::from(r.y0 + r.h),
         );
         painter.add(Shape::closed_line(pts, stroke));
-    }
-}
-
-fn draw_light(painter: &Painter, state: &mut AppState, index: usize, f: &ViewFrame) {
-    let (w, h) = (state.docs[index].ds1.width, state.docs[index].ds1.height);
-    let row = levels::row_of(state, index);
-    let m = row
-        .as_ref()
-        .and_then(|r| capy_render::links::LevelLight::of(r).multiplier());
-    if let Some([r, g, b]) = m {
-        // egui cannot multiply: darken by the mean, tint with the colour.
-        let mean = (r + g + b) / 3.0;
-        let dark = ((1.0 - mean).clamp(0.0, 0.9) * 255.0) as u8;
-        let pts = cell_rect_outline(f, 0.0, 0.0, f64::from(w), f64::from(h));
-        painter.add(Shape::convex_polygon(
-            pts.clone(),
-            Color32::from_rgba_unmultiplied(0, 0, 0, dark),
-            Stroke::NONE,
-        ));
-        let tint = Color32::from_rgba_unmultiplied(
-            (r * 255.0) as u8,
-            (g * 255.0) as u8,
-            (b * 255.0) as u8,
-            40,
-        );
-        painter.add(Shape::convex_polygon(pts, tint, Stroke::NONE));
     }
 }
 
@@ -595,7 +614,7 @@ fn badges(ui: &Ui, state: &mut AppState, index: usize, f: &ViewFrame, view: View
         ViewMode::Light => {
             let text = match levels::row_of(state, index) {
                 Some(r) if r.intensity > 0 => format!(
-                    "{}: Intensity {}, RGB {} {} {} (Levels.txt; view only)",
+                    "{}: Intensity {}, RGB {} {} {} (Levels.txt)",
                     r.name, r.intensity, r.rgb[0], r.rgb[1], r.rgb[2]
                 ),
                 Some(r) => format!("{}: act daylight (Intensity 0)", r.name),
