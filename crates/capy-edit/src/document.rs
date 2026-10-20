@@ -12,6 +12,7 @@ use crate::patch::Patch;
 
 mod clip;
 mod edits;
+mod map_edit;
 mod objects;
 mod paths;
 

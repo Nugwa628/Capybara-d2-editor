@@ -277,3 +277,103 @@ one sub-tile) leave the path's owner undecidable.
   over a stray path, stay allowed. `PastePreview::warnings` lists each such
   sub-tile (one message per sub-tile, the same text `paste` fails with). As
   with moves, the anchor check comes before `NeedsVersion`.
+
+## Map-editing operations (P9)
+
+Module `capy_edit::tools` (re-exported at the crate root) holds the pure data
+types; the operations are `Document` methods and each one is a single undoable
+patch (`Patch` steps are the existing `Cells` / `Header` / `Replace`). Game
+data (tile candidate lists, the object catalog) is always passed in by the
+caller. No new dependencies.
+
+```rust
+pub struct Rng;                       // SplitMix64: Rng::new(seed), next_u64(), below(n)
+pub struct Brush { pub main: u8, pub sub: u8, pub orientation: u32 }   // Brush::floor(main, sub)
+pub struct TileKey { pub orientation: u32, pub main: u8, pub sub: u8 } // floors 0, shadows 13, walls: raw orientation dword
+pub fn tile_key(layer: LayerRef, value: CellValue) -> Option<TileKey>; // None: empty cell / tag layer
+
+impl Document {
+    // 1. rectangle and flood. `mix` empty = erase; one entry = plain paint; several = 2. random mix.
+    pub fn paint_rect(&mut self, layer, rect: CellRect, mix: &[Brush], rng: &mut Rng) -> Result<()>;
+    pub fn paint_mix(&mut self, layer, cells: &[(u32, u32)], mix: &[Brush], rng: &mut Rng) -> Result<()>;
+    pub fn erase_rect(&mut self, layer, rect: CellRect) -> Result<()>;
+    pub fn flood_region(&self, layer, x, y, within: Option<&Selection>) -> Vec<(u32, u32)>;
+    pub fn flood_fill(&mut self, layer, x, y, mix: &[Brush], within: Option<&Selection>, rng: &mut Rng) -> Result<()>;
+    // 3. find & replace (layers + optional selection scope)
+    pub fn find_tiles(&self, layers: &[LayerRef], from: TileKey, within: Option<&Selection>) -> Vec<(LayerRef, u32, u32)>;
+    pub fn replace_tiles(&mut self, layers: &[LayerRef], from: TileKey, to: TileKey, within: Option<&Selection>) -> Result<usize>;
+    // 4. floor re-roll and tile reassignment
+    pub fn reroll_floors(&mut self, layer: u8, area: Option<&Selection>, choices: &[FloorChoice],
+                         opts: &RerollOptions, walk_of: &dyn Fn(u8, u8) -> Option<u32>) -> Result<RerollReport>;
+    pub fn reassign_tiles(&mut self, moves: &BTreeMap<TileKey, TileKey>) -> Result<usize>;
+    // resize on any edge
+    pub fn resize_edges(&mut self, left: i32, top: i32, right: i32, bottom: i32) -> Result<()>;
+    // 6. tag groups
+    pub fn add_group(&mut self, g: Group) -> Result<usize>;
+    pub fn set_group(&mut self, index: usize, g: Group) -> Result<()>;
+    pub fn move_group(&mut self, index: usize, x: i32, y: i32) -> Result<()>;
+    pub fn resize_group(&mut self, index: usize, width: i32, height: i32) -> Result<()>;
+    pub fn delete_group(&mut self, index: usize) -> Result<()>;
+}
+// 5. new map
+pub struct NewMapSpec { pub width, pub height, pub act: i32, pub walls: usize, pub floors: usize,
+                        pub tag: bool, pub version: Option<i32> }   // NewMapSpec::new(w, h, act): 1 wall, 1 floor, v18
+pub fn new_map(spec: &NewMapSpec) -> Result<Ds1>;
+// 7. object checks
+pub fn check_objects(ds1: &Ds1, opts: &ObjectCheckOptions) -> Vec<ObjectFinding>;
+```
+
+Behaviour:
+
+- **Painting.** Floor, wall and shadow layers only (`Format(Invalid)` for the
+  tag layer, `NoSuchLayer` for a missing layer). A fresh cell gets `prop1`
+  0xC2 (floor), 0x81 (wall) or 0x80 (shadow); painting over a tile keeps its
+  other bits (hidden, unwalkable). A wall brush sets the orientation dword,
+  other layers drop it. Rectangles are clipped to the map; `paint_mix` ignores
+  cells outside it. The random pick is one `rng.below(mix.len())` per cell in
+  row-major order, so a seed reproduces the result. Unchanged cells are not
+  recorded (a no-op records no history entry).
+- **Connected** (as ds1-studio): 4-connected (edge neighbours), same
+  `TileKey` (orientation, main, sub; other cell bits ignored); an empty cell
+  floods all connected empty cells. `within` limits the area per layer; a seed
+  cell outside the map or `within` gives an empty region. `flood_fill` with an
+  empty mix is flood erase.
+- **Find & replace** compares `TileKey`s on the chosen layers (the tag layer
+  and missing layers are skipped); the replacement keeps other cell bits.
+  Returns the number of cells that changed.
+- **Floor re-roll** is ds1-studio's deterministic balanced pick over the
+  caller's `FloorChoice { main, sub, rarity, walk }` list: it avoids repeating
+  the left/upper neighbour (`avoid_repeats`), balances use counts scaled by
+  `rarity`, breaks ties with a seeded hash, and never picks rarity-0 choices
+  while a choice with rarity exists. With `preserve_walkability` only choices
+  whose `walk` equals `walk_of(main, sub)` of the replaced tile qualify (no
+  answer or no match: the cell is counted in `RerollReport::skipped`).
+  Caller builds the choice list from the DT1 group of the same main/sub family.
+- **Reassign** applies an old-number to new-number map (the caller derives it
+  from its DT1 renumbering) to floors, walls (orientation follows the new key)
+  and the shadow layer. Composing renumberings is the caller's job.
+- **`new_map`** defaults to version 18. A size outside 1x1..=1,048,576 cells
+  or counts outside 1..=4 walls / 1..=2 floors is `LayerLimit`; a version
+  that cannot hold the layers is `NeedsVersion` (below v4 a single wall and
+  floor with a tag layer; the tag layer needs v10 for `tag_type` 1).
+- **Groups** are rectangles in map cells. They need v12+ and `tag_type` 1 or 2
+  (`NeedsVersion { required: 12 }` / `Format(Invalid)`); a non-zero `unknown`
+  needs v13. `width`/`height` must be >= 1 and `x`/`y` >= 0 for any group the
+  call adds or changes (existing odd groups of real files are left alone).
+  A bad index is `Format(Invalid)`. Edits go through the existing header step,
+  so the model needed no change in `d2-formats`; every corpus DS1 still
+  round-trips byte-identically, including after group edits and undo.
+- **Resize by dragging an edge.** `resize` covers the right and bottom edges
+  only (it keeps the top-left). Dragging the left or top edge needs
+  `resize_edges`, which shifts cells, objects (x5 sub-tiles), NPC paths and
+  groups, drops what falls off the map and clips groups (as ds1-studio's
+  `resizeDs1`). It is a whole-map `Patch::replace`, so it holds two copies of
+  the map in the undo stack.
+- **Object checks** return `ObjectFinding { index, problem }` in object order:
+  `OutsideMap` (sub-tile position outside `width*5` x `height*5`),
+  `Duplicate { of }` (same kind, id and position as an earlier object),
+  `UnknownId` (only with `ObjectCheckOptions::is_known`) and `UnpairedPad` (a
+  teleportation pad, from `teleport_pad_row`, with no pad of the same row in
+  its own or a touching 40-sub-tile block, ds1-studio's `unpairedPads`).
+  Not ported: the objects.txt checks that need the table itself
+  (`directIdsOnGameRows`, `looseOnlyRows`).
