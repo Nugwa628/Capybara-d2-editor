@@ -5,6 +5,11 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Changed
+- **The Tiles panel is tidied like DS1 Studio's:** category chips, the DT1
+  drop-down, the filter box and then the thumbnails. The scope buttons,
+  thumbnail size, Saved searches, Recent and Favorites moved into a
+  **Search options** section (closed at start); the query language still
+  works in the filter box.
 - **The Map Editor looks and works like DS1 Studio** (Sprites mode is
   unchanged and is reached with the **Sprites** button in the top bar): a
   ribbon (Home, View, Map, Game, Diagnostics, Help) replaces the menus and the tool strip; the
@@ -50,6 +55,24 @@ All notable changes to this project are documented here.
   for features that come later (Shift+Delete, P) are reserved.
 
 ### Added
+- **Automap and Level light view modes are editable.** In Automap, pick
+  Paint, Pick or Clear in the panel on the map and click cells: the tile
+  gets the picture (cel) in AutoMap.txt, as in the Automap editor, with a
+  live preview coloured by picture and a **Save AutoMap.txt** button. In
+  Level light, edit the map's Levels.txt Intensity, Red, Green and Blue and
+  save them; the preview is now a real colour multiply in the tile shader
+  instead of a darkening approximation.
+- **Re-roll floors can use floors from other DT1 libraries** of the level
+  type (or of every level type): the picked floors are copied under free
+  numbers into `<map>_custom.dt1`, which is saved next to the map and listed
+  in it.
+- **Stack painting (Alt with the brush):** Alt+Paint, or Alt+Rectangle,
+  puts each cell on the next free wall or floor layer instead of replacing
+  the tile, adding a layer (up to 4 walls, 2 floors) when needed.
+- **Walkability tools:** paint whole cells (the DS1 unwalkable flag) or
+  single sub-tiles (blockers and tile copies in a per-map `<map>_walk.dt1`),
+  block or clear, with undo; and the **No-spawn area** planner for the
+  selection or the whole map.
 - **Map editing (DS1 Studio parity, P9):** Rectangle (U) and Fill area (L)
   paint and erase next to Freehand; random-mix painting (Ctrl+click several
   tiles in Tiles: Paint picks one per cell); Find & replace tiles (Ctrl+H);
