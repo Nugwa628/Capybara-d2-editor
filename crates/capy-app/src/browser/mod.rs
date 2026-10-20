@@ -306,7 +306,7 @@ impl BrowserState {
         self.live.flush(self.now);
     }
 
-    fn invalidate_searches(&mut self) {
+    pub(crate) fn invalidate_searches(&mut self) {
         let now = self.now;
         self.live.invalidate(now);
         self.palette.live.invalidate(now);

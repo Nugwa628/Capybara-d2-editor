@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Fixed
+- Tiles of a DT1 saved to the profile (Add to this map, the tile editor,
+  Collect into own DT1) now show up in the Tiles browser right after the save:
+  the quick index refresh re-reads saved DT1s as well as maps, and drops them
+  again when they are deleted or reverted.
+- The own-tiles file of a level type with no name (tables read from compiled
+  `.bin`) is no longer `custom_custom.dt1`: an existing `*_custom.dt1` in the
+  type's File slots is reused, otherwise the file is named after the map.
+
 ## [1.2.1] - 2026-10-20
 
 ### Added

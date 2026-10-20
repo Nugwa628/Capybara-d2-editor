@@ -573,7 +573,9 @@ pub fn type_home(files: &[String]) -> Option<String> {
 
 /// The file the map's generated tiles go into, relative to `data/global/tiles`:
 /// one per level type in its home folder (`listed` holds the files the type
-/// already lists, so a listed file keeps its spelling); a map without a type
+/// already lists, so a listed file keeps its spelling); a `*_custom.dt1` the
+/// type already lists is reused as it is; a type without a name (tables
+/// decoded from compiled `.bin`) is named after the map; a map without a type
 /// uses `<map>_custom.dt1` next to it.
 pub fn own_tiles_path(
     map_path: &str,
@@ -583,7 +585,22 @@ pub fn own_tiles_path(
     if let Some((type_name, listed)) = level_type
         && let Some(home) = type_home(own_files)
     {
-        let name = custom_name(&home, &slug(type_name));
+        if let Some(existing) = listed
+            .iter()
+            .find(|f| f.to_ascii_lowercase().ends_with("_custom.dt1"))
+        {
+            return existing.clone();
+        }
+        let named = if type_name.trim().is_empty() {
+            let m = map_path.replace('\\', "/");
+            let file = m.rsplit('/').next().unwrap_or(&m);
+            file.rsplit_once('.')
+                .map_or(file, |(stem, _)| stem)
+                .to_owned()
+        } else {
+            type_name.to_owned()
+        };
+        let name = custom_name(&home, &slug(&named));
         let want = normalize_path(&name);
         return listed
             .iter()
@@ -715,6 +732,21 @@ mod tests {
         assert_eq!(
             own_tiles_path("m.ds1", Some(("Town", &listed)), &files),
             "ACT1/Town/Town_Custom.dt1"
+        );
+        // An existing *_custom.dt1 is reused whatever the type is called.
+        let listed = vec![
+            "x/zone/custom_custom.dt1".to_string(),
+            "x/zone/a.dt1".to_string(),
+        ];
+        assert_eq!(
+            own_tiles_path("m.ds1", Some(("", &listed)), &listed),
+            "x/zone/custom_custom.dt1"
+        );
+        // No name and no custom file yet: the map's name is used.
+        let plain = vec!["x/zone/a.dt1".to_string()];
+        assert_eq!(
+            own_tiles_path("data/global/tiles/x/Whimsy.ds1", Some(("", &plain)), &plain),
+            "x/zone/whimsy_custom.dt1"
         );
     }
 

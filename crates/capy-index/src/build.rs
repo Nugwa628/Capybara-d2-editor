@@ -904,12 +904,22 @@ impl Index {
         Ok(report)
     }
 
-    /// Cheap incremental update after maps were saved: re-reads only the
-    /// saves layer's DS1 files (and any DS1 that was served from the saves
-    /// layer before and no longer is) and updates their ds1 assets,
-    /// `src`/`src_tag`, `files` row and `used_in` rows. The rest of the
-    /// profile is untouched; the profile must have been built.
+    /// Cheap incremental update after files were saved: re-reads only the
+    /// saves layer's DT1 and DS1 files (and any that was served from the
+    /// saves layer before and no longer is). DT1s get their dt1 asset, tiles
+    /// and links redone; DS1s their ds1 asset, `src`/`src_tag`, `files` row
+    /// and `used_in` rows. The rest of the profile is untouched; the profile
+    /// must have been built.
     pub fn refresh_saves(&mut self, profile: &Profile, overlay: &Overlay) -> Result<BuildReport> {
+        self.refresh_saves_with(profile, overlay, tiles::run)
+    }
+
+    pub(crate) fn refresh_saves_with(
+        &mut self,
+        profile: &Profile,
+        overlay: &Overlay,
+        run_tiles: TileRun,
+    ) -> Result<BuildReport> {
         let started = Instant::now();
         let profile_id = profile.id.as_str();
         let db_path = self.path.clone();
@@ -929,33 +939,11 @@ impl Index {
             )));
         }
 
-        // DS1s to look at: those in the saves layer(s), plus those the index
-        // still attributes to the saves layer (deleted or reverted since).
-        let mut paths: BTreeSet<GamePath> = BTreeSet::new();
-        for layer in overlay.layers() {
-            if src_tag(layer.name()) == "saves" {
-                for p in layer.list()? {
-                    if p.extension() == Some("ds1") {
-                        paths.insert(p);
-                    }
-                }
-            }
-        }
-        {
-            let mut stmt = self
-                .conn
-                .prepare(
-                    "SELECT path FROM assets WHERE profile = ?1 AND kind = 'ds1' AND src_tag = 'saves'",
-                )
-                .map_err(sq)?;
-            let rows = stmt
-                .query_map([profile_id], |r| r.get::<_, String>(0))
-                .map_err(sq)?;
-            for row in rows {
-                paths.insert(GamePath::new(&row.map_err(sq)?));
-            }
-        }
+        // Tilesets first, so the map pass below finds their new tiles; the
+        // maps that used their old tiles are linked again too.
         let mut report = BuildReport::default();
+        let mut paths = self.refresh_saved_dt1s(profile, overlay, run_tiles, &mut report)?;
+        paths.extend(self.saved_paths(overlay, profile_id, "ds1")?);
         if paths.is_empty() {
             return Ok(report);
         }
@@ -1073,6 +1061,205 @@ impl Index {
         self.catalog = Some((profile_id.to_owned(), catalog));
         report.millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         Ok(report)
+    }
+
+    /// Paths with extension `ext` in the saves layer(s), plus those the index
+    /// still attributes to the saves layer (deleted or reverted since).
+    fn saved_paths(
+        &self,
+        overlay: &Overlay,
+        profile_id: &str,
+        ext: &str,
+    ) -> Result<BTreeSet<GamePath>> {
+        let db_path = self.path.clone();
+        let sq = |e: rusqlite::Error| IndexError::sql(&db_path, e);
+        let mut paths: BTreeSet<GamePath> = BTreeSet::new();
+        for layer in overlay.layers() {
+            if src_tag(layer.name()) == "saves" {
+                for p in layer.list()? {
+                    if p.extension() == Some(ext) {
+                        paths.insert(p);
+                    }
+                }
+            }
+        }
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT path FROM assets WHERE profile = ?1 AND kind = ?2 AND src_tag = 'saves'",
+            )
+            .map_err(sq)?;
+        let rows = stmt
+            .query_map(params![profile_id, ext], |r| r.get::<_, String>(0))
+            .map_err(sq)?;
+        for row in rows {
+            paths.insert(GamePath::new(&row.map_err(sq)?));
+        }
+        Ok(paths)
+    }
+
+    /// Redo the dt1 asset, tiles, FTS rows and LvlTypes links of every saved
+    /// (or formerly saved) DT1. Returns the DS1s that used their old tiles,
+    /// which the caller has to link again.
+    fn refresh_saved_dt1s(
+        &mut self,
+        profile: &Profile,
+        overlay: &Overlay,
+        run_tiles: TileRun,
+        report: &mut BuildReport,
+    ) -> Result<BTreeSet<GamePath>> {
+        let profile_id = profile.id.as_str();
+        let mut maps: BTreeSet<GamePath> = BTreeSet::new();
+        let dt1_paths = self.saved_paths(overlay, profile_id, "dt1")?;
+        if dt1_paths.is_empty() {
+            return Ok(maps);
+        }
+        let db_path = self.path.clone();
+        let sq = |e: rusqlite::Error| IndexError::sql(&db_path, e);
+
+        let level_tables = LevelTables::load(overlay, profile.game_version, &mut report.warnings);
+        let layers = overlay.layers();
+        // The DT1s that still resolve, with what their rows need.
+        let mut live: Vec<(Entry, FileInfo, NewAsset)> = Vec::new();
+        let mut inputs: Vec<Dt1Input> = Vec::new();
+        for path in &dt1_paths {
+            let Some(layer) = overlay.resolve(path) else {
+                continue;
+            };
+            let source = layers.get(layer.0).map_or("", |l| l.name()).to_owned();
+            let entry = Entry {
+                path: path.clone(),
+                ext: "dt1",
+                layer,
+                src_tag: src_tag(&source),
+                source,
+            };
+            let bytes = match overlay.read_from(layer, path) {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => continue,
+                Err(e) => {
+                    report.warnings.push(format!("{path}: {e}"));
+                    continue;
+                }
+            };
+            let info = FileInfo {
+                size: bytes.len() as u64,
+                hash: *blake3::hash(&bytes).as_bytes(),
+            };
+            let (name, lvl_act) = level_tables.dt1_context(path);
+            let mut asset = NewAsset::file(&entry, AssetKind::Dt1);
+            asset.act = lvl_act.or_else(|| act_from_path(path.as_str()));
+            inputs.push(Dt1Input {
+                path: path.clone(),
+                layer,
+                place: name.unwrap_or_else(|| place_from_path(path.as_str())),
+                act: level_tables.dt1_palette_act(path).or(asset.act),
+            });
+            live.push((entry, info, asset));
+        }
+
+        // Render the tiles before touching the database.
+        let never = AtomicBool::new(false);
+        let mut batches: Vec<TileBatch> = Vec::new();
+        {
+            let ctx = TileCtx {
+                overlay,
+                dt1s: &inputs,
+                ds1s: &[],
+                cancel: &never,
+            };
+            let mut on_progress = |_: u64, _: u64, _: &str| Ok(());
+            let mut sink = |batch: TileBatch| -> Result<()> {
+                batches.push(batch);
+                Ok(())
+            };
+            run_tiles(&ctx, &mut on_progress, &mut sink)?;
+        }
+
+        let tx = self.conn.transaction().map_err(sq)?;
+        let owned =
+            "SELECT id FROM assets WHERE profile = ?1 AND path = ?2 AND kind IN ('dt1', 'tile')";
+        for path in &dt1_paths {
+            let key = path.as_str();
+            {
+                let mut stmt = tx
+                    .prepare(
+                        "SELECT DISTINCT ds1_path FROM used_in WHERE asset_id IN
+                           (SELECT id FROM assets WHERE profile = ?1 AND path = ?2 AND kind = 'tile')",
+                    )
+                    .map_err(sq)?;
+                let rows = stmt
+                    .query_map(params![profile_id, key], |r| r.get::<_, String>(0))
+                    .map_err(sq)?;
+                for row in rows {
+                    maps.insert(GamePath::new(&row.map_err(sq)?));
+                }
+            }
+            tx.execute(
+                "INSERT INTO assets_fts(assets_fts, rowid, gen_name, path, class, color, texture)
+                 SELECT 'delete', id, gen_name, path, class, color, texture FROM assets
+                 WHERE profile = ?1 AND path = ?2 AND kind IN ('dt1', 'tile')",
+                params![profile_id, key],
+            )
+            .map_err(sq)?;
+            for table in ["used_in", "asset_lvltypes"] {
+                tx.execute(
+                    &format!("DELETE FROM {table} WHERE asset_id IN ({owned})"),
+                    params![profile_id, key],
+                )
+                .map_err(sq)?;
+            }
+            tx.execute(
+                "DELETE FROM assets WHERE profile = ?1 AND path = ?2 AND kind IN ('dt1', 'tile')",
+                params![profile_id, key],
+            )
+            .map_err(sq)?;
+            tx.execute(
+                "DELETE FROM files WHERE profile = ?1 AND path = ?2",
+                params![profile_id, key],
+            )
+            .map_err(sq)?;
+            report.assets += 1;
+        }
+        for (entry, info, asset) in &live {
+            insert_file_row(&tx, profile_id, entry, info).map_err(sq)?;
+            report.files += 1;
+            let id = insert_asset(&tx, profile_id, asset).map_err(sq)?;
+            for (lvltype, slot) in level_tables
+                .dt1_links
+                .get(&entry.path)
+                .into_iter()
+                .flatten()
+            {
+                tx.prepare_cached(
+                    "INSERT INTO asset_lvltypes(asset_id, lvltype, slot) VALUES(?1, ?2, ?3)",
+                )
+                .and_then(|mut s| s.execute(params![id, lvltype, slot]))
+                .map_err(sq)?;
+            }
+            let owner = TileOwner {
+                act: asset.act,
+                src: &asset.src,
+                src_tag: asset.src_tag,
+            };
+            for batch in batches.iter().filter(|b| b.dt1 == entry.path) {
+                report.warnings.extend(batch.warnings.iter().cloned());
+                for t in &batch.tiles {
+                    insert_tile(&tx, profile_id, entry.path.as_str(), &owner, t).map_err(sq)?;
+                    report.tiles += 1;
+                }
+            }
+            tx.execute(
+                "INSERT INTO assets_fts(rowid, gen_name, path, class, color, texture)
+                 SELECT id, gen_name, path, class, color, texture FROM assets
+                 WHERE profile = ?1 AND path = ?2 AND kind IN ('dt1', 'tile')",
+                params![profile_id, entry.path.as_str()],
+            )
+            .map_err(sq)?;
+        }
+        tx.commit().map_err(sq)?;
+        report.assets += report.tiles;
+        Ok(maps)
     }
 }
 

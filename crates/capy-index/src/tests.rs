@@ -1026,6 +1026,57 @@ fn cof_bytes() -> Vec<u8> {
 }
 
 #[test]
+fn refresh_saves_indexes_a_saved_dt1_and_forgets_a_deleted_one() {
+    let mut b = built();
+    let overlay = b.fx.overlay();
+    let profile = b.fx.profile();
+    let saves = b.fx.root.join("test").join("saves");
+    let rel = "data\\global\\tiles\\mxl\\zone\\whimsy\\custom_custom.dt1";
+    let tile = format!("{rel}#0/5/2/0");
+    let total = b.idx.count("test", None).unwrap();
+    assert!(names(&b, "file:custom_custom.dt1", 50).is_empty());
+
+    write(&saves, rel, b"a new tileset");
+    let report = b
+        .idx
+        .refresh_saves_with(&profile, &overlay, fake_run)
+        .unwrap();
+    assert_eq!((report.files, report.tiles), (1, 5), "{report:?}");
+    let found = names(&b, "file:custom_custom.dt1", 50);
+    assert_eq!(found.len(), 6, "dt1 + 5 tiles: {found:?}");
+    assert!(found.contains(&tile));
+    let dt1 = b.idx.asset("test", rel).unwrap().unwrap();
+    assert_eq!(dt1.src_tag, "saves");
+    assert_eq!(b.idx.count("test", None).unwrap(), total + 6);
+    assert_eq!(names(&b, "src:saves", 50).len(), 6);
+
+    // Saving it again replaces the rows instead of doubling them.
+    write(&saves, rel, b"a newer tileset");
+    b.idx
+        .refresh_saves_with(&profile, &overlay, fake_run)
+        .unwrap();
+    assert_eq!(names(&b, "file:custom_custom.dt1", 50).len(), 6);
+    assert_eq!(b.idx.count("test", None).unwrap(), total + 6);
+
+    // Deleting the file takes everything back out.
+    std::fs::remove_file(GamePath::new(rel).to_native(&saves)).unwrap();
+    b.idx
+        .refresh_saves_with(&profile, &overlay, fake_run)
+        .unwrap();
+    assert!(names(&b, "file:custom_custom.dt1", 50).is_empty());
+    assert!(b.idx.asset("test", rel).unwrap().is_none());
+    assert_eq!(b.idx.count("test", None).unwrap(), total);
+    let left: i64 = b
+        .idx
+        .conn
+        .query_row("SELECT COUNT(*) FROM files WHERE path = ?1", [rel], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[test]
 fn sprites_get_sizes_counts_and_thumbnails() {
     let fx = Fx::new("spr");
     let modl = fx.root.join("spr").join("mod");
