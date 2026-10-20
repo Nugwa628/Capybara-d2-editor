@@ -122,6 +122,12 @@ pub struct Cof {
     /// Bytes the key-frame and priority tables needed past the end of the
     /// file, read as zero (0 for every well-formed file).
     pub missing_bytes: usize,
+    /// Header bytes 3..28 as stored (version, bounding box, animation rate),
+    /// kept so [`Cof::to_bytes`] reproduces the file. [`Cof::object_header`]
+    /// builds one for a new COF.
+    pub header: [u8; 25],
+    /// Bytes after the priority table, kept for byte-identical write-back.
+    pub trailing: Vec<u8>,
 }
 
 impl CofLayer {
@@ -188,7 +194,73 @@ impl Cof {
             keyframes: padded,
             layer_order,
             missing_bytes: missing,
+            header: {
+                let mut h = [0u8; 25];
+                for (i, b) in h.iter_mut().enumerate() {
+                    *b = header.get(3 + i).copied().unwrap_or(0);
+                }
+                h
+            },
+            trailing: bytes.get(records_end + have..).unwrap_or(&[]).to_vec(),
         })
+    }
+
+    /// The header bytes 3..28 the game's own object COFs have: version 0x14,
+    /// `00 00 13 00`, the box (`x_min`, `x_max`, `y_min`, `y_max`, i32 LE) and
+    /// the animation rate (i16 LE).
+    pub fn object_header(x_min: i32, x_max: i32, y_min: i32, y_max: i32, rate: i16) -> [u8; 25] {
+        let mut h = [0u8; 25];
+        h[0] = 0x14;
+        h[3] = 0x13;
+        h[5..9].copy_from_slice(&x_min.to_le_bytes());
+        h[9..13].copy_from_slice(&x_max.to_le_bytes());
+        h[13..17].copy_from_slice(&y_min.to_le_bytes());
+        h[17..21].copy_from_slice(&y_max.to_le_bytes());
+        h[21..23].copy_from_slice(&rate.to_le_bytes());
+        h
+    }
+
+    /// The file bytes. A parsed COF writes back byte-identically, including a
+    /// short file (the zero-filled `missing_bytes` are left off) and trailing
+    /// bytes. Errors when the model is inconsistent: key-frame or priority
+    /// tables of the wrong length, or more than 255 layers.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let bad = |detail: &str| FormatError::Invalid {
+            format: FORMAT,
+            what: "model",
+            offset: 0,
+            detail: detail.to_owned(),
+        };
+        let frames = usize::from(self.frames_per_direction);
+        let n = self.layers.len();
+        if n > 255 {
+            return Err(bad("more than 255 layers"));
+        }
+        if self.keyframes.len() != frames {
+            return Err(bad("key-frame table length != frames per direction"));
+        }
+        if self.layer_order.len() != usize::from(self.directions) * frames * n {
+            return Err(bad("priority table length != directions * frames * layers"));
+        }
+        let mut out =
+            Vec::with_capacity(HEADER_LEN + n * LAYER_LEN + frames + self.layer_order.len());
+        out.extend_from_slice(&[n as u8, self.frames_per_direction, self.directions]);
+        out.extend_from_slice(&self.header);
+        for l in &self.layers {
+            out.extend_from_slice(&[
+                l.component,
+                l.shadow,
+                l.selectable,
+                l.transparent,
+                l.draw_effect,
+            ]);
+            out.extend_from_slice(&l.weapon_class);
+        }
+        out.extend_from_slice(&self.keyframes);
+        out.extend_from_slice(&self.layer_order);
+        out.truncate(out.len().saturating_sub(self.missing_bytes));
+        out.extend_from_slice(&self.trailing);
+        Ok(out)
     }
 
     /// The record that describes `component`. When a COF lists a component

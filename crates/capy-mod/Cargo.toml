@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 d2-formats.workspace = true
 capy-paint.workspace = true
+capy-render.workspace = true
+capy-edit.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

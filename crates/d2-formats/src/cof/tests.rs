@@ -277,3 +277,95 @@ fn corpus_cof_files_parse() {
         assert!(permutation_rows * 100 >= rows * 99);
     }
 }
+
+// ---------------------------------------------------------------------------
+// writer
+
+#[test]
+fn sample_writes_back_identically() {
+    let (bytes, _) = sample();
+    assert_eq!(Cof::parse(&bytes).unwrap().to_bytes().unwrap(), bytes);
+}
+
+#[test]
+fn short_and_trailing_files_write_back_identically() {
+    let (mut bytes, _) = sample();
+    bytes.extend_from_slice(b"tail");
+    assert_eq!(Cof::parse(&bytes).unwrap().to_bytes().unwrap(), bytes);
+    let (mut short, _) = sample();
+    short.truncate(short.len() - 5);
+    let cof = Cof::parse(&short).unwrap();
+    assert_eq!(cof.missing_bytes, 5);
+    assert_eq!(cof.to_bytes().unwrap(), short);
+}
+
+#[test]
+fn object_header_matches_the_games_object_cofs() {
+    let mut cof = Cof::parse(&sample().0).unwrap();
+    cof.header = Cof::object_header(-10, 20, -30, 40, 256);
+    let out = cof.to_bytes().unwrap();
+    assert_eq!(&out[3..8], &[0x14, 0, 0, 0x13, 0]);
+    assert_eq!(i32::from_le_bytes(out[8..12].try_into().unwrap()), -10);
+    assert_eq!(i32::from_le_bytes(out[12..16].try_into().unwrap()), 20);
+    assert_eq!(i32::from_le_bytes(out[16..20].try_into().unwrap()), -30);
+    assert_eq!(i32::from_le_bytes(out[20..24].try_into().unwrap()), 40);
+    assert_eq!(i16::from_le_bytes(out[24..26].try_into().unwrap()), 256);
+}
+
+#[test]
+fn inconsistent_models_are_refused() {
+    let mut cof = Cof::parse(&sample().0).unwrap();
+    cof.keyframes.pop();
+    assert!(cof.to_bytes().is_err());
+    let mut cof = Cof::parse(&sample().0).unwrap();
+    cof.layer_order.pop();
+    assert!(cof.to_bytes().is_err());
+}
+
+proptest! {
+    #[test]
+    fn any_parsable_bytes_write_back_identically(
+        bytes in prop::collection::vec(any::<u8>(), 0..400),
+        head in (0u8..6, 0u8..5, 0u8..5),
+    ) {
+        let mut b = bytes;
+        if b.len() >= 3 {
+            b[0] = head.0;
+            b[1] = head.1;
+            b[2] = head.2;
+        }
+        if let Ok(cof) = Cof::parse(&b) {
+            prop_assert_eq!(cof.to_bytes().unwrap(), b);
+        }
+    }
+}
+
+#[test]
+fn corpus_cof_files_write_back_identically() {
+    let (mut files, mut identical, mut unreadable) = (0usize, 0usize, 0usize);
+    let mut failures = Vec::new();
+    for profile in ["vanilla", "mxl"] {
+        let Some(root) = testutil::extracted(profile) else {
+            println!("skipped: extracted/{profile} missing");
+            continue;
+        };
+        for path in testutil::find_files(&root, "cof") {
+            files += 1;
+            let bytes = std::fs::read(&path).unwrap();
+            match Cof::parse(&bytes) {
+                Err(_) => unreadable += 1,
+                Ok(c) => match c.to_bytes() {
+                    Ok(out) if out == bytes => identical += 1,
+                    other => {
+                        failures.push(format!("{}: {:?}", path.display(), other.map(|o| o.len())))
+                    }
+                },
+            }
+        }
+    }
+    println!(
+        "cof write-back: {files} files, {identical} identical, {unreadable} unreadable, failures {failures:#?}"
+    );
+    assert!(failures.is_empty());
+    assert_eq!(identical + unreadable, files);
+}

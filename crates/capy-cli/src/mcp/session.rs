@@ -52,6 +52,8 @@ pub(crate) struct Session {
     open: Option<Open>,
 }
 
+mod extra;
+
 const LAYER_NAMES: [&str; 7] = [
     "floor1", "floor2", "wall1", "wall2", "wall3", "wall4", "shadow",
 ];
@@ -293,6 +295,13 @@ impl Session {
             "resize_map" => self.resize_map(args),
             "set_cell_flags" => self.set_cell_flags(args),
             "list_objects" => self.list_objects(),
+            "regions" => self.regions(args),
+            "no_spawn_area" => self.no_spawn_area(args),
+            "list_tiles" => self.list_tiles(args),
+            "list_placeable" => self.list_placeable(args),
+            "add_layer" => self.add_layer(args),
+            "clear" => self.clear(args),
+            "history" => self.history(),
             "add_object" => self.add_object(args),
             "edit_objects" => self.edit_objects(args),
             "undo" => self.undo_redo(args, true),
@@ -1308,6 +1317,48 @@ pub(crate) fn tools_json() -> Value {
             "set_cell_flags",
             "Set or clear cell flags on one layer for many cells: hidden, unwalkable (DS1 cell bit 17), or raw prop1-prop4 bytes (applied first). One undo step.",
             json!({"layer":layer,"cells":cells,"rect":rect,"only_tiles":{"type":"boolean"},"hidden":{"type":"boolean"},"unwalkable":{"type":"boolean"},"prop1":{"type":"integer"},"prop2":{"type":"integer"},"prop3":{"type":"integer"},"prop4":{"type":"integer"}}),
+            &[]
+        ),
+        t(
+            "regions",
+            "The spawn regions of the map's 8x8 game rooms, as the game works them out with LvlPrest Logicals=1: parts of a room bounded by wall1 walls, each with its seed (first cell scanned). A region whose seed has a hidden floor1 tile (or main index 30) is a node: no random monsters there. Rooms with a level warp spawn nothing.",
+            json!({"rect":rect,"spawning_only":{"type":"boolean","description":"Only list regions monsters can spawn in."}}),
+            &[]
+        ),
+        t(
+            "no_spawn_area",
+            "Stop random monsters spawning in an area while keeping it walkable and looking the same: every region of each 8x8 room touching the cells gets a hidden floor1 tile at its seed (a floored seed's tile is copied to floor2 first; a seed without floor gets a hidden floor tile and the unwalkable bit). Adds floor2 when needed. Needs LvlPrest Logicals=1. One undo step.",
+            json!({"cells":cells,"rect":rect,"regions":{"type":"array","items":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"description":"Cells [[x, y], ...]: each stands for the whole spawn region it is in (see the regions tool)."},"whole_rooms":{"type":"boolean","description":"Change every floored cell of the rooms, not only the region seeds."}}),
+            &[]
+        ),
+        t(
+            "list_tiles",
+            "The tiles this map's DT1s provide for a layer kind, with their kind (orientation) names, variant counts and source DT1. Special tiles (warps, entries) are named.",
+            json!({"kind":{"type":"string","enum":["floor","wall","shadow"]},"dt1":{"type":"string","description":"Only tiles from DT1s whose path contains this."},"orientation":{"type":"integer"},"limit":{"type":"integer"}}),
+            &["kind"]
+        ),
+        t(
+            "list_placeable",
+            "Objects and NPCs that can be placed in this map (type, id, name), optionally filtered by name. With act, objects of another act, listed with the id that reaches them from this map: negative for earlier acts, 150 + their objects.txt row for later ones.",
+            json!({"filter":{"type":"string"},"type":{"type":"integer","description":"1 = NPCs, 2 = objects"},"act":{"type":"integer","description":"1-5 (default: the map's act). NPCs only come from the map's own act."}}),
+            &[]
+        ),
+        t(
+            "add_layer",
+            "Add empty floor or wall layers to the map (at most 2 floor and 4 wall layers). One undo step.",
+            json!({"kind":{"type":"string","enum":["floor","wall"]},"count":{"type":"integer","description":"How many (default 1)."}}),
+            &["kind"]
+        ),
+        t(
+            "clear",
+            "Clear a rectangle: the given layers (default all), and the objects/NPCs standing in it when objects is true. One undo step.",
+            json!({"rect":rect,"layers":{"type":"array","items":layer},"objects":{"type":"boolean"}}),
+            &["rect"]
+        ),
+        t(
+            "history",
+            "The edits made since the map was opened (newest last), then the undone ones.",
+            json!({}),
             &[]
         ),
         t(

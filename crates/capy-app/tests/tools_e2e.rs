@@ -142,6 +142,64 @@ fn a_preset_is_saved_placed_and_undone() {
 }
 
 #[test]
+fn a_preset_package_exports_imports_and_copies_its_tiles_into_a_dt1() {
+    if !enabled() {
+        return;
+    }
+    let work = tempfile::tempdir().unwrap();
+    let zip = work.path().join("presets.zip");
+    let (code, stderr) = run_script(
+        &work.path().join("a"),
+        &format!(
+            "open {MAP}\n\
+             tool wait-catalog\n\
+             select-box floor0 5 5 8 8\n\
+             tool preset-save Patch Test\n\
+             tool preset-export {}\n",
+            zip.display()
+        ),
+    );
+    assert_eq!(code, Some(0), "export failed:\n{stderr}");
+    let entries = capy_history::zip::read_zip(&std::fs::read(&zip).unwrap()).unwrap();
+    assert!(entries.iter().any(|(n, _)| n == "ds1studio-presets.json"));
+    assert!(entries.iter().any(|(n, _)| n.starts_with("presets/")));
+    // The preset records where its tiles come from.
+    let (_, json) = entries
+        .iter()
+        .find(|(n, _)| n.starts_with("presets/"))
+        .unwrap();
+    let preset = capy_edit::presets::Preset::from_json(std::str::from_utf8(json).unwrap()).unwrap();
+    assert!(!preset.tile_sources.is_empty() && !preset.dt1s.is_empty());
+
+    let home_b = work.path().join("b");
+    let other = "data\\global\\tiles\\act4\\lava\\entry1.ds1";
+    let (code, stderr) = run_script(
+        &home_b,
+        &format!(
+            "tool preset-import {}\n\
+             open {other}\n\
+             tool wait-catalog\n\
+             tool preset-copy-tiles Patch\n",
+            zip.display()
+        ),
+    );
+    assert_eq!(code, Some(0), "import failed:\n{stderr}");
+    let copy = stderr
+        .lines()
+        .find(|l| l.contains("preset-copy-tiles:"))
+        .unwrap_or_else(|| panic!("no copy result:\n{stderr}"));
+    eprintln!("{copy}");
+    if copy.contains("Copied") {
+        let own = saves(&home_b).join("data\\global\\tiles\\act4\\lava\\entry1_custom.dt1");
+        let dt1 = d2_formats::dt1::Dt1::parse(&std::fs::read(own).unwrap()).unwrap();
+        assert!(!dt1.tiles.is_empty());
+    }
+    let dir = saves(&home_b).join("data\\ds1studio\\presets");
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    assert!(changed(&home_b).contains("ds1studio"));
+}
+
+#[test]
 fn collision_flags_are_painted_and_saved() {
     if !enabled() {
         return;
@@ -230,4 +288,38 @@ fn a_map_package_exports_and_imports_into_another_profile_home() {
         .map(|(_, b)| b.clone())
         .expect("map in the package");
     assert_eq!(imported, in_zip);
+}
+
+#[test]
+fn a_custom_object_writes_dc6_cof_and_objects_txt() {
+    if !enabled() {
+        return;
+    }
+    let work = tempfile::tempdir().unwrap();
+    let png = work.path().join("obj.png");
+    let img = image::RgbaImage::from_fn(32, 16, |x, y| {
+        image::Rgba([(x * 8) as u8, (y * 16) as u8, 90, 255])
+    });
+    img.save(&png).unwrap();
+    let home = work.path().join("h");
+    let script = format!(
+        "tool custom-object 20 2 0 {} Test Banner\n\
+         tool assert-saved data\\global\\excel\\objects.txt\n",
+        png.display()
+    );
+    let (code, stderr) = run_script(&home, &script);
+    assert_eq!(code, Some(0), "script failed:\n{stderr}");
+    let objects = std::fs::read(saves(&home).join("data\\global\\excel\\objects.txt")).unwrap();
+    let doc = d2_formats::txt::TxtDoc::parse(&objects);
+    let token = doc.cell(20, doc.column("Token").unwrap()).unwrap();
+    assert_eq!(token.len(), 2);
+    let t = token.to_lowercase();
+    let base = saves(&home).join(format!("data\\global\\objects\\{t}"));
+    let cof = std::fs::read(base.join(format!("cof\\{t}nuhth.cof"))).expect("the COF");
+    let cof = d2_formats::cof::Cof::parse(&cof).unwrap();
+    assert_eq!((cof.directions, cof.frames_per_direction), (1, 2));
+    let dc6 = std::fs::read(base.join(format!("tr\\{t}trlitnuhth.dc6"))).expect("the DC6");
+    assert_eq!(d2_formats::dc6::Dc6::parse(&dc6).unwrap().frames.len(), 2);
+    let log = changed(&home);
+    assert!(log.contains(".cof") && log.contains(".dc6") && log.contains("objects.txt"));
 }

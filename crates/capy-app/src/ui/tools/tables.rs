@@ -130,6 +130,31 @@ pub fn open_table(state: &mut AppState, name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Opens a table and selects the row whose `Name`, `Def` or `Id` is `key`
+/// (case-insensitive), scrolling to it. A missing row leaves it unselected.
+pub fn open_table_at(state: &mut AppState, name: &str, key: Option<&str>) -> Result<(), String> {
+    open_table(state, name)?;
+    let Some(key) = key.map(str::trim).filter(|k| !k.is_empty()) else {
+        return Ok(());
+    };
+    let t = &mut state.tools.tables;
+    let Some(doc) = &t.doc else { return Ok(()) };
+    let found = ["Name", "Def", "Id"].iter().find_map(|h| {
+        let c = doc.column(h)?;
+        (0..doc.row_count())
+            .find(|&r| {
+                doc.cell(r, c)
+                    .is_some_and(|v| v.trim().eq_ignore_ascii_case(key))
+            })
+            .map(|r| (r, c))
+    });
+    if let Some((r, c)) = found {
+        t.sel = Some((r, c));
+        t.scroll_to = Some(r);
+    }
+    Ok(())
+}
+
 /// Writes the open table to the saves.
 pub fn save_table(state: &mut AppState) -> Result<(), String> {
     let (name, doc) = {

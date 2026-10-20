@@ -129,6 +129,15 @@ impl Document {
         self.redo.last().map(Patch::label)
     }
 
+    /// The labels of the edits that can be undone (oldest first) and of those
+    /// undone that can be redone (the next redo first).
+    pub fn history(&self) -> (Vec<&str>, Vec<&str>) {
+        (
+            self.undo.iter().map(Patch::label).collect(),
+            self.redo.iter().rev().map(Patch::label).collect(),
+        )
+    }
+
     /// Monotonic; bumps on every apply/undo/redo. The renderer re-uploads on change.
     pub fn revision(&self) -> u64 {
         self.revision

@@ -9,7 +9,15 @@ use capy_edit::presets::{
     Preset, PresetBuilder, SuggestOptions, categories, sort_presets, suggest_presets,
 };
 use capy_edit::{CellValue, LayerRef};
+use capy_mod::preset_package::{
+    TileFile, build_preset_package, fill_sources, plan_preset_import, prepare_preset_library,
+};
+use capy_mod::tiles_review::append_tiles;
+use capy_mod::tiles_review::keys_of;
+use capy_mod::tiles_review::own_tiles_path;
 use d2_assets::GamePath;
+use d2_formats::dt1::Dt1;
+use std::collections::BTreeSet;
 
 use super::io;
 use crate::edit::paste::PasteSession;
@@ -74,6 +82,24 @@ fn refresh(state: &mut AppState) {
 
 /// Saves a preset into the library (saves + CHANGED.txt + snapshot).
 pub fn save_preset(state: &mut AppState, preset: &Preset) -> Result<String, String> {
+    let mut preset = preset.clone();
+    // Record which DT1 each tile comes from (as the open map resolves it), so
+    // the preset can be packaged and its tiles copied elsewhere.
+    if preset.tile_sources.is_empty()
+        && let Some(tiles) = io::doc_tiles(state)
+    {
+        fill_sources(&mut preset, &|id| {
+            let r = tiles.resolve(d2_formats::dt1::TileKey {
+                orientation: id.orientation as u8,
+                main: id.main as u8,
+                sub: id.sub as u8,
+            })?;
+            tiles
+                .dt1_paths()
+                .get(r.dt1)
+                .map(|p| p.as_str().replace('\\', "/"))
+        });
+    }
     let path = GamePath::new(&preset.path());
     io::save_game(state, &path, preset.to_json().as_bytes())?;
     state.tools.presets.stale = true;
@@ -120,6 +146,198 @@ pub fn place_now(state: &mut AppState, preset: &Preset, at: (i32, i32)) -> Resul
     } else {
         Err("The preset could not be placed there".into())
     }
+}
+
+/// Which presets an export covers.
+pub enum ExportScope<'a> {
+    /// Every preset of the library.
+    All,
+    /// Presets of one category.
+    Category(&'a str),
+    /// One preset, by name.
+    Named(&'a str),
+}
+
+/// Writes a preset package (`.zip`) with the mod's own tile libraries the
+/// presets use. The game's own DT1s are left out.
+pub fn export_run(
+    state: &mut AppState,
+    scope: ExportScope<'_>,
+    out: &str,
+) -> Result<String, String> {
+    let library = load_library(state);
+    let chosen: Vec<Preset> = library
+        .into_iter()
+        .filter(|p| match scope {
+            ExportScope::All => true,
+            ExportScope::Category(c) => p.category == c,
+            ExportScope::Named(n) => p.name == n,
+        })
+        .collect();
+    if chosen.is_empty() {
+        return Err("There is no preset to export".into());
+    }
+    let session = state.session.as_ref().ok_or("No profile is open yet")?;
+    let overlay = session.overlay.clone();
+    let locate = |p: &str| -> Option<TileFile> {
+        let gp = GamePath::new(p);
+        let (layer, bytes) = overlay.read(&gp).ok().flatten()?;
+        let base_game =
+            crate::state::source_info(&overlay, layer).category == crate::doc::SourceCategory::Base;
+        Some(TileFile {
+            bytes,
+            base_game,
+            path: gp.as_str().to_owned(),
+        })
+    };
+    let built = build_preset_package(&chosen, &locate);
+    let mut zip = capy_history::zip::ZipWriter::new();
+    for (name, bytes) in &built.files {
+        zip.add(name, bytes).map_err(|e| e.to_string())?;
+    }
+    let bytes = zip.finish().map_err(|e| e.to_string())?;
+    if let Some(parent) = std::path::Path::new(out).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    capy_history::atomic_write(std::path::Path::new(out), &bytes)
+        .map_err(|e| format!("cannot write {out}: {e}"))?;
+    let mut msg = format!(
+        "Exported {} preset(s) and {} tile librar{} to {out}",
+        chosen.len(),
+        built.dt1s.len(),
+        if built.dt1s.len() == 1 { "y" } else { "ies" }
+    );
+    if !built.missing.is_empty() {
+        msg.push_str(&format!("; not found: {}", built.missing.join(", ")));
+    }
+    Ok(msg)
+}
+
+/// Imports a preset package (`.zip`) or a single preset (`.json`): the tile
+/// libraries it brings go into the saves (a different file under the same name
+/// is kept and the import renamed), then the presets.
+pub fn import_run(state: &mut AppState, path: &str) -> Result<String, String> {
+    let bytes = std::fs::read(path.trim()).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let entries = if bytes.starts_with(b"PK") {
+        Some(capy_history::zip::read_zip(&bytes).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+    let existing = load_library(state);
+    let overlay = state
+        .session
+        .as_ref()
+        .ok_or("No profile is open yet")?
+        .overlay
+        .clone();
+    let read = |p: &str| overlay.read_bytes(&GamePath::new(p)).ok().flatten();
+    let plan = plan_preset_import(&bytes, entries.as_deref(), &existing, &read)
+        .map_err(|e| e.to_string())?;
+    for (p, data) in &plan.dt1_writes {
+        io::save_game(state, &GamePath::new(p), data)?;
+    }
+    for p in &plan.presets {
+        save_preset(state, p)?;
+    }
+    let mut msg = format!(
+        "Imported {} preset(s), wrote {} tile librar{}",
+        plan.presets.len(),
+        plan.dt1_writes.len(),
+        if plan.dt1_writes.len() == 1 {
+            "y"
+        } else {
+            "ies"
+        }
+    );
+    if !plan.duplicates.is_empty() {
+        msg.push_str(&format!(
+            "; {} already here unchanged",
+            plan.duplicates.len()
+        ));
+    }
+    if !plan.renamed.is_empty() {
+        msg.push_str(&format!("; {} library renamed", plan.renamed.len()));
+    }
+    for p in &plan.problems {
+        msg.push_str(&format!("; {p}"));
+    }
+    Ok(msg)
+}
+
+/// Copies the tiles the preset needs and the open map lacks into the map's
+/// own DT1 (`<map>_custom.dt1`, appended to when it exists), lists that DT1 in
+/// the map, and re-saves the preset pointing at it.
+pub fn copy_tiles_run(state: &mut AppState, preset: &Preset) -> Result<String, String> {
+    let (tiles, map_path) = {
+        let doc = state.active_doc().ok_or("Open a map first")?;
+        (
+            io::doc_tiles(state).ok_or("The map's tiles could not be loaded")?,
+            doc.path.as_str().to_owned(),
+        )
+    };
+    let rel = own_tiles_path(&io::tiles_rel(&map_path), None, &[]);
+    let path = io::tiles_game(&rel);
+    let existing = io::read_game(state, &path)?.and_then(|b| Dt1::parse(&b).ok());
+    let target = |id: capy_mod::tiles_review::TileId| -> Vec<String> {
+        tiles
+            .candidates(d2_formats::dt1::TileKey {
+                orientation: id.orientation as u8,
+                main: id.main as u8,
+                sub: id.sub as u8,
+            })
+            .iter()
+            .filter_map(|r| tiles.dt1_paths().get(r.dt1))
+            .map(|p| p.as_str().replace('\\', "/"))
+            .collect()
+    };
+    let mut taken: BTreeSet<capy_mod::tiles_review::TileId> = tiles
+        .keys()
+        .map(|(k, _)| {
+            capy_mod::tiles_review::TileId::new(
+                i32::from(k.orientation),
+                i32::from(k.main),
+                i32::from(k.sub),
+            )
+        })
+        .collect();
+    taken.extend(keys_of(existing.as_ref()));
+    let overlay = state
+        .session
+        .as_ref()
+        .ok_or("No profile is open yet")?
+        .overlay
+        .clone();
+    let read = |p: &str| overlay.read_bytes(&GamePath::new(p)).ok().flatten();
+    let own = path.as_str().replace('\\', "/");
+    let out = prepare_preset_library(preset, &own, &target, &read, &BTreeSet::new(), &taken)
+        .map_err(|e| e.to_string())?;
+    let Some(new) = out.dt1 else {
+        return Ok("The map already has every tile this preset needs".into());
+    };
+    let (dt1, _) = append_tiles(existing.as_ref(), new.tiles);
+    let bytes = dt1
+        .to_bytes()
+        .map_err(|e| format!("cannot write the DT1: {e}"))?;
+    io::save_game(state, &path, &bytes)?;
+    // The map has to load the new library for the tiles to show.
+    let mut ds1 = state
+        .active_doc()
+        .ok_or("Open a map first")?
+        .edit
+        .ds1()
+        .clone();
+    let add = capy_mod::compat::Edit::AddDt1s {
+        paths: vec![rel.clone()],
+    };
+    if add.apply_ds1(&mut ds1) {
+        super::game::replace_map(state, "Add the preset's tile library", ds1)?;
+    }
+    save_preset(state, &out.preset)?;
+    Ok(format!(
+        "Copied {} tile(s) into {rel} ({} renumbered); the preset now uses it",
+        out.plan.records.len(),
+        out.plan.renumbered.len()
+    ))
 }
 
 fn delete_preset(state: &mut AppState, preset: &Preset) -> Result<(), String> {
@@ -224,7 +442,71 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             delete_idx = sel;
         }
     });
+    let mut export = false;
+    let mut import = false;
+    let mut copy_tiles = false;
+    ui.horizontal(|ui| {
+        let sel = p.selected.filter(|i| *i < p.library.len());
+        export = ui
+            .add_enabled(!p.library.is_empty(), egui::Button::new("Export..."))
+            .on_hover_text(
+                "Saves a .zip with the selected preset (or the chosen category, or all of them) \
+                 and the mod's own tile libraries they use",
+            )
+            .clicked();
+        import = ui
+            .button("Import...")
+            .on_hover_text(
+                "Adds the presets (and their tile libraries) from a package or a preset file",
+            )
+            .clicked();
+        copy_tiles = ui
+            .add_enabled(
+                sel.is_some() && state.active_doc().is_some(),
+                egui::Button::new("Copy tiles to DT1"),
+            )
+            .on_hover_text(
+                "Copies the tiles this preset needs and the open map lacks into the map's own DT1",
+            )
+            .clicked();
+    });
     super::message(ui, &p.msg);
+    if export {
+        let name = match p.selected.and_then(|i| p.library.get(i)) {
+            Some(pr) => pr.name.clone(),
+            None if !p.category.is_empty() => p.category.clone(),
+            None => "presets".to_owned(),
+        };
+        if let Some(out) = rfd::FileDialog::new()
+            .add_filter("preset package", &["zip"])
+            .set_file_name(format!("{name}.zip"))
+            .save_file()
+        {
+            let sel_name = p
+                .selected
+                .and_then(|i| p.library.get(i))
+                .map(|pr| pr.name.clone());
+            let category = p.category.clone();
+            let scope = match (&sel_name, category.is_empty()) {
+                (Some(n), _) => ExportScope::Named(n),
+                (None, false) => ExportScope::Category(&category),
+                (None, true) => ExportScope::All,
+            };
+            p.msg = export_run(state, scope, &out.display().to_string()).unwrap_or_else(|e| e);
+        }
+    }
+    if import
+        && let Some(file) = rfd::FileDialog::new()
+            .add_filter("preset package or preset", &["zip", "json"])
+            .pick_file()
+    {
+        p.msg = import_run(state, &file.display().to_string()).unwrap_or_else(|e| e);
+        p.stale = true;
+    }
+    if copy_tiles && let Some(pr) = p.selected.and_then(|i| p.library.get(i)).cloned() {
+        p.msg = copy_tiles_run(state, &pr).unwrap_or_else(|e| e);
+        p.stale = true;
+    }
     if let Some(i) = place_idx
         && let Some(pr) = p.library.get(i).cloned()
     {

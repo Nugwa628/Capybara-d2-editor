@@ -16,6 +16,7 @@ mod doc_util;
 pub mod entry_text;
 pub mod level_tables;
 pub mod lvl_error;
+pub mod preset_package;
 mod txt_util;
 pub mod type_package;
 

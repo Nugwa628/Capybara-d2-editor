@@ -274,3 +274,24 @@ cur_frame  wraps at fpd
    `cof-pipeline-1.13c.verification.md`. No binary or MPQ data is in the reference tree.
 10. **obj.txt Type/Id resolution** (guide §2.5) is not implemented in the repo. If the Rust side needs
     game-accurate DS1 unit resolution, it must come from a different source than `obj.txt`.
+
+---
+
+## Writer (`Cof::to_bytes`)
+
+`d2_formats::cof::Cof` keeps what the parser does not decode, so a parsed file writes back
+byte-identically:
+
+- `header`: bytes 3..28 as stored (25 bytes). For a new COF, `Cof::object_header(x_min, x_max,
+  y_min, y_max, rate)` builds the header the game's own object COFs have: version `0x14` at byte 3,
+  `00 00 13 00` after it, then the box (four `i32` LE at 8, 12, 16, 20) and the animation rate (`i16`
+  LE at 24). Same layout ds1-studio's `writeCof` writes.
+- `trailing`: bytes after the priority table (the parser ignores them).
+- `missing_bytes`: a short file (three Median XL COFs) is written short again; the zero fill is cut.
+
+`to_bytes` refuses a model whose key-frame table is not `frames_per_direction` long, whose priority
+table is not `directions * frames * layers` long, or with more than 255 layers.
+
+Gate: all 8,817 COFs of the vanilla and Median XL corpora (8,815 readable; `amblxbow.cof` is noise in
+both) write back identically (`corpus_cof_files_write_back_identically`, full run with
+`CAPY_FULL_CORPUS=1`).

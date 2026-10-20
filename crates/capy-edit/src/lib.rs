@@ -90,6 +90,7 @@ pub mod diff;
 pub mod document;
 pub mod error;
 pub mod layer;
+pub mod no_spawn;
 pub mod patch;
 pub mod presets;
 pub mod selection;

@@ -10,9 +10,8 @@
 //! optionally animated, with optional light and collision. Its graphics are a
 //! COF and one DC6 layer (TR) under `data/global/objects/<token>/`.
 //!
-//! This module is the table side plus the file plan. The DC6 is encoded here
-//! (`Dc6::from_frames`); `d2-formats` has no COF writer yet, so the COF is
-//! returned as a [`CofPlan`] for the caller to encode.
+//! This module is the table side plus the file plan. The DC6 (`Dc6::from_frames`)
+//! and the COF (`Cof::to_bytes`) are both encoded here.
 
 use std::collections::{HashMap, HashSet};
 
@@ -421,7 +420,7 @@ pub struct CofLayerPlan {
     pub weapon_class: String,
 }
 
-/// The COF to write (`d2-formats` has no COF encoder yet).
+/// The COF to write (encoded in [`ObjectFilePlan::cof_bytes`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CofPlan {
     pub path: String,
@@ -439,6 +438,8 @@ pub struct CofPlan {
 #[derive(Clone, Debug)]
 pub struct ObjectFilePlan {
     pub cof: CofPlan,
+    /// The encoded COF (written at `cof.path`).
+    pub cof_bytes: Vec<u8>,
     pub dc6_path: String,
     /// The encoded DC6 (one direction, one frame per picture frame).
     pub dc6: Vec<u8>,
@@ -495,9 +496,56 @@ pub fn custom_object_files(
         })
         .collect();
     let dc6 = Dc6::from_frames(&[placed])?.to_bytes()?;
+    let cof_bytes = encode_cof(&cof)?;
     Ok(ObjectFilePlan {
         cof,
+        cof_bytes,
         dc6_path: format!("{OBJECTS_DIR}{t}/tr/{t}trlitnuhth.dc6"),
         dc6,
     })
+}
+
+/// Encodes a [`CofPlan`]: the game's object COF header, every layer's key
+/// frame byte zero and each frame drawing the layers in their own order.
+fn encode_cof(plan: &CofPlan) -> Result<Vec<u8>> {
+    use d2_formats::cof::{Cof, CofLayer};
+    let layers: Vec<CofLayer> = plan
+        .layers
+        .iter()
+        .map(|l| {
+            let mut wc = [0u8; 4];
+            for (d, s) in wc.iter_mut().zip(l.weapon_class.to_lowercase().bytes()) {
+                *d = s;
+            }
+            CofLayer {
+                component: l.component,
+                shadow: u8::from(l.shadow),
+                selectable: u8::from(l.selectable),
+                transparent: u8::from(l.transparent),
+                draw_effect: l.draw_effect,
+                weapon_class: wc,
+            }
+        })
+        .collect();
+    let frames = usize::from(plan.directions) * usize::from(plan.frames_per_direction);
+    let layer_order: Vec<u8> = (0..frames)
+        .flat_map(|_| layers.iter().map(|l| l.component))
+        .collect();
+    let cof = Cof {
+        directions: plan.directions,
+        frames_per_direction: plan.frames_per_direction,
+        layers,
+        keyframes: vec![0; usize::from(plan.frames_per_direction)],
+        layer_order,
+        missing_bytes: 0,
+        header: Cof::object_header(
+            plan.x_min,
+            plan.x_max,
+            plan.y_min,
+            plan.y_max,
+            plan.animation_rate as i16,
+        ),
+        trailing: Vec::new(),
+    };
+    Ok(cof.to_bytes()?)
 }
