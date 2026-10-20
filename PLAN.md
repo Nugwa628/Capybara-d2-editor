@@ -1,6 +1,6 @@
 # Capybara's D2 Editor (formerly Capybara Map Editor) — Plan
 
-Status: **Release 1.1.0 published** (2026-10-20, github.com/Nugwa628/Capybara-d2-editor): 1.0.0 plus P7 palette tools. Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC. Waiting on the user's DC6 examples to refine palette memory.
+Status: **Release 1.1.0 published** (2026-10-20, github.com/Nugwa628/Capybara-d2-editor): 1.0.0 plus P7 palette tools. Deferred by the user: CLIP search, 16-direction sprite turning, COF/AnimData editors, D2R/CASC. Waiting on the user's DC6 examples to refine palette memory. **In progress: ds1-studio parity (P8–P13), started 2026-10-20.**
 
 ## Decisions
 - **Language:** Rust (stable), shipped as a single exe for x86_64 Windows. Linux/macOS are possible later but not a goal now.
@@ -261,6 +261,141 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
   - Planner merged (2026-10-19): act5->act1 default plan keeps every index outside 225-254, re-matches 29, mean error 0.40, worst 10.5 (index 239, a saturated cyan Act 1 lacks). UI decisions (lead): defaults OkLab, keep exact on, lightness weight 1.0 as an advanced slider 0.5-3, Adjust sliders +-0.3 default 0; when Adjust is non-zero and keep exact is on, show a hint with a one-click "turn off keep exact" (never change it silently); overrides outside the allowed target set are honoured but flagged in the plan table; entries above error 5 marked visible, above 10 obvious.
   - Contracts: `docs/api/d2-formats.md` (remap), `capy-paint.md` (remap planner), `capy-index.md` (palette memory). Acceptance: act5 -> act1 DT1 conversion with overrides round-trips (only pixel bytes differ, output indices within the allowed set except explicit overrides, identity table = identical file) on the full corpora; DCC conversions decode to the mapped frames; app e2e converts a real act5 DT1 and a DC6, saves, reopens, and the palette is remembered across restarts.
 
+## ds1-studio parity (P8–P13, user request 2026-10-20, in progress)
+Goal: give end users ds1-studio's UI and layout for map editing, then add every ds1-studio feature Capybara lacks.
+- **Reference:** ds1-studio v0.2.63, commit `1d01dcd` (MIT, "Copyright (c) 2026 RoofooEvazan"). React + TypeScript + WebGL2 in Tauri 2; all parsing and editing is TypeScript.
+  - Nothing is copied. As with DS1Edit, it is a spec and behaviour reference. Each feature is rebuilt in Rust and its vitest cases (`test/*.test.ts`) are translated into Rust tests.
+  - Keep a clone in `reference/ds1-studio` (gitignored like DS1Edit).
+  - **Credit (user, 2026-10-20: "give all credit"):** NOTICE section 3 (with its MIT text) and a link near the top of README to the original, `github.com/RoofooEvazan/ds1-studio`, and to the fork the user linked, `github.com/D2R-Gimli/ds1-studio`.
+- **Unchanged decisions:** the game folder stays read-only, nothing writes MPQs, and every output goes to `capybara\saves\<profile>\<game path>` with a `CHANGED.txt` entry and a history snapshot. ds1-studio writes into the mod folder with a `.bak`; we don't.
+  - Maps keep their own DS1 version (ds1-studio always writes v18).
+- **Kept from Capybara:** history and snapshots, the indexed tile search, Sprites mode, palette tools, Median XL support.
+- **How each feature is ported:**
+  1. Read the ds1-studio module and write its behaviour into `docs/specs/` or `docs/api/`.
+  2. Put the logic in a pure crate (`d2-formats`, `capy-edit` or a new one), with no UI.
+  3. Translate the matching vitest cases into Rust tests.
+  4. Build the egui UI through the P8 command registry.
+  5. Add an app e2e test (`CAPY_SCRIPT`/`CAPY_SCREENSHOT`), then update `docs/user-guide.md` and `CHANGELOG.md`.
+- Every edit is a `capy-edit` patch, so undo and redo work. Every new writer must round-trip byte-identically on the full vanilla and Median XL corpora before anything uses it.
+
+- **Order and agents (user, 2026-10-20: "whatever order completes fastest; Haiku and Sonnet where Opus wouldn't be better").**
+  - capy-app is the bottleneck (one warm worktree, long compiles), so its UI work runs one phase at a time. Everything outside capy-app runs in parallel.
+  - **Wave A, in parallel:**
+    - P8 shell in capy-app (Opus).
+    - DT1 writer (Opus).
+    - `.txt` and `.tbl` writers (Sonnet).
+    - capy-edit patches for P9 (Sonnet).
+  - No separate spec-writing pass (saves tokens): each implementer reads the ds1-studio module it ports (`reference/ds1-studio`) and records only non-obvious behaviour in `docs/specs/`.
+  - **Wave B:** capy-app UI in order P9 → P10 → P11 → P12 → P13. Each phase's pure-crate work runs one step ahead, in parallel with the UI phase before it.
+  - **Opus:** the P8 shell and command registry, the DT1 writer, Bevy render changes (animated tiles, overlays), tag-group editing, collision and walkability semantics, add-to-game.
+  - **Sonnet:** most feature ports, dialogs and panels, the `.txt`/`.tbl` writers, the table editor, automap, packages, MCP.
+  - **Haiku:** porting the theme and keybinding tables, translating simple vitest cases, docs and CHANGELOG, scripted screenshot and e2e runs, regenerating the license files.
+  - Every phase's acceptance is still checked by the lead before it is marked done.
+
+- **P8 ds1-studio UI and layout** (Map Editor only; Sprites mode keeps its dock layout).
+  - **Themes:** five base colours per theme (bg, panel, text, accent, line), with the other shades derived, mapped to egui `Visuals`.
+    - Port the 9 built-in themes from `src/ui/themes.ts`. "DS1 Studio" is the default. Custom themes can be imported and exported as share codes.
+    - Segoe UI loaded at runtime with egui's font as fallback; the Lucide icon font (ISC) embedded.
+  - **Command registry:** each action has an id, label, icon, default key and an "enabled when" rule. The ribbon, right-click menus, Ctrl+K command finder and shortcuts are all built from it.
+    - Default keys follow `src/ui/keybindings.ts` (user, 2026-10-20). There is no Capybara preset; a Shortcuts dialog rebinds any key, and bindings are saved in `config.toml`. CHANGELOG lists the old → new keys.
+  - **Layout:** replace `egui_dock` in map mode with fixed panels.
+    - A 44 px top bar: app name, ribbon tabs, command box, file name and game path, and a Sprites mode switch.
+    - Left 260 px and right 320 px columns, both resizable and collapsible to 30 px. Shift+F folds both ("just the map").
+    - The map in the centre and a 26 px status bar.
+  - **Ribbon:** Home, View, Map and Help tabs; Game and Diagnostics are added once P12 exists.
+    - Home groups: File, Edit, Tools, Paint/erase, Active layer.
+    - Lasso, select-by-tile-ID and select-identical move into a Select ▾ dropdown.
+  - **Left column:** a folder tree of maps with a filter box and counts.
+  - **Centre:** the Show bar of layer chips (Shift-click or Shift+number to solo), a collapsible DT1 wall-categories row, a minimap and the walkable-area badge.
+  - **Right column:** Tiles and Presets tabs.
+    - The Tiles tab has category chips, a DT1 dropdown, a filter box and labelled thumbnails. Capybara's search tokens work in the filter box.
+    - Below the tabs: collapsible Cell, History, Tags & groups and Layers sections.
+    - The Log and Objects panels become floating windows; Objects also appears in the right column while the Objects tool is active.
+  - **Status bar:** a hint for the current tool, then tool and layer, cell, zoom, and map size, version, act and palette.
+  - **Test:**
+    - A 1600×900 screenshot next to ds1-studio's `docs/media/overview.png`, compared section by section and confirmed by the user.
+    - An e2e test that clicks every ribbon button and presses every default key.
+    - A screenshot e2e for each theme.
+    - All existing e2e tests pass.
+
+- **P9 Map editing parity.**
+  - Paint or erase a rectangle (U) or a connected area (L).
+  - Random-mix painting (Ctrl+click several tiles).
+  - Find & replace tiles (Ctrl+H).
+  - Floor re-roll (`floorReroll.ts`, `floorLibrary.ts`) and tile reassignment (`reassignTiles.ts`).
+  - New map; resize by dragging the map edge.
+  - Shift+wheel through stacked tiles; double-click selects every copy of a tile; Shift+O switches between tiles and objects.
+  - Cell section: raw bytes and cell flags. Sub-tile collision painting waits for P11.
+  - Tag group editing in `capy-edit` (today only the count is shown).
+  - Object checks (`objectChecks.ts`).
+  - PNG export of the map or a selection, and copying the view to the clipboard (PrintScreen).
+  - **Test:**
+    - Proptests show that each new patch undoes to the original.
+    - Every DS1 still round-trips byte-identically, including maps with edited tag groups.
+    - Translated vitest cases pass.
+    - Edited maps open in DS1Edit (the edit oracle).
+
+- **P10 Views and overlays.** View modes (Tiles, Objects, Walkability, Automap, Level light, Roof hiding) with Tab/Shift+Tab and F1–F6.
+  - Animated floor tiles, lava and water (`waterAnimation.ts`; today only frame 0 is drawn).
+  - Game-view framing at a chosen resolution (Z), the 8×8 rooms grid (R), zoom to 100% (Home).
+  - Walkability view and painting (`walkArea.ts`, `walkEdit.ts`). Check whether walk painting writes DS1 cell flags or DT1 sub-tile flags; the DT1 part waits for P11.
+  - Spawn regions (`spawnRegions.ts`).
+  - Warps, with a jump to the target level (`warps.ts`, `exits.ts`, `arrival.ts`).
+  - Roof and wall hiding view (`pops.ts`).
+  - Level light view. Editing it may need the P12 table writer; check where `LevelLightEditor` stores it.
+  - The Automap view becomes editable in P12.
+  - **Test:** for each overlay, screenshots on a fixed set of vanilla maps compared with ds1-studio, and checked by the user on Median XL maps.
+
+- **P11 DT1 writer and tile tools.**
+  - **General DT1 writer in `d2-formats`.** This revises the "no general DT1 writer" decision in P7.
+    - **Gate:** every DT1 in both corpora round-trips byte-identically, and the fuzz and proptest suites pass.
+  - Sub-tile collision-flag painting, using `docs/collision-flags.md` from ds1-studio as the reference for what each bit means.
+  - DT1 manager (`Dt1Manager.tsx`, `Dt1Tree.tsx`): duplicate, rename, recolour (`dt1Edit.ts`).
+  - Pixel painting on tiles, reusing `capy-paint`.
+  - Tile settings, as a DT1 Tools `.ini`.
+  - Make act-safe, building on the P7 remap code and the Act 0 palette.
+  - Duplicate DT1s, custom DT1s and "own tiles" review (`duplicateDt1s.ts`, `customDt1.ts`, `ownTiles.ts`, `dt1Review.ts`).
+  - Unused-asset report, with archiving and restoring inside `capybara\` (`assetUsage.ts`).
+  - Presets library, preset builder (20×20) and suggested presets (`presets.ts`, `presetLibrary.ts`, `PresetBuilder.tsx`). These fill the Presets tab.
+  - **Test:**
+    - A recoloured or painted DT1 changes only the intended bytes and loads in DS1Edit.
+    - A duplicated DT1 renders the same as its source.
+    - Preset save, place and undo work.
+
+- **P12 Game data.** Every table and string edit is saved to `capybara\saves` and recorded in `CHANGED.txt`; history snapshots include it.
+  - Lossless `.txt` writer, plus the table editor with column help (`txt.ts`, `txtTable.ts`, `TableEditor.tsx`, `src/data/columnHelp.ts`). Unchanged rows stay byte-identical.
+  - `.tbl` writer (for the entering text).
+  - Add a map to the game (Levels, LvlPrest, LvlTypes); change level type; type packages (`addToGame.ts`, `changeLevelType.ts`, `typePackage.ts`).
+  - Automap editor: style, clear, import, safety checks (`automap*.ts`).
+  - Cube recipes (`cubeRecipe.ts`, `mapRecipes.ts`).
+  - Entering text (`entryText.ts`).
+  - Custom PNG objects (`customObject.ts`).
+  - Level light editing, if P10 found it lives in a table.
+  - Compatibility checker with one-click fixes (`compat.ts`); crash-log reader (`crashLog.ts`).
+  - Ribbon: add the Game and Diagnostics tabs.
+  - **Test:**
+    - Every `.txt` and `.tbl` in both corpora round-trips byte-identically.
+    - A map added to the game resolves through the `d2-assets` presets catalog.
+    - The compatibility checker's fixes are idempotent.
+
+- **P13 Packages and automation.**
+  - Map packages (`.zip`): export, and merge-import into `capybara\saves` (`mapPackage.ts`).
+  - Import a DS1 together with the DT1s it needs.
+  - `capy mcp` subcommand, built on `capy-edit` and `capy-render`, with ds1-studio's tool names (`list_maps`, `open_map`, `new_map`, `paint`, `set_cell`, `copy_area`, `find_replace`, `reroll`, `resize_map`, `set_cell_flags`, `add_object`, `edit_objects`, `undo`, `redo`, `check_map`, `render_map`, `save_map`).
+  - **Test:**
+    - A package export/import round trip gives identical files.
+    - The MCP tool calls are scripted and the resulting map is compared with the same edits made in the GUI.
+
+- **P14 Distribution: dropped by the user (2026-10-20).** Kept for reference only.
+  - **Self-updater** (about 1–2 days).
+    - The app checks GitHub releases, downloads the zip, verifies a signature, swaps the exe (`self-replace`) and restarts.
+    - The first network access in an otherwise offline app, so it should be opt-in. Also needs a signing key, and has some antivirus false-positive risk.
+    - "Check only, then link to the download" is about half a day.
+  - **Linux build** (about 3–5 days, plus testing each release on two OSes).
+    - The Rust stack (Bevy, egui, rfd, arboard) is cross-platform.
+    - The work is: case-sensitive paths for loose mod folders and saves; install detection for Wine, Lutris and Steam prefixes instead of the registry; cfg-gating `winresource`; a Linux release script (AppImage or tar.gz); running the GPU e2e suites under Linux (WSL2 is enough).
+    - Decisions currently say Linux is "not a goal now".
+
 ## Asset index (`capy-index`, built in P1, used by P3)
 1. **Crawl:**
    - Build the file list from three sources:
@@ -332,6 +467,8 @@ testdata/        synthetic fixtures (committed); testdata/private/ = real game f
 - `scripts/` tools (Python extractor, oracle renders) are dev-only and not shipped.
 
 ## Open questions
-- None currently. Answered on 2026-10-19:
+- ds1-studio parity (2026-10-20):
+  - Answered 2026-10-20: ds1-studio keys are the default and rebindable, with no Capybara preset; full credit to RoofooEvazan with a README link; fastest order using the fewest tokens, with Haiku and Sonnet where Opus isn't needed; no self-updater and no Linux build.
+- Answered on 2026-10-19:
   - Saves go next to the exe and are packed into the MPQ by hand.
   - Performance targets are smoke tests, not benchmarks, to save time and code.

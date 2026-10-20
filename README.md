@@ -4,6 +4,11 @@ A portable, single-exe Windows editor for Diablo II `.ds1` maps and DC6/DCC
 sprites. It reads the game's MPQs read-only, never writes to the game folder,
 and keeps everything it writes in a `capybara\` folder next to the exe.
 
+The map editor's interface, layout and many of its map-editing features follow
+[**DS1 Studio**](https://github.com/RoofooEvazan/ds1-studio) by RoofooEvazan
+(fork: [D2R-Gimli/ds1-studio](https://github.com/D2R-Gimli/ds1-studio)). All
+credit for that design goes to its author; go check it out.
+
 <!-- screenshot: the Map Editor with a town map open, the Maps list on the left and Layers/Properties on the right -->
 
 ## System requirements
@@ -121,7 +126,9 @@ cargo run -p capy-app -F dev
 ## Credits
 
 Capybara's D2 Editor owes its understanding of the file formats to Paul
-Siramy's win_ds1edit and Ben Ethington's DS1Edit. Its icon and loading screen
+Siramy's win_ds1edit and Ben Ethington's DS1Edit. The map editor's interface,
+layout, themes, shortcuts and editing tools follow RoofooEvazan's
+[DS1 Studio](https://github.com/RoofooEvazan/ds1-studio). Its icon and loading screen
 come from the author's earlier MXL Capybara Editor. See [NOTICE](NOTICE) for
 full credits and third-party licenses. Diablo II is the property of Blizzard
 Entertainment, and Median XL belongs to its authors. Neither game is
