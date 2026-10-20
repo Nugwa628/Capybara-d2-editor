@@ -6,8 +6,8 @@
 
 pub const TILE_W: f64 = 160.0;
 pub const TILE_H: f64 = 80.0;
-const HALF_W: f64 = TILE_W / 2.0;
-const HALF_H: f64 = TILE_H / 2.0;
+pub const HALF_W: f64 = TILE_W / 2.0;
+pub const HALF_H: f64 = TILE_H / 2.0;
 
 /// Zoom divisors: index 0 is 1:1, the last is 1:16.
 pub const ZOOM_STEPS: [u32; 8] = [1, 2, 3, 4, 6, 8, 12, 16];

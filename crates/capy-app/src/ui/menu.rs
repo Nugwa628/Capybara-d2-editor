@@ -1,18 +1,21 @@
-//! Top bar: File / View menus and the profile picker.
+//! The Sprites mode's menu bar: File / View menus and the profile picker.
+//! (The Map Editor uses the ribbon, see [`super::ribbon`].)
 
 use bevy_egui::egui::{self, Ui};
 use d2_assets::GamePath;
 
-use super::{Dock, dialogs};
-use crate::config::AppMode;
-use crate::edit::ops::EditOp;
+use super::Dock;
 use crate::state::AppState;
 
 pub fn show(ui: &mut Ui, state: &mut AppState, dock: &mut Dock) {
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| file_menu(ui, state));
-        ui.menu_button("Edit", |ui| edit_menu(ui, state));
-        ui.menu_button("View", |ui| view_menu(ui, state, dock));
+        ui.menu_button("View", |ui| {
+            if ui.button("Reset panel layout").clicked() {
+                dock.reset();
+                ui.close();
+            }
+        });
         ui.separator();
         profile_picker(ui, state);
     });
@@ -120,217 +123,7 @@ fn file_menu(ui: &mut Ui, state: &mut AppState) {
     }
 }
 
-fn edit_menu(ui: &mut Ui, state: &mut AppState) {
-    let (undo, redo, has_sel, has_obj) = match state.active_doc() {
-        Some(d) => (
-            d.edit.undo_label().map(str::to_owned),
-            d.edit.redo_label().map(str::to_owned),
-            !d.selection.is_empty(),
-            !d.object_sel.is_empty(),
-        ),
-        None => (None, None, false, false),
-    };
-    let has_doc = state.active.is_some();
-    let label = |verb: &str, what: &Option<String>| match what {
-        Some(w) => format!("{verb} {w}"),
-        None => verb.to_owned(),
-    };
-    if ui
-        .add_enabled(
-            undo.is_some(),
-            egui::Button::new(label("Undo", &undo)).shortcut_text("Ctrl+Z"),
-        )
-        .clicked()
-    {
-        if !super::shortcuts::refuse_in_snapshot(state) {
-            state.undo();
-        }
-        ui.close();
-    }
-    if ui
-        .add_enabled(
-            redo.is_some(),
-            egui::Button::new(label("Redo", &redo)).shortcut_text("Ctrl+Y"),
-        )
-        .clicked()
-    {
-        if !super::shortcuts::refuse_in_snapshot(state) {
-            state.redo();
-        }
-        ui.close();
-    }
-    ui.separator();
-    if ui
-        .add_enabled(has_sel, egui::Button::new("Cut").shortcut_text("Ctrl+X"))
-        .clicked()
-    {
-        if !super::shortcuts::refuse_in_snapshot(state) {
-            state.cut_selection();
-        }
-        ui.close();
-    }
-    if ui
-        .add_enabled(has_sel, egui::Button::new("Copy").shortcut_text("Ctrl+C"))
-        .clicked()
-    {
-        state.copy_selection();
-        ui.close();
-    }
-    if ui
-        .add_enabled(has_doc, egui::Button::new("Paste").shortcut_text("Ctrl+V"))
-        .clicked()
-    {
-        if !super::shortcuts::refuse_in_snapshot(state) {
-            state.begin_paste();
-        }
-        ui.close();
-    }
-    if ui
-        .add_enabled(
-            has_sel || has_obj,
-            egui::Button::new("Delete").shortcut_text("Del"),
-        )
-        .clicked()
-    {
-        if !super::shortcuts::refuse_in_snapshot(state) {
-            super::shortcuts::delete(state);
-        }
-        ui.close();
-    }
-    ui.separator();
-    if ui
-        .add_enabled(
-            has_doc,
-            egui::Button::new("Select all on the active layer").shortcut_text("Ctrl+A"),
-        )
-        .clicked()
-    {
-        super::shortcuts::select_all(state);
-        ui.close();
-    }
-    if ui
-        .add_enabled(
-            has_sel || has_obj,
-            egui::Button::new("Deselect").shortcut_text("Ctrl+D"),
-        )
-        .clicked()
-    {
-        state.deselect();
-        ui.close();
-    }
-    ui.separator();
-    ui.add_enabled_ui(has_sel, |ui| {
-        ui.menu_button("Selection flags", |ui| {
-            let mut op = None;
-            if ui.button("Set hidden").clicked() {
-                op = Some((Some(true), None));
-            }
-            if ui.button("Clear hidden").clicked() {
-                op = Some((Some(false), None));
-            }
-            if ui.button("Set unwalkable").clicked() {
-                op = Some((None, Some(true)));
-            }
-            if ui.button("Clear unwalkable").clicked() {
-                op = Some((None, Some(false)));
-            }
-            if let (Some((hidden, unwalkable)), Some(i)) = (op, state.active) {
-                state.exec(i, EditOp::SetFlags { hidden, unwalkable });
-                ui.close();
-            }
-        });
-    });
-    if ui
-        .add_enabled(has_sel, egui::Button::new("Move selection to layer..."))
-        .clicked()
-    {
-        state.edit.move_dialog = dialogs::new_move_dialog(state);
-        ui.close();
-    }
-    if ui
-        .add_enabled(has_doc, egui::Button::new("Resize map..."))
-        .clicked()
-    {
-        state.edit.resize_dialog = dialogs::new_resize_dialog(state);
-        ui.close();
-    }
-}
-
-fn view_menu(ui: &mut Ui, state: &mut AppState, dock: &mut Dock) {
-    let map_mode = state.config.mode == AppMode::Map;
-    if ui
-        .add_enabled(
-            map_mode && state.active.is_some(),
-            egui::Button::new("Fit map to window"),
-        )
-        .clicked()
-    {
-        state.request_fit = true;
-        ui.close();
-    }
-    ui.add_enabled(
-        map_mode,
-        egui::Checkbox::new(&mut state.edit.grid, "Cell grid"),
-    )
-    .on_hover_text("G");
-    if ui
-        .add_enabled(
-            map_mode,
-            egui::Checkbox::new(&mut state.config.animate_objects, "Animate objects"),
-        )
-        .on_hover_text("Play object and NPC animations at their game speed (25 Hz clock)")
-        .changed()
-    {
-        state.config_dirty = true;
-    }
-    if ui
-        .add_enabled(
-            map_mode,
-            egui::Checkbox::new(&mut state.config.object_markers, "Object markers"),
-        )
-        .on_hover_text("Diamond handles on every object, not only with the Objects tool")
-        .changed()
-    {
-        state.config_dirty = true;
-    }
-    let mut objects = dock.has_objects();
-    if ui
-        .add_enabled(map_mode, egui::Checkbox::new(&mut objects, "Objects panel"))
-        .changed()
-    {
-        if objects {
-            dock.show_objects();
-        } else if let Some(location) = dock.map.find_tab(&super::Panel::Objects) {
-            let _ = dock.map.remove_tab(location);
-        }
-        ui.close();
-    }
-    let mut preview = dock.has_sprite_preview();
-    if ui
-        .add_enabled(
-            map_mode,
-            egui::Checkbox::new(&mut preview, "Sprite preview"),
-        )
-        .changed()
-    {
-        dock.toggle_sprite_preview();
-        ui.close();
-    }
-    let mut history = dock.has_history();
-    if ui
-        .add_enabled(map_mode, egui::Checkbox::new(&mut history, "History"))
-        .changed()
-    {
-        dock.toggle_history();
-        ui.close();
-    }
-    if ui.button("Reset panel layout").clicked() {
-        dock.reset(state.config.mode);
-        ui.close();
-    }
-}
-
-fn profile_picker(ui: &mut Ui, state: &mut AppState) {
+pub(super) fn profile_picker(ui: &mut Ui, state: &mut AppState) {
     ui.label("Profile");
     let current = state.active_profile_id().map(str::to_owned);
     let selected_text = match &current {
@@ -364,7 +157,7 @@ fn profile_picker(ui: &mut Ui, state: &mut AppState) {
 }
 
 /// Open `capybara\saves\<profile>\` in Explorer, creating it first.
-fn open_saves_folder(state: &mut AppState) {
+pub(super) fn open_saves_folder(state: &mut AppState) {
     let Some(id) = state.active_profile_id().map(str::to_owned) else {
         return;
     };

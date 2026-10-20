@@ -231,6 +231,18 @@ ASSETS = {
         ),
         "text": DS1EDIT_MIT,
     },
+    "assets/fonts/lucide.ttf": {
+        "title": "Lucide icon font (`assets/fonts/lucide.ttf`)",
+        "license": "ISC (Lucide), MIT for the icons derived from Feather",
+        "body": (
+            "The icons of the Map Editor's ribbon and panels. `lucide.ttf` "
+            "1.59.0 from the `lucide-static` package of Lucide "
+            "(https://lucide.dev, https://github.com/lucide-icons/lucide), "
+            "embedded unchanged. Its license file, "
+            "`assets/fonts/lucide-LICENSE.txt`, is reproduced below."
+        ),
+        "text_file": "assets/fonts/lucide-LICENSE.txt",
+    },
     "assets/known-names/seed.txt": {
         "title": "Known-names seed (`assets/known-names/seed.txt`)",
         "license": "list of game file names; sources credited",
@@ -742,8 +754,11 @@ def render(meta, use_tree):
         w("")
         w(a["body"])
         w("")
-        if a["text"]:
-            w(fence(a["text"]))
+        text = a.get("text")
+        if a.get("text_file"):
+            text = read_text(REPO / a["text_file"])
+        if text:
+            w(fence(text))
             w("")
     for rel in sorted(OPTIONAL_ASSETS):
         if (REPO / rel).is_file():

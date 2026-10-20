@@ -205,15 +205,15 @@ fn row(
     alias: Option<&str>,
     selected: bool,
 ) -> egui::Response {
+    let s = state.shell.shades;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
     if selected {
-        ui.painter()
-            .rect_filled(rect, 3.0, Color32::from_rgba_unmultiplied(90, 140, 220, 70));
+        ui.painter().rect_filled(rect, 3.0, s.accent_dim);
     } else if resp.hovered() {
-        ui.painter().rect_filled(rect, 3.0, Color32::from_gray(45));
+        ui.painter().rect_filled(rect, 3.0, s.hover);
     }
     let thumb = Rect::from_min_size(rect.min + Vec2::splat(2.0), Vec2::splat(ROW - 4.0));
-    ui.painter().rect_filled(thumb, 3.0, Color32::from_gray(30));
+    ui.painter().rect_filled(thumb, 3.0, s.bg);
     match state.browser.thumb(asset.id) {
         Some(t) => {
             let ts = t.size_vec2();
@@ -231,7 +231,7 @@ fn row(
                 Align2::CENTER_CENTER,
                 asset.kind.as_str().to_ascii_uppercase(),
                 FontId::monospace(10.0),
-                Color32::from_gray(150),
+                s.muted,
             );
         }
     }
@@ -242,18 +242,14 @@ fn row(
         Align2::LEFT_CENTER,
         title,
         FontId::proportional(14.0),
-        if alias.is_some() {
-            Color32::from_rgb(150, 210, 255)
-        } else {
-            Color32::from_gray(225)
-        },
+        if alias.is_some() { s.info } else { s.text },
     );
     ui.painter().text(
         egui::pos2(x, rect.top() + 31.0),
         Align2::LEFT_CENTER,
         &asset.key,
         FontId::monospace(10.5),
-        Color32::from_gray(140),
+        s.muted,
     );
     let badge = asset.kind.as_str().to_ascii_uppercase();
     let badge_pos = egui::pos2(rect.right() - 6.0, rect.top() + 12.0);
@@ -262,7 +258,7 @@ fn row(
         Align2::RIGHT_CENTER,
         badge,
         FontId::monospace(10.0),
-        Color32::from_gray(150),
+        s.muted,
     );
     if state.outside_tile_set(asset) {
         ui.painter().text(
@@ -270,14 +266,14 @@ fn row(
             Align2::RIGHT_CENTER,
             "not in this map's tile set",
             FontId::proportional(10.5),
-            Color32::from_rgb(235, 150, 40),
+            s.warn,
         );
     }
     if selected {
         ui.painter().rect_stroke(
             rect,
             CornerRadius::same(3),
-            Stroke::new(1.0, Color32::from_rgb(120, 170, 240)),
+            Stroke::new(1.0, s.accent),
             StrokeKind::Inside,
         );
     }

@@ -19,14 +19,19 @@ fn settings_window(ctx: &Context, state: &mut AppState) {
         return;
     }
     let mut open = true;
-    egui::Window::new("Settings")
+    let max_height = (ctx.content_rect().height() - 120.0).max(240.0);
+    egui::Window::new("Preferences")
         .id(Id::new("settings_window"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
         .default_width(460.0)
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| body(ui, state));
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(max_height)
+                .show(ui, |ui| body(ui, state));
+        });
     if !open {
         state.settings.open = false;
     }
@@ -37,7 +42,104 @@ fn section(ui: &mut egui::Ui, title: &str) {
     ui.label(RichText::new(title).strong());
 }
 
+/// Theme picker, custom themes from share codes, and the current theme's
+/// share code.
+fn appearance(ui: &mut egui::Ui, state: &mut AppState) {
+    use super::theme;
+    section(ui, "Theme");
+    let mut themes = theme::builtin_themes();
+    themes.extend(
+        state
+            .config
+            .ui
+            .custom_themes
+            .iter()
+            .filter_map(theme::CustomTheme::to_theme),
+    );
+    let current = super::shell::current_theme(&state.config);
+    let mut remove: Option<String> = None;
+    ui.horizontal_wrapped(|ui| {
+        for t in &themes {
+            let s = theme::Shades::of(t);
+            let on = t.id == current.id;
+            let resp = ui
+                .add(
+                    egui::Button::new(RichText::new(&t.name).color(s.text))
+                        .fill(s.panel)
+                        .stroke(egui::Stroke::new(
+                            if on { 2.0 } else { 1.0 },
+                            if on { s.accent } else { s.border2 },
+                        )),
+                )
+                .on_hover_text(if t.custom {
+                    "Custom theme (right-click to delete)"
+                } else {
+                    "Built-in theme"
+                });
+            if resp.clicked() && !on {
+                state.config.ui.theme = t.id.clone();
+                state.config_dirty = true;
+            }
+            if t.custom {
+                resp.context_menu(|ui| {
+                    if ui.button("Delete this theme").clicked() {
+                        remove = Some(t.id.clone());
+                        ui.close();
+                    }
+                });
+            }
+        }
+    });
+    if let Some(id) = remove {
+        state.config.ui.custom_themes.retain(|c| c.id != id);
+        if state.config.ui.theme == id {
+            state.config.ui.theme = theme::DEFAULT_THEME.to_owned();
+        }
+        state.config_dirty = true;
+    }
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut state.shell.theme_code)
+                .hint_text("Paste a theme share code (ffthemes:...)")
+                .desired_width(300.0),
+        );
+        if ui
+            .add_enabled(
+                !state.shell.theme_code.trim().is_empty(),
+                egui::Button::new("Add"),
+            )
+            .clicked()
+        {
+            let n = state.config.ui.custom_themes.len();
+            let id = (n + 1..)
+                .map(|i| format!("custom-{i}"))
+                .find(|id| !state.config.ui.custom_themes.iter().any(|c| &c.id == id))
+                .unwrap_or_else(|| "custom".to_owned());
+            match theme::import_code(&state.shell.theme_code, id.clone()) {
+                Some(custom) => {
+                    state.notify(format!("Added the theme {:?}", custom.name));
+                    state.config.ui.custom_themes.push(custom);
+                    state.config.ui.theme = id;
+                    state.config_dirty = true;
+                    state.shell.theme_code.clear();
+                }
+                None => state.notify("That is not a theme share code"),
+            }
+        }
+    });
+    if ui
+        .button("Copy this theme's share code")
+        .on_hover_text("Share codes work in DS1 Studio and PD2 Filter Forge too")
+        .clicked()
+    {
+        ui.ctx().copy_text(theme::export_code(&current));
+        state.notify("Share code copied");
+    }
+}
+
 fn body(ui: &mut egui::Ui, state: &mut AppState) {
+    appearance(ui, state);
+
     section(ui, "Map view");
     let mut gamma = state.config.gamma;
     ui.horizontal(|ui| {

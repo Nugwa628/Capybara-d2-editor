@@ -163,6 +163,8 @@ pub struct AppState {
     pub settings: SettingsUi,
     /// Object tables, placement picker, NPC path tool, animation.
     pub objects: crate::objects::ObjectsState,
+    /// The Map Editor's shell: theme, shortcuts, windows, ribbon state.
+    pub shell: crate::ui::shell::ShellState,
 }
 
 const MAX_LOG: usize = 2000;
@@ -174,6 +176,7 @@ impl AppState {
             scope: config.select_scope,
             ..EditState::default()
         };
+        let shell = crate::ui::shell::ShellState::new(&config);
         AppState {
             paths,
             config,
@@ -209,6 +212,7 @@ impl AppState {
             history: HistoryState::default(),
             settings: SettingsUi::default(),
             objects: crate::objects::ObjectsState::default(),
+            shell,
         }
     }
 

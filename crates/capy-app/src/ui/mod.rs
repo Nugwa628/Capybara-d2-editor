@@ -1,10 +1,14 @@
-//! The egui shell: mode tabs, menu, status bar, toasts and the dock.
+//! The egui shell.
 //!
-//! Two modes share the window, each with its own dock layout (persisted
-//! separately): **Map Editor** (the panels below) and **Sprites** (sprite
-//! list, viewer, editor, converter and log; see [`sprites`]).
+//! Two modes share the window. The **Map Editor** has a fixed, ds1-studio
+//! style layout (ribbon, map list, map, tiles column, status bar; see
+//! [`shell`]) driven by the command registry ([`commands`]). **Sprites**
+//! keeps its dock layout (sprite list, viewer, editor, converter and log;
+//! see [`sprites`]), persisted in `layout-sprites.json`.
 
+mod commands;
 mod dialogs;
+mod finder;
 mod history;
 mod layers;
 mod log;
@@ -12,74 +16,34 @@ mod map_tools;
 mod map_view;
 mod maps;
 mod menu;
+mod minimap;
 pub mod objects;
 mod palette;
 mod properties;
+mod ribbon;
 mod settings;
-mod shortcuts;
+pub mod shell;
+mod shortcuts_dialog;
 pub mod sprites;
 mod status;
+pub mod theme;
 mod thumbs;
 mod tiles;
 mod toasts;
-mod toolbar;
 
 use std::path::Path;
 
 use bevy::prelude::Resource;
 use bevy_egui::egui::{self, Id, LayerId, Ui, UiBuilder};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::config::AppMode;
 use crate::state::AppState;
 
+pub use commands::{COMMANDS, Combo, enabled as command_enabled};
 pub use map_tools::cancel_gesture as cancel_map_gesture;
 pub use thumbs::tile_key as tile_key_for;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Panel {
-    Map,
-    Maps,
-    Tiles,
-    Layers,
-    Properties,
-    Log,
-    /// Optional: the View menu adds and removes it.
-    SpritePreview,
-    /// Optional (in the default layout): snapshots, diff, milestones.
-    History,
-    /// Optional (in the default layout): object properties, NPC path, the
-    /// "Add object" picker.
-    Objects,
-}
-
-impl Panel {
-    /// Panels every layout must hold exactly once.
-    pub const REQUIRED: [Panel; 6] = [
-        Panel::Map,
-        Panel::Maps,
-        Panel::Tiles,
-        Panel::Layers,
-        Panel::Properties,
-        Panel::Log,
-    ];
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Panel::Map => "Map",
-            Panel::Maps => "Maps",
-            Panel::Tiles => "Tiles",
-            Panel::Layers => "Layers",
-            Panel::Properties => "Properties",
-            Panel::Log => "Log",
-            Panel::SpritePreview => "Sprite preview",
-            Panel::History => "History",
-            Panel::Objects => "Objects",
-        }
-    }
-}
 
 /// Panels of the Sprites mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -111,32 +75,12 @@ impl SpritesPanel {
     }
 }
 
-/// The dock layouts of both modes.
+/// The dock layout of the Sprites mode.
 #[derive(Resource)]
 pub struct Dock {
-    pub map: DockState<Panel>,
     pub sprites: DockState<SpritesPanel>,
-    /// JSON of the states last written, to detect changes.
-    last_map: String,
+    /// JSON of the state last written, to detect changes.
     last_sprites: String,
-}
-
-pub fn default_layout() -> DockState<Panel> {
-    let mut state = DockState::new(vec![Panel::Map]);
-    let main = state.main_surface_mut();
-    let [centre, _left] = main.split_left(NodeIndex::root(), 0.2, vec![Panel::Maps, Panel::Tiles]);
-    let [centre, _right] = main.split_right(
-        centre,
-        0.78,
-        vec![
-            Panel::Layers,
-            Panel::Objects,
-            Panel::Properties,
-            Panel::History,
-        ],
-    );
-    let [_centre, _bottom] = main.split_below(centre, 0.76, vec![Panel::Log]);
-    state
 }
 
 pub fn default_sprites_layout() -> DockState<SpritesPanel> {
@@ -146,19 +90,6 @@ pub fn default_sprites_layout() -> DockState<SpritesPanel> {
     let [centre, _converter] = main.split_right(centre, 0.74, vec![SpritesPanel::Converter]);
     let [_centre, _log] = main.split_below(centre, 0.8, vec![SpritesPanel::Log]);
     state
-}
-
-/// A layout is usable only if it holds each required panel exactly once and
-/// no panel twice.
-pub fn layout_is_complete(state: &DockState<Panel>) -> bool {
-    let mut seen = Vec::new();
-    for (_, tab) in state.iter_all_tabs() {
-        if seen.contains(tab) {
-            return false;
-        }
-        seen.push(*tab);
-    }
-    Panel::REQUIRED.iter().all(|p| seen.contains(p))
 }
 
 fn sprites_layout_is_complete(state: &DockState<SpritesPanel>) -> bool {
@@ -172,131 +103,47 @@ fn sprites_layout_is_complete(state: &DockState<SpritesPanel>) -> bool {
     SpritesPanel::ALL.iter().all(|p| seen.contains(p))
 }
 
-/// Reads a saved layout. `Err` carries a message for the log; a missing file
-/// is `Ok(None)`.
-fn load_state<T: DeserializeOwned>(
-    file: &Path,
-    complete: impl Fn(&DockState<T>) -> bool,
-    what: &str,
-) -> (Option<DockState<T>>, Option<String>) {
-    match std::fs::read_to_string(file) {
-        Ok(text) => match serde_json::from_str::<DockState<T>>(&text) {
-            Ok(s) if complete(&s) => (Some(s), None),
-            Ok(_) => (
-                None,
-                Some(format!(
-                    "saved {what} layout is incomplete; using the default"
-                )),
-            ),
-            Err(e) => (
-                None,
-                Some(format!(
-                    "saved {what} layout is unreadable ({e}); using the default"
-                )),
-            ),
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (None, None),
-        Err(e) => (None, Some(format!("cannot read the {what} layout: {e}"))),
-    }
-}
-
 impl Dock {
-    /// Loads both layouts. The returned strings are problems worth a log line.
-    pub fn load(map_file: &Path, sprites_file: &Path) -> (Dock, Vec<String>) {
-        let (map, p1) = load_state(map_file, layout_is_complete, "map editor");
-        let (sprites, p2) = load_state(sprites_file, sprites_layout_is_complete, "sprites");
-        let map = map.unwrap_or_else(default_layout);
-        let sprites = sprites.unwrap_or_else(default_sprites_layout);
-        let last_map = serde_json::to_string(&map).unwrap_or_default();
+    /// Loads the Sprites layout. The returned strings are problems worth a
+    /// log line; a missing file is the default layout without a problem.
+    pub fn load(sprites_file: &Path) -> (Dock, Vec<String>) {
+        let (state, problem) = match std::fs::read_to_string(sprites_file) {
+            Ok(text) => match serde_json::from_str::<DockState<SpritesPanel>>(&text) {
+                Ok(s) if sprites_layout_is_complete(&s) => (Some(s), None),
+                Ok(_) => (
+                    None,
+                    Some("saved sprites layout is incomplete; using the default".to_owned()),
+                ),
+                Err(e) => (
+                    None,
+                    Some(format!(
+                        "saved sprites layout is unreadable ({e}); using the default"
+                    )),
+                ),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (None, None),
+            Err(e) => (None, Some(format!("cannot read the sprites layout: {e}"))),
+        };
+        let sprites = state.unwrap_or_else(default_sprites_layout);
         let last_sprites = serde_json::to_string(&sprites).unwrap_or_default();
         (
             Dock {
-                map,
                 sprites,
-                last_map,
                 last_sprites,
             },
-            p1.into_iter().chain(p2).collect(),
+            problem.into_iter().collect(),
         )
     }
 
-    /// Restore the default layout of one mode.
-    pub fn reset(&mut self, mode: AppMode) {
-        match mode {
-            AppMode::Map => self.map = default_layout(),
-            AppMode::Sprites => self.sprites = default_sprites_layout(),
-        }
+    /// Restore the default Sprites layout.
+    pub fn reset(&mut self) {
+        self.sprites = default_sprites_layout();
     }
 
-    pub fn has_sprite_preview(&self) -> bool {
-        self.map.find_tab(&Panel::SpritePreview).is_some()
-    }
-
-    pub fn has_history(&self) -> bool {
-        self.map.find_tab(&Panel::History).is_some()
-    }
-
-    /// Show or hide the History panel (View menu).
-    pub fn toggle_history(&mut self) {
-        match self.map.find_tab(&Panel::History) {
-            Some(location) => {
-                let _ = self.map.remove_tab(location);
-            }
-            None => self.show_history(),
-        }
-    }
-
-    /// Bring the History panel to the front, adding it next to Properties
-    /// when the layout has none.
-    pub fn show_history(&mut self) {
-        if self.map.find_tab(&Panel::History).is_none() {
-            if let Some(p) = self.map.find_tab(&Panel::Properties) {
-                self.map.set_focused_node_and_surface(p.node_path());
-            }
-            self.map.push_to_focused_leaf(Panel::History);
-        }
-        if let Some(location) = self.map.find_tab(&Panel::History) {
-            let _ = self.map.set_active_tab(location);
-        }
-    }
-
-    pub fn has_objects(&self) -> bool {
-        self.map.find_tab(&Panel::Objects).is_some()
-    }
-
-    /// Bring the Objects panel to the front, adding it next to Layers when
-    /// the layout has none.
-    pub fn show_objects(&mut self) {
-        if self.map.find_tab(&Panel::Objects).is_none() {
-            if let Some(p) = self.map.find_tab(&Panel::Layers) {
-                self.map.set_focused_node_and_surface(p.node_path());
-            }
-            self.map.push_to_focused_leaf(Panel::Objects);
-        }
-        if let Some(location) = self.map.find_tab(&Panel::Objects) {
-            let _ = self.map.set_active_tab(location);
-        }
-    }
-
-    /// Show or hide the Sprite preview panel (View menu).
-    pub fn toggle_sprite_preview(&mut self) {
-        match self.map.find_tab(&Panel::SpritePreview) {
-            Some(location) => {
-                let _ = self.map.remove_tab(location);
-            }
-            None => self.map.push_to_focused_leaf(Panel::SpritePreview),
-        }
-    }
-
-    /// Write the layouts that changed. Returns an error text on failure.
-    pub fn save_if_changed(&mut self, map_file: &Path, sprites_file: &Path) -> Result<(), String> {
+    /// Write the layout if it changed. Returns an error text on failure.
+    pub fn save_if_changed(&mut self, sprites_file: &Path) -> Result<(), String> {
         // A layout that has not been drawn yet holds NaN rectangles, which JSON
         // writes as `null` and cannot read back: keep the old file for now.
-        let map = serde_json::to_string(&self.map).map_err(|e| e.to_string())?;
-        if map != self.last_map && !map.contains("null") {
-            crate::config::write_atomic(map_file, map.as_bytes()).map_err(|e| format!("{e:#}"))?;
-            self.last_map = map;
-        }
         let sprites = serde_json::to_string(&self.sprites).map_err(|e| e.to_string())?;
         if sprites != self.last_sprites && !sprites.contains("null") {
             crate::config::write_atomic(sprites_file, sprites.as_bytes())
@@ -304,53 +151,6 @@ impl Dock {
             self.last_sprites = sprites;
         }
         Ok(())
-    }
-}
-
-struct Viewer<'a> {
-    state: &'a mut AppState,
-}
-
-impl TabViewer for Viewer<'_> {
-    type Tab = Panel;
-
-    fn title(&mut self, tab: &mut Panel) -> egui::WidgetText {
-        tab.title().into()
-    }
-
-    fn id(&mut self, tab: &mut Panel) -> Id {
-        Id::new(("panel", *tab))
-    }
-
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Panel) {
-        match tab {
-            Panel::Map => map_view::show(ui, self.state),
-            Panel::Maps => maps::show(ui, self.state),
-            Panel::Tiles => tiles::show(ui, self.state),
-            Panel::Layers => layers::show(ui, self.state),
-            Panel::Properties => properties::show(ui, self.state),
-            Panel::Log => log::show(ui, self.state),
-            Panel::SpritePreview => sprites::preview::show(ui, self.state),
-            Panel::History => history::show(ui, self.state),
-            Panel::Objects => objects::show(ui, self.state),
-        }
-    }
-
-    fn is_closeable(&self, tab: &Panel) -> bool {
-        matches!(tab, Panel::SpritePreview | Panel::History | Panel::Objects)
-    }
-
-    /// The Map panel is transparent so Bevy's scene shows through.
-    fn clear_background(&self, tab: &Panel) -> bool {
-        *tab != Panel::Map
-    }
-
-    fn scroll_bars(&self, tab: &Panel) -> [bool; 2] {
-        if *tab == Panel::Map {
-            [false, false]
-        } else {
-            [false, true]
-        }
     }
 }
 
@@ -398,7 +198,7 @@ fn dock_style(ui: &Ui) -> egui_dock::Style {
     style
 }
 
-/// The strip above everything: Map Editor | Sprites.
+/// The strip above the Sprites mode: Map Editor | Sprites.
 fn mode_tabs(ui: &mut Ui, state: &mut AppState) {
     ui.horizontal(|ui| {
         for (mode, label) in [(AppMode::Map, "Map Editor"), (AppMode::Sprites, "Sprites")] {
@@ -418,74 +218,57 @@ fn mode_tabs(ui: &mut Ui, state: &mut AppState) {
 /// Draw the whole UI for this frame.
 pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     state.pixels_per_point = ctx.pixels_per_point();
+    shell::prepare_frame(ctx, state);
     state.sync_docs();
     state.history_frame();
     state.browser_tick(ctx);
-    if !state.edit.modal_open()
-        && !state.sprites.modal_open()
-        && !state.history.modal_open()
-        && !state.settings.modal_open()
-        && state.browser.prompt.is_none()
-        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K))
-    {
-        state.toggle_palette();
-    }
-    // The Ctrl+K palette and the browser's questions take the keyboard.
+    let mode = state.config.mode;
+    let modal = state.edit.modal_open()
+        || state.sprites.modal_open()
+        || state.history.modal_open()
+        || state.settings.modal_open()
+        || state.browser.prompt.is_some();
+    // The asset palette and the browser's questions take the keyboard.
     let browser_modal = state.browser.palette.open || state.browser.prompt.is_some();
-    match state.config.mode {
+    match mode {
         _ if browser_modal => {}
-        AppMode::Map => shortcuts::handle(ctx, state),
-        AppMode::Sprites => sprites::shortcuts(ctx, state),
+        AppMode::Map => commands::handle_keys(ctx, state),
+        AppMode::Sprites => {
+            if !modal && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K)) {
+                state.toggle_palette();
+            }
+            sprites::shortcuts(ctx, state);
+        }
     }
     focus_sprites_panel(state, dock);
-    if std::mem::take(&mut state.history.focus) {
-        dock.show_history();
-    }
-    if std::mem::take(&mut state.objects.focus) {
-        dock.show_objects();
-    }
-    if std::mem::take(&mut state.browser.focus_tiles)
-        && let Some(location) = dock.map.find_tab(&Panel::Tiles)
-    {
-        let _ = dock.map.set_active_tab(location);
-    }
-    let mut root = root_ui(ctx);
 
-    egui::Panel::top("mode_tabs").show(&mut root, |ui| {
-        mode_tabs(ui, state);
-    });
-    egui::Panel::top("menu_bar").show(&mut root, |ui| {
-        menu::show(ui, state, dock);
-    });
-    egui::Panel::bottom("status_bar").show(&mut root, |ui| {
-        status::show(ui, state);
-    });
-
-    // The map rectangle is re-set by the Map panel each frame; clear it first
-    // so a hidden Map tab (or the Sprites mode) leaves the 2D viewport inactive.
+    // The map rectangle is re-set by the map view each frame; clear it first
+    // so the Sprites mode leaves the 2D viewport inactive.
     state.map_rect = None;
-    let mode = state.config.mode;
-    egui::CentralPanel::no_frame().show(&mut root, |ui| {
-        let style = dock_style(ui);
-        match mode {
-            AppMode::Map => {
-                DockArea::new(&mut dock.map)
-                    .style(style)
-                    .show_close_buttons(true)
-                    .show_add_buttons(false)
-                    .show_leaf_close_all_buttons(false)
-                    .show_inside(ui, &mut Viewer { state });
-            }
-            AppMode::Sprites => {
+    let mut root = root_ui(ctx);
+    match mode {
+        AppMode::Map => shell::show(&mut root, state),
+        AppMode::Sprites => {
+            egui::Panel::top("mode_tabs").show(&mut root, |ui| {
+                mode_tabs(ui, state);
+            });
+            egui::Panel::top("menu_bar").show(&mut root, |ui| {
+                menu::show(ui, state, dock);
+            });
+            egui::Panel::bottom("status_bar").show(&mut root, |ui| {
+                status::show(ui, state);
+            });
+            egui::CentralPanel::no_frame().show(&mut root, |ui| {
+                let style = dock_style(ui);
                 DockArea::new(&mut dock.sprites)
                     .style(style)
                     .show_close_buttons(false)
                     .show_add_buttons(false)
                     .show_leaf_close_all_buttons(false)
                     .show_inside(ui, &mut SpritesViewer { state });
-            }
+            });
         }
-    });
+    }
 
     dialogs::show_all(ctx, state);
     history::dialogs(ctx, state);
@@ -493,14 +276,14 @@ pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     tiles::windows(ctx, state);
     palette::show(ctx, state);
     sprites::dialogs(ctx, state);
+    if mode == AppMode::Map {
+        shell::windows(ctx, state);
+    }
     toasts::show(ctx, state);
 }
 
 /// Brings the panel the sprites state asked for to the front.
 fn focus_sprites_panel(state: &mut AppState, dock: &mut Dock) {
-    if std::mem::take(&mut state.sprites.show_preview_panel) && !dock.has_sprite_preview() {
-        dock.toggle_sprite_preview();
-    }
     let Some(focus) = state.sprites.focus.take() else {
         return;
     };
@@ -517,27 +300,6 @@ fn focus_sprites_panel(state: &mut AppState, dock: &mut Dock) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn default_layouts_are_complete() {
-        assert!(layout_is_complete(&default_layout()));
-        assert!(sprites_layout_is_complete(&default_sprites_layout()));
-    }
-
-    #[test]
-    fn sprite_preview_is_optional_and_toggles() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let (mut dock, problems) =
-            Dock::load(&tmp.path().join("a.json"), &tmp.path().join("b.json"));
-        assert!(problems.is_empty());
-        assert!(!dock.has_sprite_preview());
-        assert!(layout_is_complete(&dock.map));
-        dock.toggle_sprite_preview();
-        assert!(dock.has_sprite_preview());
-        assert!(layout_is_complete(&dock.map), "optional panel is allowed");
-        dock.toggle_sprite_preview();
-        assert!(!dock.has_sprite_preview());
-    }
 
     /// JSON of a layout as the dock would have it once it has been drawn
     /// (rectangles are NaN, i.e. `null`, until then).
@@ -573,45 +335,32 @@ mod tests {
     }
 
     #[test]
-    fn each_mode_persists_its_own_layout() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let (map_file, sprites_file) =
-            (tmp.path().join("map.json"), tmp.path().join("sprites.json"));
-        let (mut dock, _) = Dock::load(&map_file, &sprites_file);
-        // Layouts that were never drawn hold NaN rectangles; they are not written.
-        dock.toggle_sprite_preview();
-        dock.save_if_changed(&map_file, &sprites_file)
-            .expect("save");
-        assert!(!map_file.exists() && !sprites_file.exists());
-        // A drawn map layout reloads with its optional panel.
-        std::fs::write(&map_file, drawn_json(&dock.map)).expect("write");
-        let (back, problems) = Dock::load(&map_file, &sprites_file);
-        assert!(problems.is_empty(), "{problems:?}");
-        assert!(back.has_sprite_preview(), "map layout restored");
-        assert!(sprites_layout_is_complete(&back.sprites));
-        // A sprites layout with a duplicated panel falls back to the default,
-        // without touching the map layout.
-        dock.sprites.push_to_focused_leaf(SpritesPanel::Viewer);
-        std::fs::write(&sprites_file, drawn_json(&dock.sprites)).expect("write");
-        let (back, problems) = Dock::load(&map_file, &sprites_file);
-        assert_eq!(problems.len(), 1, "{problems:?}");
-        assert!(back.has_sprite_preview());
-        assert!(sprites_layout_is_complete(&back.sprites));
+    fn default_layout_is_complete() {
+        assert!(sprites_layout_is_complete(&default_sprites_layout()));
     }
 
     #[test]
-    fn broken_files_fall_back_with_a_message() {
+    fn the_sprites_layout_persists_and_bad_files_fall_back() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let (a, b) = (tmp.path().join("a.json"), tmp.path().join("b.json"));
-        std::fs::write(&a, "{").expect("write");
-        let (dock, problems) = Dock::load(&a, &b);
+        let file = tmp.path().join("sprites.json");
+        let (mut dock, problems) = Dock::load(&file);
+        assert!(problems.is_empty());
+        // Layouts that were never drawn hold NaN rectangles; they are not written.
+        dock.sprites.push_to_focused_leaf(SpritesPanel::Viewer);
+        dock.save_if_changed(&file).expect("save");
+        assert!(!file.exists());
+        // A layout with a duplicated panel falls back to the default.
+        std::fs::write(&file, drawn_json(&dock.sprites)).expect("write");
+        let (back, problems) = Dock::load(&file);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(sprites_layout_is_complete(&back.sprites));
+        // A good drawn layout reloads as it was.
+        std::fs::write(&file, drawn_json(&default_sprites_layout())).expect("write");
+        let (_, problems) = Dock::load(&file);
+        assert!(problems.is_empty(), "{problems:?}");
+        std::fs::write(&file, "{").expect("write");
+        let (back, problems) = Dock::load(&file);
         assert_eq!(problems.len(), 1);
-        assert!(layout_is_complete(&dock.map));
-        // A layout missing a required panel is rejected too.
-        let partial = DockState::new(vec![Panel::Map]);
-        std::fs::write(&a, serde_json::to_string(&partial).expect("json")).expect("write");
-        let (dock, problems) = Dock::load(&a, &b);
-        assert_eq!(problems.len(), 1);
-        assert!(layout_is_complete(&dock.map));
+        assert!(sprites_layout_is_complete(&back.sprites));
     }
 }

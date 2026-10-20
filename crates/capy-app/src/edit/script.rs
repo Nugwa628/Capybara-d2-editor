@@ -87,6 +87,17 @@
 //! history-tab | settings open|close | add-install [folder] | close-dialogs
 //! ```
 //!
+//! The Map Editor's shell (clicks and keys are real egui input events):
+//!
+//! ```text
+//! click file.save                       # a ribbon button: command id, menu.*, tab.*
+//! click-ribbon-all                      # every visible, enabled button of every tab
+//! press Ctrl+Shift+Z                    # a key, ds1-studio notation
+//! press-all-keys                        # the key of every command enabled right then
+//! theme midnight                        # studio sanctuary midnight graphite nord ...
+//! ribbon-tab view                       # home | view | map | help
+//! ```
+//!
 //! Objects and NPC paths (sub-tile coordinates, 5 per cell; path commands
 //! work on the one selected object):
 //!
@@ -283,6 +294,16 @@ pub enum Cmd {
     /// Open "Add game install..." (optionally for a folder); writes nothing.
     AddInstall(Option<String>),
     CloseDialogs,
+    /// Real pointer click on a ribbon button (command id, `menu.*`, `tab.*`).
+    Click(String),
+    /// Click every visible, enabled ribbon button of every tab.
+    ClickRibbonAll,
+    /// Real key press, ds1-studio notation (`Ctrl+Shift+Z`).
+    Press(String),
+    /// Press the key of every command that is enabled at that moment.
+    PressAllKeys,
+    Theme(String),
+    RibbonTab(String),
     Splash(SplashArg),
     SplashWaitClosed,
     SplashSave {
@@ -955,6 +976,30 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
         "close-dialogs" => {
             need(0, "no arguments")?;
             Cmd::CloseDialogs
+        }
+        "click" => {
+            need(1, "<ribbon id>")?;
+            Cmd::Click(args[0].to_owned())
+        }
+        "click-ribbon-all" => {
+            need(0, "no arguments")?;
+            Cmd::ClickRibbonAll
+        }
+        "press" => {
+            need(1, "<key>, e.g. Ctrl+Shift+Z")?;
+            Cmd::Press(args[0].to_owned())
+        }
+        "press-all-keys" => {
+            need(0, "no arguments")?;
+            Cmd::PressAllKeys
+        }
+        "theme" => {
+            need(1, "<theme id>")?;
+            Cmd::Theme(args[0].to_ascii_lowercase())
+        }
+        "ribbon-tab" => {
+            need(1, "home|view|map|help")?;
+            Cmd::RibbonTab(args[0].to_ascii_lowercase())
         }
         "splash" => {
             need(1, "<frame>|plain|auto|off")?;

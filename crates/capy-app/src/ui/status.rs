@@ -37,6 +37,116 @@ pub fn index_text(state: &IndexState) -> Option<String> {
     }
 }
 
+/// What the current tool does, for the status bar.
+fn tool_hint(state: &AppState) -> &'static str {
+    use crate::edit::tools::Tool;
+    use crate::objects::ObjectMode;
+    if state.edit.paste.is_some() {
+        return "Click or Enter places the paste; Esc drops it";
+    }
+    match state.edit.tool {
+        Tool::SelectBox => {
+            "Drag to select cells. Shift adds, Ctrl subtracts, Shift+Ctrl intersects; right-click for more"
+        }
+        Tool::Lasso => "Draw around cells to select them. Shift adds, Ctrl subtracts",
+        Tool::SelectById => "Click a cell to select every cell with its tile ID",
+        Tool::SelectIdentical => "Click a cell to select every identical cell",
+        Tool::Paint => {
+            "Click or drag to paint the value; pick one with Pick or from the Tiles column"
+        }
+        Tool::Erase => "Click or drag to erase cells of the active layer",
+        Tool::Eyedropper => "Click a cell to make its tile the paint value",
+        Tool::Objects => match state.objects.mode {
+            ObjectMode::Select => "Click an object, drag to move it; Delete removes it",
+            ObjectMode::Place => {
+                "Click on the map to place the object chosen in the Objects column"
+            }
+            ObjectMode::Path => "Select an NPC, then click to add path points; drag moves one",
+        },
+    }
+}
+
+/// The Map Editor's status bar: tool hint on the left; background work,
+/// tool and layer, cell, zoom and map facts on the right.
+pub fn show_map(ui: &mut Ui, state: &mut AppState) {
+    let muted = state.shell.shades.muted;
+    let small = |t: String| egui::RichText::new(t).size(11.5).color(muted);
+    let mut cancel = false;
+    ui.horizontal_centered(|ui| {
+        ui.spacing_mut().item_spacing.x = 16.0;
+        if state.active.is_some() {
+            ui.add(egui::Label::new(small(tool_hint(state).to_owned())).truncate());
+        } else if let Some(loading) = &state.loading {
+            ui.spinner();
+            ui.label(small(format!(
+                "{}: {}...",
+                loading.profile_id, loading.stage
+            )));
+        } else if state.session.is_none() {
+            ui.label(small("No profile open: Home > Profile".to_owned()));
+        } else {
+            ui.label(small("Pick a map in the list on the left".to_owned()));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(doc) = state.active_doc() {
+                let z = ZOOM_STEPS[doc.view.zoom.min(ZOOM_STEPS.len() - 1)];
+                ui.label(small(format!(
+                    "{}\u{d7}{} \u{b7} v{} \u{b7} Act {}",
+                    doc.ds1.width,
+                    doc.ds1.height,
+                    doc.ds1.version,
+                    doc.ds1.effective_act() + 1
+                )));
+                ui.label(small(format!("{}%", (100.0 / f64::from(z)).round())));
+                ui.label(small(match state.hover_cell {
+                    Some((x, y)) => format!("Cell {x}, {y}"),
+                    None => "Cell \u{2014}".to_owned(),
+                }));
+                let layer = crate::doc::LayerKey::from_ref(doc.active_layer).label();
+                ui.label(small(format!("{} \u{b7} {layer}", state.edit.tool.label())));
+                let n = doc.selection.len();
+                if n > 0 || !doc.object_sel.is_empty() {
+                    ui.label(small(format!(
+                        "{n} cell(s), {} object(s) selected",
+                        doc.object_sel.len()
+                    )));
+                }
+            }
+            if let Some(at) = &state.history.last_autosave {
+                ui.label(small(format!("autosaved {at}")))
+                    .on_hover_text("The last autosave of maps with unsaved changes (History)");
+            }
+            if state.index.state.is_running() {
+                let cancelling = state.index.cancelling();
+                if ui
+                    .add_enabled(!cancelling, egui::Button::new("Cancel").small())
+                    .on_hover_text("Stop building the asset index")
+                    .clicked()
+                {
+                    cancel = true;
+                }
+                let bar = match state.index.state.fraction() {
+                    Some(f) => egui::ProgressBar::new(f).show_percentage(),
+                    None => egui::ProgressBar::new(0.0).animate(true),
+                };
+                ui.add(bar.desired_width(110.0).desired_height(12.0));
+            }
+            if let Some(text) = index_text(&state.index.state) {
+                let label = ui.label(small(text));
+                if let IndexState::Failed(e) = &state.index.state {
+                    label.on_hover_text(e.clone());
+                }
+            }
+            if matches!(state.catalog, CatalogState::Building) {
+                ui.label(small("Map catalog...".to_owned()));
+            }
+        });
+    });
+    if cancel {
+        state.cancel_index();
+    }
+}
+
 pub fn show(ui: &mut Ui, state: &mut AppState) {
     let mut cancel = false;
     ui.horizontal(|ui| {

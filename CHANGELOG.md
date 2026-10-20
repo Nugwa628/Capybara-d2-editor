@@ -2,6 +2,58 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Changed
+- **The Map Editor looks and works like DS1 Studio** (Sprites mode is
+  unchanged and is reached with the **Sprites** button in the top bar): a
+  ribbon (Home, View, Map, Help) replaces the menus and the tool strip; the
+  map list sits on the left grouped by folder with counts; the right column
+  holds the Tiles browser with collapsible Cell, History, Tags & groups,
+  Layers and Map sections; a Show bar of layer chips (Shift-click shows one
+  layer only) and a minimap sit on the map; the status bar describes the
+  current tool. Side columns resize and fold (Shift+F folds both). The Log,
+  Objects and Sprite preview panels are floating windows; Objects also fills
+  the right column while the Objects tool is active. The old dock layout of
+  the Map Editor (`layout.json`) is no longer used.
+- **Ctrl+K is now the command finder** (every command by name). Searching
+  every asset is its last row, and the same query language works in the
+  Tiles search box. In Sprites mode Ctrl+K still searches every asset.
+- **Keys follow DS1 Studio** and can be changed in **Help > Shortcuts**
+  (saved in `config.toml`). Old -> new:
+
+  | Action | Old | New |
+  |---|---|---|
+  | Select box | M | V |
+  | Lasso | L | Q |
+  | Select by tile ID | T | T |
+  | Select identical | S | S |
+  | Paint | P | B |
+  | Erase | E | E |
+  | Eyedropper (Pick) | I | I |
+  | Objects tool | O | O (also F2) |
+  | Search every asset | Ctrl+K | Ctrl+K, then the last row |
+  | Object markers | (menu) | M |
+  | Object sprites | (Layers panel) | N |
+  | Animate objects | (menu) | Shift+N |
+  | Fit map | (menu) | F |
+
+  Unchanged: Ctrl+S, Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, Ctrl+C, Ctrl+X, Ctrl+V,
+  Ctrl+A, Ctrl+D, Delete, Esc, Enter, G. New: Shift+O (toggle the Objects
+  tool), F1 (leave it), Home (100%), = and - (zoom), K (minimap), Shift+F
+  (just the map), 1-0 (show/hide layers), Shift+1-0 (show one layer only),
+  Backspace (show all), Ctrl+1-7 (active layer). DS1 Studio's keys for
+  features that come later (U, L, Ctrl+H, Shift+Delete, Tab, W, A, R, H,
+  Z, P, F3-F6, ...) are reserved.
+
+### Added
+- **Themes**: DS1 Studio's nine themes (DS1 Studio is the default), custom
+  themes from share codes (DS1 Studio / PD2 Filter Forge format), in
+  View > Theme and Preferences. Segoe UI is used when Windows has it; icons
+  come from the Lucide icon font (ISC).
+- Right-click menu on the map (Cut, Copy, Paste, Delete, Select all,
+  Deselect, Move to layer, flags, Fit), and Help > About.
+
 ## [1.1.0] - 2026-10-20
 
 ### Added

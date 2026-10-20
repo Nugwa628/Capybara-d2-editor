@@ -11,3 +11,5 @@
 *.mpq binary
 *.png binary
 *.tbl binary
+*.ttf binary
+*.ico binary

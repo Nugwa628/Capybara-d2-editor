@@ -347,6 +347,9 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
     if let Some(step) = objects_step(state, cmd) {
         return step;
     }
+    if let Some(step) = shell_step(state, cmd) {
+        return step;
+    }
     // Screenshots also work without a map (Sprites mode).
     if let Cmd::Screenshot(file) = cmd {
         return Step::Wait(Wait::Shot(Shot {
@@ -577,6 +580,13 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
         | Cmd::Settings(_)
         | Cmd::AddInstall(_)
         | Cmd::CloseDialogs => Step::Next,
+        // Handled by `shell_step`.
+        Cmd::Click(_)
+        | Cmd::ClickRibbonAll
+        | Cmd::Press(_)
+        | Cmd::PressAllKeys
+        | Cmd::Theme(_)
+        | Cmd::RibbonTab(_) => Step::Next,
         // Handled by `splash_step`.
         Cmd::Splash(_) | Cmd::SplashWaitClosed | Cmd::SplashSave { .. } => Step::Next,
         // Handled by `palette_step`.
@@ -1389,9 +1399,7 @@ fn history_step(
             Ok(())
         }
         Cmd::CloseDialogs => {
-            state.settings.open = false;
-            state.settings.add = None;
-            state.history.prompt = None;
+            crate::ui::shell::close_dialogs(state);
             Ok(())
         }
         _ => return None,
@@ -1630,6 +1638,243 @@ fn list_images(dir: &std::path::Path) -> Vec<PathBuf> {
         .unwrap_or_default();
     out.sort_by(|a, b| crate::sprites::natural_cmp(&a.to_string_lossy(), &b.to_string_lossy()));
     out
+}
+
+/// A scripted click or key press waiting to be seen (frames since the
+/// events went out).
+pub struct Probe {
+    /// Commands still to press (`press-all-keys`).
+    queue: VecDeque<&'static str>,
+    current: Option<(Expect, usize, u32)>,
+    pressed: Vec<&'static str>,
+    skipped: Vec<&'static str>,
+}
+
+/// What a probe waits for: a ribbon click or a command run from a key.
+#[derive(Clone, Copy)]
+enum Expect {
+    Click(&'static str),
+    Ran(Option<&'static str>),
+}
+
+fn key_events(combo: crate::ui::Combo) -> Vec<Vec<egui::Event>> {
+    let event = |pressed| egui::Event::Key {
+        key: combo.key,
+        physical_key: Some(combo.key),
+        pressed,
+        repeat: false,
+        modifiers: combo.modifiers(),
+    };
+    vec![vec![event(true)], vec![event(false)]]
+}
+
+/// Waits for the probe's events to be delivered and handled. `Some` when
+/// it is decided: `Ok` when the expected click or command happened.
+fn settle_probe(state: &mut AppState, probe: &mut Probe) -> Option<Result<(), String>> {
+    let (expect, before, frames) = probe.current?;
+    if !state.shell.inject.is_empty() || frames < 2 {
+        probe.current = Some((expect, before, frames + 1));
+        return None;
+    }
+    probe.current = None;
+    Some(match expect {
+        Expect::Click(id) => {
+            let seen = &state.shell.clicked[before.min(state.shell.clicked.len())..];
+            if seen.contains(&id) {
+                Ok(())
+            } else {
+                Err(format!("click {id}: the button did not react"))
+            }
+        }
+        Expect::Ran(None) => Ok(()),
+        Expect::Ran(Some(id)) => {
+            let seen = &state.shell.ran[before.min(state.shell.ran.len())..];
+            if seen.contains(&id) {
+                Ok(())
+            } else {
+                Err(format!("{id}: its key did not run it"))
+            }
+        }
+    })
+}
+
+fn new_probe(queue: VecDeque<&'static str>) -> Probe {
+    Probe {
+        queue,
+        current: None,
+        pressed: Vec::new(),
+        skipped: Vec::new(),
+    }
+}
+
+/// The Map Editor shell's commands: real clicks and key presses, themes.
+fn shell_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
+    let result = match cmd {
+        Cmd::Theme(id) => {
+            let known = crate::ui::theme::builtin_themes()
+                .iter()
+                .any(|t| &t.id == id)
+                || state.config.ui.custom_themes.iter().any(|t| &t.id == id);
+            if known {
+                state.config.ui.theme = id.clone();
+                state.config_dirty = true;
+                return Some(Step::Wait(Wait::Frames(3)));
+            }
+            Err(format!("theme {id:?}: no such theme"))
+        }
+        Cmd::RibbonTab(tab) => {
+            if crate::ui::shell::RIBBON_TABS.contains(&tab.as_str()) {
+                state.config.ui.ribbon_tab = tab.clone();
+                return Some(Step::Wait(Wait::Frames(2)));
+            }
+            Err(format!("ribbon-tab {tab:?}: home, view, map or help"))
+        }
+        Cmd::Click(id) => return Some(click_step(state, id)),
+        Cmd::Press(text) => return Some(press_step(state, text)),
+        Cmd::ClickRibbonAll => {
+            if state.shell.click_all.is_none() {
+                state.shell.click_all = Some(crate::ui::shell::new_click_all());
+            }
+            return Some(match crate::ui::shell::click_all_step(state) {
+                Ok(true) => {
+                    state.shell.click_all = None;
+                    Step::Next
+                }
+                Ok(false) => Step::Retry,
+                Err(e) => {
+                    state.shell.click_all = None;
+                    Step::Fail(format!("click-ribbon-all: {e}"))
+                }
+            });
+        }
+        Cmd::PressAllKeys => return Some(press_all_step(state)),
+        _ => return None,
+    };
+    Some(match result {
+        Ok(()) => Step::Next,
+        Err(e) => Step::Fail(e),
+    })
+}
+
+fn click_step(state: &mut AppState, id: &str) -> Step {
+    let mut probe = match state.shell.probe.take() {
+        Some(p) => p,
+        None => {
+            let found = state
+                .shell
+                .ribbon_rects
+                .iter()
+                .find(|(i, _, _)| *i == id)
+                .map(|(i, r, e)| (*i, *r, *e));
+            match found {
+                Some((id, rect, true)) => {
+                    let before = state.shell.clicked.len();
+                    state
+                        .shell
+                        .inject
+                        .extend(crate::ui::shell::click_events(rect.center()));
+                    let mut p = new_probe(VecDeque::new());
+                    p.current = Some((Expect::Click(id), before, 0));
+                    p
+                }
+                Some(_) => return Step::Fail(format!("click {id}: the button is disabled")),
+                None => return Step::Fail(format!("click {id}: no such button on screen")),
+            }
+        }
+    };
+    match settle_probe(state, &mut probe) {
+        None => {
+            state.shell.probe = Some(probe);
+            Step::Retry
+        }
+        Some(Ok(())) => Step::Next,
+        Some(Err(e)) => Step::Fail(e),
+    }
+}
+
+/// Sends `combo`; the probe expects the command it is bound to (if that is
+/// enabled now) to run.
+fn send_key(state: &mut AppState, combo: crate::ui::Combo) -> Probe {
+    let id = state
+        .shell
+        .bindings
+        .command_for(combo)
+        .filter(|id| crate::ui::command_enabled(state, id))
+        // The command finder (and key capture) take the keyboard first.
+        .filter(|_| !state.shell.blocks_keys());
+    let before = state.shell.ran.len();
+    state.shell.inject.extend(key_events(combo));
+    let mut p = new_probe(VecDeque::new());
+    p.current = Some((Expect::Ran(id), before, 0));
+    p
+}
+
+fn press_step(state: &mut AppState, text: &str) -> Step {
+    let mut probe = match state.shell.probe.take() {
+        Some(p) => p,
+        None => match crate::ui::Combo::parse(text) {
+            Some(combo) => send_key(state, combo),
+            None => return Step::Fail(format!("press {text:?}: not a key")),
+        },
+    };
+    match settle_probe(state, &mut probe) {
+        None => {
+            state.shell.probe = Some(probe);
+            Step::Retry
+        }
+        Some(Ok(())) => Step::Next,
+        Some(Err(e)) => Step::Fail(format!("press {text}: {e}")),
+    }
+}
+
+fn press_all_step(state: &mut AppState) -> Step {
+    let mut probe = match state.shell.probe.take() {
+        Some(p) => p,
+        None => new_probe(
+            crate::ui::COMMANDS
+                .iter()
+                .filter(|c| c.available && !c.external)
+                .filter(|c| state.shell.bindings.get(c.id).is_some())
+                .map(|c| c.id)
+                .collect(),
+        ),
+    };
+    loop {
+        if probe.current.is_some() {
+            match settle_probe(state, &mut probe) {
+                None => {
+                    state.shell.probe = Some(probe);
+                    return Step::Retry;
+                }
+                Some(Err(e)) => return Step::Fail(format!("press-all-keys: {e}")),
+                Some(Ok(())) => {
+                    // Windows the key opened would hold the next keys.
+                    state.shell.close_windows();
+                    state.shell.close_popups = true;
+                }
+            }
+        }
+        let Some(id) = probe.queue.pop_front() else {
+            state.info(format!(
+                "press-all-keys: {} key(s) pressed; not enabled then: {}",
+                probe.pressed.len(),
+                probe.skipped.join(", ")
+            ));
+            return Step::Next;
+        };
+        let combo = state.shell.bindings.get(id);
+        match combo {
+            Some(combo) if crate::ui::command_enabled(state, id) => {
+                let mut p = send_key(state, combo);
+                if let Some((Expect::Ran(Some(_)), before, _)) = p.current {
+                    p.current = Some((Expect::Ran(Some(id)), before, 0));
+                }
+                probe.current = p.current;
+                probe.pressed.push(id);
+            }
+            _ => probe.skipped.push(id),
+        }
+    }
 }
 
 fn done_or_fail(state: &AppState, ok: bool, what: &str) -> Step {
