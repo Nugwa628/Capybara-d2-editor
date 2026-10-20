@@ -6,9 +6,13 @@
 //! The public API is specified in `docs/api/capy-mod.md`.
 
 pub mod add_map;
+pub mod automap;
 pub mod change_type;
+pub mod compat;
+pub mod crash_log;
 pub mod cube;
 pub mod custom_object;
+mod doc_util;
 pub mod entry_text;
 pub mod level_tables;
 pub mod lvl_error;
