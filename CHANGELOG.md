@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **Sprites list is a folder tree.** The Sprites list groups DC6/DCC/COF/DT1
+  files into collapsible folders (`global`, `local`, ...) with file counts,
+  folders first and in natural order (`act2` before `act10`, `a2` before
+  `a10`), with Expand all / Collapse all, a type tag per row, and the open
+  sprite's folders revealed. Folders with matches open while you filter.
+
 ### Fixed
 - Tiles of a DT1 saved to the profile (Add to this map, the tile editor,
   Collect into own DT1) now show up in the Tiles browser right after the save:

@@ -15,6 +15,7 @@ mod gif_export_corpus;
 pub mod palette;
 pub mod palette_memory;
 pub mod preview;
+pub mod tree;
 pub mod viewer;
 
 use std::path::{Path, PathBuf};
@@ -223,6 +224,8 @@ pub struct SpriteList {
     /// Indices into `Session::sprites` that pass the filter.
     pub filtered: Vec<usize>,
     computed_for: Option<(String, [bool; 4], u64)>,
+    /// The folder tree of `filtered` and which folders are open.
+    pub tree: tree::TreeState,
 }
 
 pub struct ConverterState {
@@ -337,7 +340,7 @@ impl SpritesState {
 }
 
 /// Names that are sprites or tile sets (`.dc6`, `.dcc`, `.cof`, `.dt1`),
-/// sorted.
+/// sorted per folder level (folders first, natural order).
 pub fn sprite_list<'a>(names: impl Iterator<Item = &'a GamePath>) -> Vec<GamePath> {
     let mut out: Vec<GamePath> = names
         .filter(|p| {
@@ -349,7 +352,7 @@ pub fn sprite_list<'a>(names: impl Iterator<Item = &'a GamePath>) -> Vec<GamePat
         })
         .cloned()
         .collect();
-    out.sort();
+    out.sort_by(|a, b| tree::path_order(a.as_str(), b.as_str()));
     out
 }
 

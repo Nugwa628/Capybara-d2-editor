@@ -1217,7 +1217,14 @@ panels:
 
 ### The sprite list
 
-Paths are shown without `data\global\`. Use **Filter** (for example
+The list is a folder tree of the game path below `data\` (`global`,
+`local`, ...): folders first, in natural order (`act2` before `act10`).
+Click a folder to open or close it; it shows how many files it holds.
+**Expand all** and **Collapse all** act on every folder, and a chain of
+single-child folders is one row. The sprite open in the Viewer has its
+folders opened and its row highlighted; each row ends with its type (DC6,
+DCC, COF, DT1), and hovering shows the full path. Folders with matches open
+while you filter. Use **Filter** (for example
 `monsters\zm`) and the **DC6**, **DCC**, **COF** and **DT1** checkboxes to
 narrow the list, then click a row to open it in the Viewer.
 
