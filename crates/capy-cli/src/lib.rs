@@ -12,6 +12,7 @@ mod args;
 mod help;
 mod index_cmd;
 mod maps_cmd;
+pub mod mcp;
 mod names;
 mod overrides;
 mod profiles;
@@ -197,8 +198,18 @@ fn dispatch(ctx: &mut Ctx<'_>, command: Command) -> CmdResult {
         Command::IndexBuild { profile } => index_cmd::build(ctx, &profile),
         Command::MapsList { profile, filter } => maps_cmd::list(ctx, &profile, filter.as_deref()),
         Command::ProfilesList => profiles::list(ctx),
+        Command::Mcp { profile } => mcp_cmd(ctx, &profile),
         Command::Help(verb) => help::print(ctx, verb.as_deref()),
     }
+}
+
+/// `mcp`: serves MCP on stdin/stdout until stdin closes.
+fn mcp_cmd(ctx: &mut Ctx<'_>, profile_arg: &std::ffi::OsString) -> CmdResult {
+    let profile = profiles::load(ctx, profile_arg)?;
+    let stdin = std::io::stdin();
+    let root = ctx.root.clone();
+    mcp::serve(root, profile, &mut stdin.lock(), ctx.out)
+        .map_err(|e| Fail::Runtime(format!("mcp: {e}")))
 }
 
 #[cfg(test)]

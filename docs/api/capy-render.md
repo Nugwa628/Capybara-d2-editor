@@ -189,3 +189,74 @@ share live in `d2-formats`: sprite paths and the last-record rule (`d2_formats::
 `trans_a`/`trans_b` blend mapping (`Blend::for_cof_layer`). `capy-sprite` no longer depends
 on this crate.
 
+
+## Map analysis (P10)
+
+Pure modules, no Bevy; ports of ds1-studio's `walkArea`, `walkEdit` (read side),
+`cellFlags`, `spawnRegions`, `mapOverlays`, `warps`, `exits`, `arrival`, `pops`,
+`waterAnimation` (playback side) and Game view. Game-table data is always
+passed in by the caller.
+
+```rust
+pub mod walk;   // sub-tile collision and the walkable-area badge
+pub struct SubTileGrid { pub width: u32, pub height: u32, pub flags: Vec<u8> } // (cy*w+cx)*25 + sy*5 + sx
+pub enum Collision { Editor, Game { blank: Option<[u8; 25]> } }
+pub fn sub_tile_flags(ds1: &Ds1, tiles: &TileSet, mode: Collision) -> SubTileGrid;
+pub fn blank_fill_flags(tiles: &TileSet, level_id: i32) -> [u8; 25];   // LvlPrest FillBlanks=1 tile
+pub fn walkable_area(ds1: &Ds1, tiles: &TileSet) -> f64;               // tiles squared (Editor mode)
+pub fn area_colour(area: f64) -> ([u8; 3], AreaBand);                  // 3300/3800/4300/5300 bands
+pub const BLOCK_WALK: u8 = 1; BLOCK_LIGHT = 2; BLOCK_JUMP = 4; BLOCK_PLAYER_WALK = 8;
+
+pub mod rooms;  // 8x8 game rooms, spawn regions, overviews
+pub fn preset_rooms(w, h) -> Vec<PresetRoom>;  pub fn room_at(..);
+pub fn room_regions(ds1: &Ds1, room: PresetRoom) -> RoomRegions;       // { room, regions, warp }
+pub fn spawns(rr: &RoomRegions, r: &LogicRegion) -> bool;
+pub fn partly_no_spawn_rooms(ds1: &Ds1) -> Vec<(RoomRegions, Vec<usize>)>;
+pub fn open_void(ds1, &SubTileGrid) -> OpenVoid;
+pub fn walkable_overlay(ds1, &SubTileGrid) -> Vec<WalkClass>;          // per sub-tile
+pub fn spawn_overlay(ds1, &SubTileGrid, &SpawnLevel) -> Vec<SpawnClass>;
+
+pub mod links;  // warps, exits, arrival, level light
+pub struct LevelRow { id, name, vis: [i32; 8], warp: [i32; 8], intensity, rgb: [i32; 3] } // caller fills from Levels.txt
+pub fn warp_tiles(ds1) -> BTreeMap<u8, Vec<(u32, u32)>>;
+pub fn level_links(row, target: &dyn Fn(i32) -> LevelRef, warp_name: &dyn Fn(i32) -> Option<String>) -> [Option<WarpLink>; 8];
+pub fn map_warps(ds1, &[Option<WarpLink>; 8]) -> Vec<MapWarp>;         // each warp tile + its target level
+pub fn exit_problems(ds1, &LevelRow, &ExitOptions) -> Vec<ExitProblem>;
+pub fn arrival_problem(ds1, is_waypoint: &dyn Fn(i32, i32) -> bool) -> Option<ArrivalProblem>;
+pub struct LevelLight { intensity, rgb }  // multiplier() = (I/255)*(c/255); 0 = act daylight
+
+pub mod pops;   // roof/wall hiding areas
+pub fn find_pops(ds1) -> Vec<PopArea>;  hide_rect; trigger_rect(rect, pop_pad);
+pub fn tiles_to_hide(..); pop_targets(..); pop_reach(ds1, &PopArea, pop_pad); pop_problems(ds1, &[PopArea], pops, pop_pad);
+
+pub mod anim;   // animated floors and Game view
+pub fn animation_frames(tiles: &TileSet, key: TileKey) -> Vec<TileRef>; // variants all animated, distinct rarities from 0
+pub fn frame_at(n_frames: usize, seconds: f64) -> usize;               // 10 fps, looping
+pub fn animated_floor_cells(ds1, tiles) -> Vec<AnimatedCell>;          // .frame(seconds)
+pub struct GameView { width, height } // default 800x600, 320..=7680; world_rect(cx, cy), fit_zoom(vw, vh, max)
+```
+
+Rules and where ds1-studio keeps things:
+
+- **Walkability** ORs the 25 sub-tile flags of every floor, wall and roof tile
+  in a cell (shadows and special tiles excluded). Hidden tiles count, with every
+  variant of their key. Visible tiles use the renderer's variant rule
+  (ds1-studio picks a variant at random, so counts can differ by a few
+  sub-tiles on maps whose variants differ in flags). DS1 cell bit 17
+  (`prop3 & 2`, "unwalkable") blocks all 25 sub-tiles; bit 16 adds `BLOCK_JUMP`.
+  `Collision::Editor` also blocks cells with no floor (the badge and WinDS1
+  overlay); `Collision::Game` leaves them open, as D2Common builds collision.
+- **Walk painting in ds1-studio writes both, via two tools.** Sub-tile painting
+  (`walkEdit.ts`) writes DT1 flags: a per-map `<map>_walk.dt1` plus hidden
+  blocker floors in the cells. The whole-cell tool (`cellFlags.ts`) writes the
+  DS1 cell flag (bit 17). Neither is ported yet (needs the DT1 writer UI, P11).
+- **Rooms**: 8x8 cells from the top corner over the DS1 size minus one; regions
+  are flooded through first-layer walls with D2Common's tables; a region is a
+  node when its seed has a hidden first-layer floor or main index 30; a room
+  with a warp (special tile main 0-7) spawns nothing. `noSpawnPlan` (the edit
+  planner) is not ported.
+- **Level light** lives in Levels.txt (`Intensity`, `Red`, `Green`, `Blue`), not
+  in the DS1; ds1-studio edits the map's Levels.txt row ("Level light" mode).
+- **Animation**: the clock runs in game ticks (25/s); animated floors advance
+  every 2.5 ticks (10 fps). Act 5 snow-style tiles (repeated rarities) do not
+  animate.
