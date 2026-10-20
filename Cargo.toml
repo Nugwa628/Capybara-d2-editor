@@ -11,6 +11,7 @@ members = [
     "crates/capy-cli",
     "crates/capy-app",
     "crates/capy-paint",
+    "crates/capy-mod",
 ]
 
 [workspace.package]
@@ -38,6 +39,7 @@ capy-render = { path = "crates/capy-render" }
 capy-sprite = { path = "crates/capy-sprite" }
 capy-cli = { path = "crates/capy-cli" }
 capy-paint = { path = "crates/capy-paint" }
+capy-mod = { path = "crates/capy-mod" }
 thiserror = "2"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
