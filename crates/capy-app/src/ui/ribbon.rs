@@ -112,6 +112,14 @@ const TABS: &[Tab] = &[
                         active: never,
                     },
                     Item::Cmd("file.addInstall", Size::Sm, "Add game..."),
+                    Item::Menu {
+                        id: "menu.export",
+                        label: "Export",
+                        glyph: super::studio::icons::IMAGE_DOWN,
+                        size: Size::Sm,
+                        body: export_menu,
+                        active: never,
+                    },
                 ],
             },
             Group {
@@ -132,6 +140,7 @@ const TABS: &[Tab] = &[
                         active: never,
                     },
                     Item::Cmd("edit.moveToLayer", Size::Sm, "Move to layer..."),
+                    Item::Cmd("edit.replace", Size::Sm, "Replace..."),
                 ],
             },
             Group {
@@ -153,7 +162,12 @@ const TABS: &[Tab] = &[
             },
             Group {
                 label: "Paint / erase",
-                items: &[Item::Custom(paint_group)],
+                items: &[
+                    Item::Cmd("tool.freehand", Size::Sm, "Freehand"),
+                    Item::Cmd("tool.rect", Size::Sm, "Rectangle"),
+                    Item::Cmd("tool.fill", Size::Sm, "Fill area"),
+                    Item::Custom(paint_group),
+                ],
             },
             Group {
                 label: "Layer",
@@ -173,6 +187,15 @@ const TABS: &[Tab] = &[
                     Item::Cmd("view.zoomIn", Size::Sm, "Zoom in"),
                     Item::Cmd("view.zoomOut", Size::Sm, "Zoom out"),
                     Item::Cmd("view.focus", Size::Lg, "Just the map"),
+                    Item::Cmd("view.game", Size::Sm, "Game view"),
+                    Item::Menu {
+                        id: "menu.gameSize",
+                        label: "Game size",
+                        glyph: super::studio::icons::FRAME,
+                        size: Size::Sm,
+                        body: game_size_menu,
+                        active: never,
+                    },
                 ],
             },
             Group {
@@ -180,6 +203,20 @@ const TABS: &[Tab] = &[
                 items: &[
                     Item::Cmd("mode.tiles", Size::Lg, "Tiles"),
                     Item::Cmd("mode.objects", Size::Lg, "Objects"),
+                    Item::Cmd("mode.walk", Size::Sm, "Walkability"),
+                    Item::Cmd("mode.automap", Size::Sm, "Automap"),
+                    Item::Cmd("mode.light", Size::Sm, "Level light"),
+                    Item::Cmd("mode.roofs", Size::Sm, "Roof hiding"),
+                    Item::Cmd("view.popsInside", Size::Sm, "As if inside"),
+                ],
+            },
+            Group {
+                label: "Overlays",
+                items: &[
+                    Item::Cmd("view.rooms", Size::Sm, "Rooms 8x8"),
+                    Item::Cmd("view.spawn", Size::Sm, "Spawn regions"),
+                    Item::Cmd("view.warps", Size::Sm, "Warps"),
+                    Item::Cmd("view.wallCategories", Size::Sm, "Wall categories"),
                 ],
             },
             Group {
@@ -223,9 +260,18 @@ const TABS: &[Tab] = &[
             Group {
                 label: "Map",
                 items: &[
+                    Item::Cmd("map.new", Size::Lg, "New map..."),
                     Item::Cmd("map.resize", Size::Lg, "Resize..."),
                     Item::Cmd("map.info", Size::Sm, "Map info"),
                     Item::Cmd("file.close", Size::Sm, "Close map"),
+                ],
+            },
+            Group {
+                label: "Tiles",
+                items: &[
+                    Item::Cmd("map.reroll", Size::Sm, "Re-roll floors..."),
+                    Item::Cmd("map.reassign", Size::Sm, "Reassign tiles..."),
+                    Item::Cmd("edit.replace", Size::Sm, "Find & replace..."),
                 ],
             },
             Group {
@@ -793,6 +839,30 @@ fn saves_menu(ui: &mut Ui, state: &mut AppState) {
     ui.weak(format!("CHANGED.txt: {changed} file(s)"));
 }
 
+fn export_menu(ui: &mut Ui, state: &mut AppState) {
+    menu_cmd(ui, state, "export.png", "Map as PNG...");
+    menu_cmd(ui, state, "export.selectionPng", "Selection as PNG...");
+    menu_cmd(ui, state, "view.snapshot", "Copy the view to the clipboard");
+}
+
+fn game_size_menu(ui: &mut Ui, state: &mut AppState) {
+    let now = (
+        state.config.ui.studio.game_width,
+        state.config.ui.studio.game_height,
+    );
+    for (w, h) in super::studio::views::GAME_SIZES {
+        if ui
+            .selectable_label(now == (w, h), format!("{w} \u{d7} {h}"))
+            .clicked()
+        {
+            state.config.ui.studio.game_width = w;
+            state.config.ui.studio.game_height = h;
+            state.config_dirty = true;
+            ui.close();
+        }
+    }
+}
+
 fn flags_menu(ui: &mut Ui, state: &mut AppState) {
     menu_cmd(ui, state, "flags.setHidden", "Set hidden");
     menu_cmd(ui, state, "flags.clearHidden", "Clear hidden");
@@ -834,8 +904,8 @@ fn theme_menu(ui: &mut Ui, state: &mut AppState) {
     menu_cmd(ui, state, "file.preferences", "Custom themes...");
 }
 
-/// Paint / erase: the freehand mode (rectangle and fill come with P9), the
-/// brush size and the value Paint writes.
+/// Paint / erase: the random mix, the brush size and the value Paint
+/// writes (the Freehand / Rectangle / Fill area modes are registry buttons).
 fn paint_group(ui: &mut Ui, state: &mut AppState) {
     let has_doc = state.active.is_some();
     let s = state.shell.shades;
@@ -843,17 +913,7 @@ fn paint_group(ui: &mut Ui, state: &mut AppState) {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
-                let r = button(
-                    ui,
-                    state,
-                    "Freehand",
-                    icon::PAINTBRUSH,
-                    Size::Sm,
-                    has_doc,
-                    has_doc,
-                    false,
-                );
-                r.on_hover_text("Paint and Erase follow the mouse");
+                super::studio::paint::mix_line(ui, state);
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Brush").size(11.5).color(s.muted));
                     ui.add(
@@ -937,6 +997,13 @@ pub fn map_context_menu(ui: &mut Ui, state: &mut AppState) {
     menu_cmd(ui, state, "edit.deselect", "Deselect");
     menu_cmd(ui, state, "edit.moveToLayer", "Move selection to layer...");
     ui.menu_button("Selection flags", |ui| flags_menu(ui, state));
+    menu_cmd(ui, state, "edit.replace", "Find & replace tiles...");
+    menu_cmd(
+        ui,
+        state,
+        "export.selectionPng",
+        "Export the selection as PNG...",
+    );
     ui.separator();
     menu_cmd(ui, state, "view.fit", "Fit map");
     menu_cmd(ui, state, "view.grid", "Grid");

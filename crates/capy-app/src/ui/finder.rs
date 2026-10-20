@@ -192,7 +192,8 @@ mod tests {
     fn finds_by_label_prefix_first_and_hides_unavailable() {
         let hits = matches("undo");
         assert_eq!(hits.first().map(|c| c.id), Some("edit.undo"));
-        assert!(matches("walkability").is_empty(), "not in this version");
+        assert!(matches("npc paths").is_empty(), "not in this version");
+        assert!(matches("walkability").iter().any(|c| c.id == "mode.walk"));
         let all = matches("");
         assert!(all.iter().all(|c| c.available));
         assert!(matches("paint").iter().any(|c| c.id == "tool.paint"));

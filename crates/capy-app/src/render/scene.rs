@@ -225,7 +225,18 @@ fn push_run(runs: &mut Vec<Run>, class: BlendClass) -> &mut TexGeometry {
     &mut runs[last].geo
 }
 
+/// Animated floor tiles (water, lava) of a draw list: entry index -> one
+/// draw item per frame, in frame order (frame 0 is the list's own item).
+pub type TileAnims = std::collections::HashMap<usize, Arc<Vec<DrawItem>>>;
+
+/// The frame an animated floor shows `floor_secs` seconds into the
+/// animation (`None`: the draw list's frame 0).
+pub fn tile_frame(frames: &[DrawItem], floor_secs: Option<f64>) -> usize {
+    floor_secs.map_or(0, |s| capy_render::anim::frame_at(frames.len(), s))
+}
+
 /// The runs of one piece at zoom `1:div` and animation `tick`.
+#[cfg(test)]
 pub fn build_piece(
     entries: &[SceneEntry],
     piece: &Piece,
@@ -234,11 +245,45 @@ pub fn build_piece(
     tile_geometry: &dyn Fn(&TileRef) -> Option<TileGeometry>,
     tick: Option<u32>,
 ) -> Vec<Run> {
+    build_piece_anim(
+        entries,
+        piece,
+        layout,
+        div,
+        tile_geometry,
+        tick,
+        &TileAnims::new(),
+        None,
+    )
+}
+
+/// [`build_piece`] with animated floors shown at `floor_secs`.
+#[allow(clippy::too_many_arguments)]
+pub fn build_piece_anim(
+    entries: &[SceneEntry],
+    piece: &Piece,
+    layout: &AtlasLayout,
+    div: u32,
+    tile_geometry: &dyn Fn(&TileRef) -> Option<TileGeometry>,
+    tick: Option<u32>,
+    anims: &TileAnims,
+    floor_secs: Option<f64>,
+) -> Vec<Run> {
     let mut runs = Vec::new();
     let inv = 1.0 / layout.size.max(1) as f32;
-    for entry in entries.get(piece.range.clone()).unwrap_or(&[]) {
+    let start = piece.range.start;
+    for (k, entry) in entries
+        .get(piece.range.clone())
+        .unwrap_or(&[])
+        .iter()
+        .enumerate()
+    {
         match entry {
             SceneEntry::Tile(item) => {
+                let item = match anims.get(&(start + k)) {
+                    Some(frames) => frames.get(tile_frame(frames, floor_secs)).unwrap_or(item),
+                    None => item,
+                };
                 let Some(rect) = layout.rects.get(&geometry::atlas_key(item)) else {
                     continue;
                 };
@@ -267,16 +312,37 @@ pub fn build_piece(
 
 /// The frame number of every object entry of a piece at `tick`: when it
 /// changes, the piece's meshes must be rebuilt.
+#[cfg(test)]
 pub fn piece_frames(entries: &[SceneEntry], piece: &Piece, tick: Option<u32>) -> Vec<usize> {
+    piece_frames_anim(entries, piece, tick, &TileAnims::new(), None)
+}
+
+/// [`piece_frames`] plus the frame of every animated floor of the piece.
+pub fn piece_frames_anim(
+    entries: &[SceneEntry],
+    piece: &Piece,
+    tick: Option<u32>,
+    anims: &TileAnims,
+    floor_secs: Option<f64>,
+) -> Vec<usize> {
+    let start = piece.range.start;
     entries
         .get(piece.range.clone())
         .unwrap_or(&[])
         .iter()
-        .filter_map(|e| match e {
+        .enumerate()
+        .filter_map(|(k, e)| match e {
             SceneEntry::Object(o) => Some(o.anim.frame_number(tick)),
-            SceneEntry::Tile(_) => None,
+            SceneEntry::Tile(_) => anims
+                .get(&(start + k))
+                .map(|frames| tile_frame(frames, floor_secs)),
         })
         .collect()
+}
+
+/// Does the piece hold an animated floor?
+pub fn piece_animates(piece: &Piece, anims: &TileAnims) -> bool {
+    !piece.objects && piece.range.clone().any(|i| anims.contains_key(&i))
 }
 
 /// z of run `index` of `total`: strictly increasing in list order, inside

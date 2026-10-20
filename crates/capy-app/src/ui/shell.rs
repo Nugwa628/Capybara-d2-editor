@@ -195,6 +195,7 @@ pub fn close_dialogs(state: &mut AppState) {
     state.edit.close_prompt = None;
     state.browser.palette.open = false;
     state.cancel_paste();
+    super::studio::close_dialogs(state);
 }
 
 pub fn current_theme(config: &Config) -> Theme {
@@ -554,10 +555,15 @@ fn section(
 }
 
 fn sections(ui: &mut Ui, state: &mut AppState) {
-    let cell = state
-        .hover_cell
-        .map_or_else(String::new, |(x, y)| format!("{x}, {y}"));
-    section(ui, state, "CELL", cell, |s| &mut s.cell, cell_section);
+    let cell = super::studio::sections::cell_summary(state);
+    section(
+        ui,
+        state,
+        "CELL",
+        cell,
+        |s| &mut s.cell,
+        super::studio::sections::cell_section,
+    );
     let history = state
         .active_doc()
         .and_then(|d| d.edit.undo_label().map(|l| format!("undo: {l}")))
@@ -590,7 +596,7 @@ fn sections(ui: &mut Ui, state: &mut AppState) {
         "TAGS & GROUPS",
         tags,
         |s| &mut s.tags,
-        tags_section,
+        super::studio::sections::tags_section,
     );
     let layers = state
         .active_doc()
@@ -620,58 +626,6 @@ fn sections(ui: &mut Ui, state: &mut AppState) {
     );
 }
 
-fn cell_section(ui: &mut Ui, state: &mut AppState) {
-    let Some(doc) = state.active_doc() else {
-        ui.weak("No map open");
-        return;
-    };
-    match state.hover_cell {
-        Some((x, y)) if x >= 0 && y >= 0 => {
-            let lines = properties::describe_cell(&doc.ds1, x as u32, y as u32);
-            if lines.is_empty() {
-                ui.weak("Empty cell");
-            }
-            for l in lines {
-                ui.label(RichText::new(l).monospace());
-            }
-        }
-        _ => {
-            ui.weak("Point at a cell on the map");
-        }
-    }
-}
-
-fn tags_section(ui: &mut Ui, state: &mut AppState) {
-    let Some(doc) = state.active_doc() else {
-        ui.weak("No map open");
-        return;
-    };
-    let ds1 = &doc.ds1;
-    match (&ds1.tag, state.hover_cell) {
-        (Some(tag), Some((x, y))) if x >= 0 && y >= 0 => {
-            let value = tag.get(x as u32, y as u32).unwrap_or(0);
-            ui.label(format!("Tag at {x}, {y}: {value:#010x}"));
-        }
-        (Some(_), _) => {
-            ui.weak("Tag layer: point at a cell to read it");
-        }
-        (None, _) => {
-            ui.weak("No tag layer (add one in Map > Layers)");
-        }
-    }
-    if ds1.groups.is_empty() {
-        ui.weak("No object groups");
-        return;
-    }
-    egui::Grid::new("groups").num_columns(2).show(ui, |ui| {
-        for (i, g) in ds1.groups.iter().enumerate() {
-            ui.weak(format!("#{i}"));
-            ui.label(format!("{}, {}  {} x {}", g.x, g.y, g.width, g.height));
-            ui.end_row();
-        }
-    });
-}
-
 /// The centre: map tabs and the Show bar over the map.
 fn centre(ui: &mut Ui, state: &mut AppState) {
     let s = state.shell.shades;
@@ -683,6 +637,7 @@ fn centre(ui: &mut Ui, state: &mut AppState) {
             ui.set_width(ui.available_width());
             map_view::tab_strip(ui, state);
             show_bar(ui, state);
+            super::studio::wallcats::row(ui, state);
         });
     map_view::show(ui, state);
 }
@@ -785,6 +740,7 @@ fn show_bar(ui: &mut Ui, state: &mut AppState) {
                 commands::set_layer_shown(state, LayerName::Key(LayerKey::Tag), !on);
             }
         }
+        super::studio::wallcats::show_bar_chips(ui, state);
         ui.add_space(6.0);
         if chip(ui, &s, "Objects", objects_on, true)
             .on_hover_text(format!(

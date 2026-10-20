@@ -109,6 +109,8 @@ pub struct UiConfig {
     pub ribbon_tab: String,
     pub minimap: bool,
     pub sections: Sections,
+    /// Game view size, wall categories and overlays (P9/P10).
+    pub studio: crate::ui::studio::StudioPrefs,
     /// Shortcuts changed from the defaults: command id -> key (`""` = none).
     pub keys: std::collections::BTreeMap<String, String>,
     pub custom_themes: Vec<crate::ui::theme::CustomTheme>,
@@ -125,6 +127,7 @@ impl Default for UiConfig {
             ribbon_tab: "home".to_owned(),
             minimap: true,
             sections: Sections::default(),
+            studio: crate::ui::studio::StudioPrefs::default(),
             keys: std::collections::BTreeMap::new(),
             custom_themes: Vec::new(),
         }

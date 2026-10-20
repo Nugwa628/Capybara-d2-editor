@@ -1,6 +1,8 @@
 //! The minimap in the map's bottom-left corner (View > Minimap, K): the
-//! whole map as a small diamond, one pixel per cell (walls brown, floors
-//! green-grey), with the visible part outlined. Click or drag to move there.
+//! whole map drawn small by `capy_render` on a worker thread (the layers
+//! that are shown, without objects), with the visible part outlined. Until
+//! the picture is ready it is a schematic diamond, one pixel per cell (walls
+//! brown, floors green-grey). Click or drag to move there.
 
 use bevy_egui::egui::{
     self, Color32, ColorImage, Mesh, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, TextureHandle,
@@ -121,22 +123,36 @@ pub fn show(ui: &mut Ui, state: &mut AppState, map: Rect) {
         ]
     };
 
-    let mut mesh = Mesh::with_texture(cache.texture.id());
-    for (u, v, uv) in [
-        (0.0, 0.0, Pos2::new(0.0, 0.0)),
-        (fw, 0.0, Pos2::new(1.0, 0.0)),
-        (fw, fh, Pos2::new(1.0, 1.0)),
-        (0.0, fh, Pos2::new(0.0, 1.0)),
-    ] {
-        mesh.vertices.push(egui::epaint::Vertex {
-            pos: to_screen(iso::tile_to_iso(u, v)),
-            uv,
-            color: Color32::WHITE,
-        });
+    let schematic = cache.texture.id();
+    match super::studio::views::minimap_texture(ui.ctx(), state, index) {
+        Some((texture, [ix0, iy0, ix1, iy1])) => {
+            let r = Rect::from_min_max(to_screen([ix0, iy0]), to_screen([ix1, iy1]));
+            painter.image(
+                texture.id(),
+                r,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        None => {
+            let mut mesh = Mesh::with_texture(schematic);
+            for (u, v, uv) in [
+                (0.0, 0.0, Pos2::new(0.0, 0.0)),
+                (fw, 0.0, Pos2::new(1.0, 0.0)),
+                (fw, fh, Pos2::new(1.0, 1.0)),
+                (0.0, fh, Pos2::new(0.0, 1.0)),
+            ] {
+                mesh.vertices.push(egui::epaint::Vertex {
+                    pos: to_screen(iso::tile_to_iso(u, v)),
+                    uv,
+                    color: Color32::WHITE,
+                });
+            }
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(0, 2, 3);
+            painter.add(Shape::mesh(mesh));
+        }
     }
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    painter.add(Shape::mesh(mesh));
 
     // The part of the map on screen.
     let view = state.docs[index].view;

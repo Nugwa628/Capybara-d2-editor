@@ -353,6 +353,8 @@ pub enum Cmd {
     },
     /// "Convert to palette" and palette memory (see `script_palette`).
     Palette(super::script_palette::PaletteCmd),
+    /// ds1-studio parity tools and views (see `script_studio`).
+    Studio(super::script_studio::StudioCmd),
 }
 
 /// The kinds `assert-history` accepts.
@@ -519,6 +521,9 @@ pub fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
     };
     if let Some(r) = super::script_palette::parse(&word.to_ascii_lowercase(), &args, rest) {
         return r.map(|c| Some(Cmd::Palette(c)));
+    }
+    if let Some(r) = super::script_studio::parse(&word.to_ascii_lowercase(), &args, rest) {
+        return r.map(|c| Some(Cmd::Studio(c)));
     }
     let cmd = match word.to_ascii_lowercase().as_str() {
         "open" => {

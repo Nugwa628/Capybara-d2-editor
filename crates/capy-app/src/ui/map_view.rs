@@ -143,10 +143,15 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         view: doc.view,
     });
     if let Some(frame) = frame {
-        if !over_minimap || state.edit.gesture.is_some() {
-            map_tools::handle_input(ui, state, &frame, &response, panning);
+        if !over_minimap || state.edit.gesture.is_some() || state.studio.drag.is_some() {
+            let took = super::studio::paint::map_input(ui, state, &frame, &response, panning);
+            if !took {
+                map_tools::handle_input(ui, state, &frame, &response, panning);
+            }
         }
+        super::studio::views::paint_overlays(ui, state, &frame);
         map_tools::paint_overlays(ui, state, &frame);
+        super::studio::paint::paint_overlays(ui, state, &frame);
         if response.hovered() && !space && !panning && !over_minimap {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }

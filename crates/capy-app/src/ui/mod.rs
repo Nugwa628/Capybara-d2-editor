@@ -26,6 +26,7 @@ pub mod shell;
 mod shortcuts_dialog;
 pub mod sprites;
 mod status;
+pub mod studio;
 pub mod theme;
 mod thumbs;
 mod tiles;
@@ -278,6 +279,7 @@ pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     sprites::dialogs(ctx, state);
     if mode == AppMode::Map {
         shell::windows(ctx, state);
+        studio::windows(ctx, state);
     }
     toasts::show(ctx, state);
 }

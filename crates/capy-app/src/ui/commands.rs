@@ -106,11 +106,18 @@ pub const COMMANDS: &[Command] = &[
         icon::PAINTBRUSH,
         "B",
     ),
-    later("tool.rect", "Paint / erase a rectangle", "Tools", "U"),
-    later(
+    cmd(
+        "tool.rect",
+        "Paint / erase a rectangle",
+        "Tools",
+        super::studio::icons::SQUARE,
+        "U",
+    ),
+    cmd(
         "tool.fill",
         "Flood fill / erase a connected area",
         "Tools",
+        super::studio::icons::PAINT_BUCKET,
         "L",
     ),
     cmd("tool.erase", "Erase tool", "Tools", icon::ERASER, "E"),
@@ -170,15 +177,28 @@ pub const COMMANDS: &[Command] = &[
         "Edit",
         "Shift+Delete",
     ),
-    later("edit.replace", "Find & replace tiles", "Edit", "Ctrl+H"),
+    cmd(
+        "edit.replace",
+        "Find & replace tiles",
+        "Edit",
+        super::studio::icons::REPLACE,
+        "Ctrl+H",
+    ),
     // View
-    later("view.next", "Next view", "View", "Tab"),
-    later("view.prev", "Previous view", "View", "Shift+Tab"),
+    cmd("view.next", "Next view", "View", icon::CHEVRON_RIGHT, "Tab"),
+    cmd(
+        "view.prev",
+        "Previous view",
+        "View",
+        icon::CHEVRON_LEFT,
+        "Shift+Tab",
+    ),
     cmd("view.fit", "Fit map", "View", icon::MAXIMIZE, "F"),
-    later(
+    cmd(
         "view.game",
         "Game view (what the character sees)",
         "View",
+        super::studio::icons::MONITOR,
         "Z",
     ),
     cmd(
@@ -197,9 +217,27 @@ pub const COMMANDS: &[Command] = &[
         "-",
     ),
     cmd("view.grid", "Grid", "View", icon::GRID, "G"),
-    later("view.rooms", "Game rooms (8x8)", "View", "R"),
-    later("view.walkable", "Walkability view", "View", "W"),
-    later("view.automap", "Automap view", "View", "A"),
+    cmd(
+        "view.rooms",
+        "Game rooms (8x8)",
+        "View",
+        super::studio::icons::LAYOUT_GRID,
+        "R",
+    ),
+    cmd(
+        "view.walkable",
+        "Walkability view",
+        "View",
+        super::studio::icons::FOOTPRINTS,
+        "W",
+    ),
+    cmd(
+        "view.automap",
+        "Automap view",
+        "View",
+        super::studio::icons::MAP,
+        "A",
+    ),
     cmd("view.markers", "Object markers", "View", icon::EYE, "M"),
     cmd("view.sprites", "Object sprites", "View", icon::BOX, "N"),
     cmd(
@@ -211,14 +249,27 @@ pub const COMMANDS: &[Command] = &[
     ),
     later("view.paths", "NPC paths", "View", "P"),
     cmd("view.minimap", "Minimap", "View", icon::MAP_PINNED, "K"),
-    later("view.pops", "Roof hiding view", "View", "H"),
-    later(
+    cmd(
+        "view.pops",
+        "Roof hiding view",
+        "View",
+        super::studio::icons::HOME,
+        "H",
+    ),
+    cmd(
         "view.popsInside",
         "Show roofs as hidden (as if inside)",
         "View",
+        icon::EYE,
         "Shift+H",
     ),
-    later("view.light", "Level light view", "View", "Shift+L"),
+    cmd(
+        "view.light",
+        "Level light view",
+        "View",
+        super::studio::icons::SUN,
+        "Shift+L",
+    ),
     cmd(
         "view.focus",
         "Just the map (fold both side panels, or bring them back)",
@@ -233,10 +284,11 @@ pub const COMMANDS: &[Command] = &[
         icon::SEARCH,
         "Ctrl+K",
     ),
-    later(
+    cmd(
         "view.snapshot",
         "Copy the map view as a picture",
         "View",
+        super::studio::icons::CAMERA,
         "PrintScreen",
     ),
     // Layers (visibility)
@@ -248,7 +300,13 @@ pub const COMMANDS: &[Command] = &[
     cmd("layer.wall4", "Wall 4", "Layers", icon::LAYERS, "6"),
     cmd("layer.shadows", "Shadows", "Layers", icon::LAYERS, "7"),
     cmd("layer.roofs", "Roofs", "Layers", icon::LAYERS, "8"),
-    later("layer.lowerWalls", "Lower walls", "Layers", "9"),
+    cmd(
+        "layer.lowerWalls",
+        "Lower walls",
+        "Layers",
+        icon::LAYERS,
+        "9",
+    ),
     cmd(
         "layer.specials",
         "Special tiles",
@@ -312,10 +370,11 @@ pub const COMMANDS: &[Command] = &[
         icon::EYE,
         "Shift+8",
     ),
-    later(
+    cmd(
         "solo.lowerWalls",
         "Show only Lower walls (again: back as it was)",
         "Layers",
+        icon::EYE,
         "Shift+9",
     ),
     cmd(
@@ -385,10 +444,34 @@ pub const COMMANDS: &[Command] = &[
     // Modes
     cmd("mode.tiles", "Tiles mode", "Modes", icon::PAINTBRUSH, "F1"),
     cmd("mode.objects", "Objects mode", "Modes", icon::BOX, "F2"),
-    later("mode.walk", "Walkability mode", "Modes", "F3"),
-    later("mode.automap", "Automap mode", "Modes", "F4"),
-    later("mode.light", "Level light mode", "Modes", "F5"),
-    later("mode.roofs", "Roof hiding mode", "Modes", "F6"),
+    cmd(
+        "mode.walk",
+        "Walkability mode",
+        "Modes",
+        super::studio::icons::FOOTPRINTS,
+        "F3",
+    ),
+    cmd(
+        "mode.automap",
+        "Automap mode",
+        "Modes",
+        super::studio::icons::MAP,
+        "F4",
+    ),
+    cmd(
+        "mode.light",
+        "Level light mode",
+        "Modes",
+        super::studio::icons::SUN,
+        "F5",
+    ),
+    cmd(
+        "mode.roofs",
+        "Roof hiding mode",
+        "Modes",
+        super::studio::icons::HOME,
+        "F6",
+    ),
     // ---- Capybara's own ----
     cmd("tool.lasso", "Lasso selection", "Select", icon::LASSO, "Q"),
     cmd(
@@ -565,6 +648,84 @@ pub const COMMANDS: &[Command] = &[
     ),
     cmd("help.shortcuts", "Shortcuts", "Help", icon::KEYBOARD, ""),
     cmd("help.about", "About", "Help", icon::INFO, ""),
+    // ---- P9 / P10 (ds1-studio parity) ----
+    cmd(
+        "tool.freehand",
+        "Paint / erase following the mouse",
+        "Tools",
+        icon::PAINTBRUSH,
+        "",
+    ),
+    cmd(
+        "mix.clear",
+        "Clear the random tile mix",
+        "Tools",
+        super::studio::icons::SHUFFLE,
+        "",
+    ),
+    cmd(
+        "map.new",
+        "New map...",
+        "Map",
+        super::studio::icons::FILE_PLUS,
+        "",
+    ),
+    cmd(
+        "map.reroll",
+        "Re-roll floors...",
+        "Map",
+        super::studio::icons::DICES,
+        "",
+    ),
+    cmd(
+        "map.reassign",
+        "Reassign tiles...",
+        "Map",
+        icon::ARROW_RIGHT_LEFT,
+        "",
+    ),
+    external(cmd(
+        "export.png",
+        "Export the map as PNG...",
+        "File",
+        super::studio::icons::IMAGE_DOWN,
+        "",
+    )),
+    external(cmd(
+        "export.selectionPng",
+        "Export the selection as PNG...",
+        "File",
+        super::studio::icons::IMAGE_DOWN,
+        "",
+    )),
+    cmd(
+        "view.spawn",
+        "Spawn regions overlay",
+        "View",
+        super::studio::icons::WAYPOINTS,
+        "",
+    ),
+    cmd(
+        "view.warps",
+        "Warps overlay",
+        "View",
+        super::studio::icons::DOOR_OPEN,
+        "",
+    ),
+    cmd(
+        "view.wallCategories",
+        "DT1 wall categories row",
+        "View",
+        icon::LIST_TREE,
+        "",
+    ),
+    cmd(
+        "layer.upperWalls",
+        "Upper walls",
+        "Layers",
+        icon::LAYERS,
+        "",
+    ),
 ];
 
 /// The registry entry of `id`.
@@ -883,6 +1044,9 @@ pub fn enabled(state: &AppState, id: &str) -> bool {
     if !find(id).is_some_and(|c| c.available) {
         return false;
     }
+    if let Some(on) = super::studio::enabled(state, id) {
+        return on;
+    }
     let suffix = |p: &str| id.strip_prefix(p).and_then(layer_name);
     if let Some(layer) = suffix("layer.").or_else(|| suffix("solo.")) {
         return has_layer(state, layer);
@@ -944,6 +1108,9 @@ pub fn enabled(state: &AppState, id: &str) -> bool {
 
 /// Is the toggle or tool `id` on (drawn highlighted)?
 pub fn active(state: &AppState, id: &str) -> bool {
+    if let Some(on) = super::studio::active(state, id) {
+        return on;
+    }
     let tool = state.edit.tool;
     let objects = |mode| tool == Tool::Objects && state.objects.mode == mode;
     let suffix = |p: &str| id.strip_prefix(p).and_then(layer_name);
@@ -958,9 +1125,9 @@ pub fn active(state: &AppState, id: &str) -> bool {
         "tool.select" => tool == Tool::SelectBox,
         "tool.paint" => tool == Tool::Paint,
         "tool.erase" => tool == Tool::Erase,
+        "mode.tiles" => super::studio::current_view(state) == super::studio::ViewMode::Tiles,
         "tool.pick" => tool == Tool::Eyedropper,
         "tool.object" | "mode.objects" => tool == Tool::Objects,
-        "mode.tiles" => tool != Tool::Objects,
         "tool.lasso" => tool == Tool::Lasso,
         "tool.selectById" => tool == Tool::SelectById,
         "tool.selectIdentical" => tool == Tool::SelectIdentical,
@@ -1007,7 +1174,7 @@ pub fn edits_the_map(id: &str) -> bool {
             | "map.addFloor"
             | "map.addWall"
             | "map.addTag"
-    )
+    ) || super::studio::edits_the_map(id)
 }
 
 /// The toast a refused keyboard edit shows.
@@ -1070,6 +1237,9 @@ pub fn run(state: &mut AppState, id: &str) -> bool {
         }
         return false;
     }
+    if let Some(ran) = super::studio::run(state, id) {
+        return ran;
+    }
     let suffix = |p: &str| id.strip_prefix(p).and_then(layer_name);
     if let Some(layer) = suffix("layer.") {
         let on = layer_shown(state, layer);
@@ -1101,6 +1271,9 @@ pub fn run(state: &mut AppState, id: &str) -> bool {
                 set_tool(state, back);
             } else if id == "tool.toggleObjects" {
                 set_tool(state, Tool::Objects);
+            }
+            if id == "mode.tiles" {
+                state.studio.view = super::studio::ViewMode::Tiles;
             }
         }
         "objects.select" => super::objects::set_mode(state, ObjectMode::Select),
@@ -1342,13 +1515,18 @@ mod tests {
             if c.key.is_empty() {
                 continue;
             }
-            // PrintScreen has no egui key; it stays reserved for later.
+            // PrintScreen has no egui key; Bevy's keyboard input handles it.
             match Combo::parse(c.key) {
                 Some(k) => {
                     assert_eq!(k.to_string(), c.key, "{} round-trips", c.id);
                     assert!(keys.insert(k, c.id).is_none(), "{} reuses {}", c.id, c.key);
                 }
-                None => assert!(!c.available, "{}: {:?} does not parse", c.id, c.key),
+                None => assert!(
+                    !c.available || c.id == "view.snapshot",
+                    "{}: {:?} does not parse",
+                    c.id,
+                    c.key
+                ),
             }
         }
     }
@@ -1366,8 +1544,8 @@ mod tests {
             }
         }
         // Unavailable ones never run.
-        assert!(!run(&mut state, "edit.replace"));
-        assert!(!enabled(&state, "view.walkable"));
+        assert!(!run(&mut state, "edit.deleteAll"));
+        assert!(!enabled(&state, "view.paths"));
     }
 
     #[test]

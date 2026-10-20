@@ -350,6 +350,13 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
     if let Some(step) = shell_step(state, cmd) {
         return step;
     }
+    if let Cmd::Studio(c) = cmd {
+        return match crate::ui::studio::script::step(state, c) {
+            Ok(true) => Step::Next,
+            Ok(false) => Step::Retry,
+            Err(e) => Step::Fail(e),
+        };
+    }
     // Screenshots also work without a map (Sprites mode).
     if let Cmd::Screenshot(file) = cmd {
         return Step::Wait(Wait::Shot(Shot {
@@ -589,8 +596,8 @@ fn step(state: &mut AppState, cmd: &Cmd, awaiting_autosave: &mut Option<u64>) ->
         | Cmd::RibbonTab(_) => Step::Next,
         // Handled by `splash_step`.
         Cmd::Splash(_) | Cmd::SplashWaitClosed | Cmd::SplashSave { .. } => Step::Next,
-        // Handled by `palette_step`.
-        Cmd::Palette(_) => Step::Next,
+        // Handled by `palette_step` and `ui::studio::script`.
+        Cmd::Palette(_) | Cmd::Studio(_) => Step::Next,
         Cmd::PaintBrush { x, y } => {
             let Some(layer) = state.edit.current_layer else {
                 return Step::Fail("paint-brush: there is no brush (use brush-from)".to_owned());

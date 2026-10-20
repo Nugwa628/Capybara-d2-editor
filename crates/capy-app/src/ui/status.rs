@@ -44,6 +44,9 @@ fn tool_hint(state: &AppState) -> &'static str {
     if state.edit.paste.is_some() {
         return "Click or Enter places the paste; Esc drops it";
     }
+    if let Some(hint) = crate::ui::studio::status_hint(state) {
+        return hint;
+    }
     match state.edit.tool {
         Tool::SelectBox => {
             "Drag to select cells. Shift adds, Ctrl subtracts, Shift+Ctrl intersects; right-click for more"
