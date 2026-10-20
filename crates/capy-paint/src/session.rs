@@ -22,6 +22,7 @@
 //! records no history, for previewing the sprite under another act.
 
 use crate::error::{PaintError, Result, invalid};
+use crate::mask::Mask;
 use crate::ramps::Ramps;
 use d2_formats::IndexedImage;
 use d2_formats::palette::Palette;
@@ -207,6 +208,9 @@ pub struct PaintSession {
     next_id: u64,
     saved_id: u64,
     palette_dirty: bool,
+    /// Per-frame-index editable pixels of a fixed-structure document (a tile
+    /// set); see [`PaintSession::lock_structure`].
+    locks: Option<Vec<Mask>>,
 }
 
 /// Enforce the palette-lock invariants on one image in place.
@@ -261,7 +265,35 @@ impl PaintSession {
             next_id: 1,
             saved_id: 0,
             palette_dirty: false,
+            locks: None,
         })
+    }
+
+    /// Fixes the document's structure (a DT1's tiles): frames cannot be
+    /// inserted, deleted, moved or mirrored, change size or offset, and only
+    /// pixels set in `editable[frame index]` (same size as the frame) ever
+    /// change, whatever the tool or selection. A frame without a mask (or
+    /// with one of another size) is fully locked.
+    pub fn lock_structure(&mut self, editable: Vec<Mask>) {
+        self.locks = Some(editable);
+    }
+
+    /// True after [`PaintSession::lock_structure`].
+    pub fn is_structure_locked(&self) -> bool {
+        self.locks.is_some()
+    }
+
+    /// The editable pixels of frame index `frame` when the structure is
+    /// locked.
+    pub fn editable(&self, frame: usize) -> Option<&Mask> {
+        self.locks.as_ref()?.get(frame)
+    }
+
+    pub(crate) fn require_free_structure(&self) -> Result<()> {
+        if self.locks.is_some() {
+            return invalid("the frames of this document are fixed (tile set)");
+        }
+        Ok(())
     }
 
     pub fn frames(&self) -> &[Vec<IndexedImage>] {
@@ -458,6 +490,36 @@ impl PaintSession {
         let cur = self.img(f)?;
         if *cur == new {
             return Ok(());
+        }
+        if let Some(locks) = &self.locks {
+            let same_shape = cur.width == new.width
+                && cur.height == new.height
+                && cur.offset_x == new.offset_x
+                && cur.offset_y == new.offset_y
+                && cur.pixels.len() == new.pixels.len()
+                && cur.alpha.len() == new.alpha.len();
+            if !same_shape {
+                return invalid("the frames of this document are fixed (tile set)");
+            }
+            let editable = locks
+                .get(f.frame)
+                .filter(|m| m.width == cur.width && m.height == cur.height);
+            let mut touched = false;
+            for i in 0..cur.pixels.len() {
+                let free = editable.is_some_and(|m| m.bits.get(i).copied().unwrap_or(false));
+                if !free {
+                    touched |= new.pixels[i] != cur.pixels[i] || new.alpha[i] != cur.alpha[i];
+                    new.pixels[i] = cur.pixels[i];
+                    new.alpha[i] = cur.alpha[i];
+                }
+            }
+            if *cur == new {
+                return if touched {
+                    invalid("those pixels are outside the tile's blocks (locked)")
+                } else {
+                    Ok(())
+                };
+            }
         }
         let same_shape = cur.width == new.width
             && cur.height == new.height

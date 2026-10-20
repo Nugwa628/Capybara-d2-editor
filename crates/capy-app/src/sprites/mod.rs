@@ -7,6 +7,9 @@ pub mod cof;
 pub mod convert;
 pub mod convert_palette;
 pub mod dialog;
+pub mod dt1edit;
+#[cfg(test)]
+mod dt1edit_corpus;
 pub mod dt1view;
 pub mod editor;
 pub mod gif_export;
@@ -637,6 +640,23 @@ impl AppState {
 
     /// Opens the viewer's sprite (or one COF layer's sprite) in the editor.
     pub fn edit_viewer_sprite(&mut self, cof_layer: Option<usize>) -> Result<(), String> {
+        if cof_layer.is_none()
+            && let Some(view) = self.sprites.viewer.dt1()
+        {
+            let source = self
+                .sprites
+                .viewer
+                .source
+                .clone()
+                .unwrap_or_else(|| SpriteSource::Imported("tiles".into()));
+            let doc = dt1edit::Dt1Doc::from_view(view);
+            let tile = self.sprites.viewer.frame;
+            let palette = self.sprite_palette();
+            let mut editor = EditorState::new_dt1(doc, source, palette)?;
+            editor.go_to(0, tile);
+            self.install_editor(editor);
+            return Ok(());
+        }
         let v = &self.sprites.viewer;
         let (sprite, format, source) = match (cof_layer, v.cof()) {
             (Some(i), Some(c)) => {
@@ -673,8 +693,13 @@ impl AppState {
             return;
         }
         let title = editor.source.label();
+        let tiles = editor.is_dt1();
         self.sprites.editor = Some(editor);
-        self.sprites.converter.target = Target::Editor;
+        if !tiles {
+            self.sprites.converter.target = Target::Editor;
+        } else if self.sprites.converter.target == Target::Editor {
+            self.sprites.converter.target = Target::Viewer;
+        }
         self.sprites.focus = Some(Focus::Editor);
         self.info(format!("Editing {title}"));
     }
@@ -719,6 +744,10 @@ impl AppState {
             }
             Target::Editor => {
                 let e = self.sprites.editor.as_ref()?;
+                // A tile set is not a DC6/DCC; it saves and exports on its own.
+                if e.is_dt1() {
+                    return None;
+                }
                 Some(TargetData {
                     sprite: e.to_sprite(),
                     format: e.format,
@@ -740,6 +769,9 @@ impl AppState {
                 .editor
                 .as_ref()
                 .ok_or("open a sprite in the Editor first")?;
+            if e.is_dt1() {
+                return Err("a tile set is not an animation; GIF export is for sprites".to_owned());
+            }
             let s = e.to_sprite();
             let (f, d) = (s.frames_per_direction(), s.directions.len());
             (Some(s), e.cur.dir, f, d, e.source.stem())
@@ -942,6 +974,10 @@ impl AppState {
             self.begin_converted_save();
             return;
         }
+        if self.editing_tiles(target) {
+            self.begin_dt1_save();
+            return;
+        }
         let Some(data) = self.target_data(target) else {
             self.error("Nothing to save: open or import a DC6/DCC first");
             return;
@@ -989,7 +1025,7 @@ impl AppState {
     pub fn sprite_write_checked(&mut self, target: Target, write: DccWrite) -> bool {
         // A game path remembered with another palette: ask first.
         if let DccWrite::Game(text) = &write
-            && let Ok((path, _)) = convert::check_game_path(text)
+            && let Ok(path) = self.check_save_path(target, text)
         {
             let current = self.sprites.palette.choice.clone();
             let remembered = self.remembered_palette(path.as_str());
@@ -1093,6 +1129,9 @@ impl AppState {
         {
             return self.convert_save_game(text);
         }
+        if self.editing_tiles(target) {
+            return self.dt1_save_game(text);
+        }
         let result = (|| {
             let (path, format) = convert::check_game_path(text)?;
             let profile = self
@@ -1139,6 +1178,111 @@ impl AppState {
         }
     }
 
+    // ───────── tile sets (DT1 in the editor) ─────────
+
+    /// Does `target` mean an editor that holds a DT1?
+    pub fn editing_tiles(&self, target: Target) -> bool {
+        target == Target::Editor
+            && self
+                .sprites
+                .editor
+                .as_ref()
+                .is_some_and(EditorState::is_dt1)
+    }
+
+    /// Checks a typed game path for the target: `.dc6`/`.dcc` for sprites,
+    /// `.dt1` for a tile set.
+    pub fn check_save_path(&self, target: Target, text: &str) -> Result<GamePath, String> {
+        if self.editing_tiles(target) {
+            convert::check_dt1_game_path(text)
+        } else {
+            convert::check_game_path(text).map(|(p, _)| p)
+        }
+    }
+
+    fn begin_dt1_save(&mut self) {
+        let Some(e) = self.sprites.editor.as_ref() else {
+            return;
+        };
+        let text = match e.source.save_path() {
+            Some(p) => p.as_str().to_owned(),
+            None => format!("data\\global\\tiles\\{}.dt1", e.source.stem()),
+        };
+        self.sprites.save_prompt = Some(SavePrompt {
+            target: Target::Editor,
+            text,
+            error: None,
+            converted: false,
+        });
+    }
+
+    /// "Save to game path" for a tile set: the edited blocks written back,
+    /// everything else as it was.
+    fn dt1_save_game(&mut self, text: &str) -> Result<PathBuf, String> {
+        let result = (|| {
+            let path = convert::check_dt1_game_path(text)?;
+            let profile = self
+                .session
+                .as_ref()
+                .map(|s| s.profile.id.clone())
+                .ok_or("no profile is open")?;
+            let e = self.sprites.editor.as_mut().ok_or("nothing to save")?;
+            let (bytes, tiles) = e.dt1_bytes()?;
+            // What the game will read must parse.
+            d2_formats::dt1::Dt1::parse(&bytes)
+                .map_err(|err| format!("the written DT1 does not parse: {err}"))?;
+            let report = crate::edit::save::save_game_file(&self.paths, &profile, &path, &bytes)?;
+            Ok::<_, String>((path, report, tiles))
+        })();
+        match result {
+            Ok((path, report, tiles)) => {
+                for w in &report.warnings {
+                    self.warn(format!("{path}: {w}"));
+                }
+                self.info(format!(
+                    "Saved {path} ({} bytes, {tiles} tile(s) changed) to {}; CHANGED.txt lists {} file(s)",
+                    report.bytes,
+                    report.path.display(),
+                    report.changed_total
+                ));
+                let choice = self.sprites.palette.choice.clone();
+                self.remember_palette(path.as_str(), &choice);
+                if let Some(e) = self.sprites.editor.as_mut() {
+                    e.session.mark_saved();
+                    e.source = SpriteSource::Game(path.clone());
+                }
+                self.refresh_changed();
+                self.history.invalidate();
+                self.start_saves_refresh();
+                Ok(report.path)
+            }
+            Err(e) => {
+                self.error(format!("Save failed: {e}"));
+                Err(e)
+            }
+        }
+    }
+
+    /// "Export to..." a loose DT1 file.
+    fn dt1_export(&mut self, file: &Path) -> Result<String, String> {
+        let e = self.sprites.editor.as_mut().ok_or("nothing to export")?;
+        let (bytes, tiles) = e.dt1_bytes()?;
+        let file = convert::with_extension(file, "dt1");
+        if let Some(dir) = file.parent()
+            && !dir.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(dir)
+                .map_err(|err| format!("cannot create {}: {err}", dir.display()))?;
+        }
+        std::fs::write(&file, &bytes)
+            .map_err(|err| format!("cannot write {}: {err}", file.display()))?;
+        Ok(format!(
+            "Exported {} ({} bytes, {tiles} tile(s) changed)",
+            file.display(),
+            bytes.len()
+        ))
+    }
+
     /// Runs one "Export to..." with the path picked in the dialog.
     pub fn sprite_export(
         &mut self,
@@ -1146,6 +1290,17 @@ impl AppState {
         path: &Path,
         target: Target,
     ) -> Result<String, String> {
+        if self.editing_tiles(target) {
+            let result = match purpose {
+                Purpose::ExportSprite => self.dt1_export(path),
+                _ => Err("a tile set exports only as a DT1 file".to_owned()),
+            };
+            match &result {
+                Ok(text) => self.info(text.clone()),
+                Err(e) => self.error(format!("Export failed: {e}")),
+            }
+            return result;
+        }
         let palette = self.sprite_palette();
         let palette_name = self.sprites.palette.choice.label();
         let result = match purpose {
@@ -1221,6 +1376,14 @@ impl AppState {
             }
             Purpose::ExportPalettePal => {
                 Some(format!("{}.pal", self.sprites.palette.choice.slug()))
+            }
+            Purpose::ExportSprite if self.editing_tiles(target) => {
+                let stem = self
+                    .sprites
+                    .editor
+                    .as_ref()
+                    .map_or(stem, |e| e.source.stem());
+                Some(format!("{stem}.dt1"))
             }
             Purpose::ExportSprite => {
                 let ext = self
@@ -1609,6 +1772,66 @@ mod tests {
         s.sprite_export(Purpose::ExportFrames, &out, Target::Editor)
             .expect("export");
         assert!(out.join("sprite.json").is_file());
+    }
+
+    #[test]
+    fn a_loose_tile_set_opens_in_the_editor_paints_and_exports() {
+        use d2_formats::dt1::{Block, Dt1, Tile};
+        let (tmp, mut s) = state();
+        let mut full = IndexedImage::new(32, 15, 0, 0);
+        full.pixels.fill(40);
+        full.alpha.fill(255);
+        let tile = |main| Tile {
+            main_index: main,
+            height: -80,
+            width: 160,
+            blocks: vec![Block::isometric(0, 0, 0, 0, &full)],
+            ..Tile::default()
+        };
+        let dt1 = Dt1 {
+            version: (7, 6),
+            tiles: vec![tile(0), tile(1)],
+        };
+        let bytes = dt1.to_bytes().expect("dt1");
+        let file = tmp.path().join("floor.dt1");
+        std::fs::write(&file, &bytes).expect("write");
+        s.open_sprite_file(&file).expect("open");
+        s.sprites.viewer.set_frame(1);
+        s.edit_viewer_sprite(None).expect("edit");
+        let e = s.sprites.editor.as_mut().expect("editor");
+        assert!(e.is_dt1());
+        assert_eq!((e.directions(), e.frames(), e.cur.frame), (1, 2, 1));
+        e.tool = editor::PaintTool::Pencil;
+        e.set_primary(77);
+        // The diamond's corner is locked, its centre is not.
+        assert!(e.press((0.5, 0.5), false, editor::Mods::default()).is_err());
+        assert!(!e.is_dirty());
+        e.press((15.5, 7.5), false, editor::Mods::default())
+            .expect("paint");
+        e.release((15.5, 7.5)).expect("paint");
+        assert!(e.is_dirty());
+        // Tile sets have no frame structure to change.
+        assert!(e.insert_frame(false).is_err() && e.delete_frame().is_err());
+        assert!(s.target_data(Target::Editor).is_none());
+        // Export writes the file; only the painted tile differs.
+        let out = tmp.path().join("out.dt1");
+        s.sprite_export(Purpose::ExportSprite, &out, Target::Editor)
+            .expect("export");
+        let back = Dt1::parse(&std::fs::read(&out).expect("read")).expect("parse");
+        assert_eq!(back.tiles[0], dt1.tiles[0]);
+        assert_eq!(
+            back.tiles[1].render().expect("render").pixels[7 * 32 + 15],
+            77
+        );
+        assert!(
+            s.check_save_path(Target::Editor, "data\\global\\tiles\\a.dt1")
+                .is_ok()
+        );
+        assert!(
+            s.check_save_path(Target::Editor, "data\\global\\a.dcc")
+                .is_err()
+        );
+        assert!(s.open_gif_dialog(true).is_err());
     }
 
     /// A DC6 with one 4x4 cell of 6 distinct values (a DCC cannot hold it).

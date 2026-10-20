@@ -12,6 +12,7 @@ impl PaintSession {
     }
 
     fn require_directions(&self) -> Result<()> {
+        self.require_free_structure()?;
         if self.frames.is_empty() {
             return invalid("the sprite has no directions");
         }
@@ -152,6 +153,7 @@ impl PaintSession {
     /// Each frame is flipped left to right and its `offset_x` becomes
     /// `-(offset_x + width)`, i.e. the mirror is taken about the anchor.
     pub fn mirror_direction(&mut self, src: usize, dst: usize) -> Result<()> {
+        self.require_free_structure()?;
         for dir in [src, dst] {
             if dir >= self.frames.len() {
                 return Err(PaintError::NoFrame(FrameRef { dir, frame: 0 }));

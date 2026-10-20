@@ -1550,6 +1550,16 @@ Open a sprite in the Editor in one of three ways:
 The Editor holds one sprite at a time. If it has unsaved changes, opening
 another sprite asks first.
 
+**Tile sets (DT1).** **Open in editor** also works on a `.dt1` opened in the
+Viewer. Each tile is one frame (the whole tile, all its blocks composed), and
+the frame tooltips show its orientation, main and sub index; the tile selected
+in the Viewer is the one shown first. Pixels outside every block (and outside
+the isometric diamonds) are dimmed and locked for all tools. Frames,
+directions and offsets cannot be changed, and DC6/DCC exports, the DCC check
+and GIF export are unavailable. **Save to game path...** (or **Export**) cuts
+the changed tiles back into their blocks and re-encodes only those blocks;
+every other tile and block keeps its bytes.
+
 The top bar shows:
 
 - the sprite's name (**●** while unsaved), format and size;
