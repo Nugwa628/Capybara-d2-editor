@@ -27,6 +27,7 @@ capy-render.workspace = true
 capy-index.workspace = true
 capy-edit.workspace = true
 capy-history.workspace = true
+capy-mod.workspace = true
 capy-sprite.workspace = true
 capy-paint.workspace = true
 capy-cli.workspace = true

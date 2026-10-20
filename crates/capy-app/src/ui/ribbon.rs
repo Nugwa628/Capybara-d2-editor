@@ -102,6 +102,14 @@ const TABS: &[Tab] = &[
                         body: import_menu,
                         active: never,
                     },
+                    Item::Menu {
+                        id: "menu.export",
+                        label: "Export",
+                        glyph: icon::PACKAGE_CHECK,
+                        size: Size::Sm,
+                        body: export_menu,
+                        active: never,
+                    },
                     Item::Cmd("file.preferences", Size::Sm, "Preferences..."),
                     Item::Menu {
                         id: "menu.saves",
@@ -234,6 +242,74 @@ const TABS: &[Tab] = &[
                     Item::Cmd("map.addFloor", Size::Sm, "Add floor layer"),
                     Item::Cmd("map.addWall", Size::Sm, "Add wall layer"),
                     Item::Cmd("map.addTag", Size::Sm, "Add tag layer"),
+                ],
+            },
+            Group {
+                label: "Tile libraries",
+                items: &[
+                    Item::Cmd("tiles.dt1Manager", Size::Lg, "DT1 libraries"),
+                    Item::Cmd("tiles.settings", Size::Sm, "Tile settings"),
+                    Item::Cmd("tiles.collision", Size::Sm, "Collision flags"),
+                    Item::Cmd("tiles.paint", Size::Sm, "Paint pixels"),
+                    Item::Cmd("tiles.actSafe", Size::Sm, "Make act-safe"),
+                    Item::Cmd("tiles.review", Size::Sm, "Review libraries"),
+                ],
+            },
+            Group {
+                label: "Presets",
+                items: &[
+                    Item::Cmd("presets.save", Size::Sm, "Save selection..."),
+                    Item::Cmd("presets.builder", Size::Sm, "Builder..."),
+                    Item::Cmd("presets.suggest", Size::Sm, "Suggest..."),
+                ],
+            },
+        ],
+    },
+    Tab {
+        id: "game",
+        label: "Game",
+        groups: &[
+            Group {
+                label: "Levels",
+                items: &[
+                    Item::Cmd("game.addToGame", Size::Lg, "Add to game"),
+                    Item::Cmd("game.changeType", Size::Lg, "Change level type"),
+                    Item::Cmd("game.typePackages", Size::Lg, "Type packages"),
+                ],
+            },
+            Group {
+                label: "Text and items",
+                items: &[
+                    Item::Cmd("game.entryText", Size::Lg, "Entering text"),
+                    Item::Cmd("game.cube", Size::Lg, "Cube recipe"),
+                    Item::Cmd("game.customObject", Size::Lg, "Custom object"),
+                ],
+            },
+            Group {
+                label: "Data",
+                items: &[
+                    Item::Cmd("game.automap", Size::Lg, "Automap editor"),
+                    Item::Cmd("game.tables", Size::Lg, "Tables"),
+                ],
+            },
+        ],
+    },
+    Tab {
+        id: "diag",
+        label: "Diagnostics",
+        groups: &[
+            Group {
+                label: "Check",
+                items: &[
+                    Item::Cmd("diag.compat", Size::Lg, "Compatibility"),
+                    Item::Cmd("diag.crashLog", Size::Lg, "Crash log"),
+                ],
+            },
+            Group {
+                label: "Assets",
+                items: &[
+                    Item::Cmd("diag.unusedDt1", Size::Lg, "Unused DT1s"),
+                    Item::Cmd("diag.restore", Size::Lg, "Restore assets"),
                 ],
             },
         ],
@@ -439,6 +515,8 @@ pub fn tab_rect_id(tab: &str) -> &'static str {
         "home" => "tab.home",
         "view" => "tab.view",
         "map" => "tab.map",
+        "game" => "tab.game",
+        "diag" => "tab.diag",
         _ => "tab.help",
     }
 }
@@ -778,7 +856,13 @@ fn profile_menu(ui: &mut Ui, state: &mut AppState) {
 }
 
 fn import_menu(ui: &mut Ui, state: &mut AppState) {
+    menu_cmd(ui, state, "file.importPackage", "Map package...");
+    menu_cmd(ui, state, "file.importDs1Dt1", "DS1 with its DT1s...");
     menu_cmd(ui, state, "file.importIni", "DS1Edit ini mappings...");
+}
+
+fn export_menu(ui: &mut Ui, state: &mut AppState) {
+    menu_cmd(ui, state, "file.exportPackage", "Map package (.zip)...");
 }
 
 fn saves_menu(ui: &mut Ui, state: &mut AppState) {
@@ -1102,6 +1186,6 @@ mod tests {
                 "{id} is shown but not available"
             );
         }
-        assert_eq!(tab_ids(), ["home", "view", "map", "help"]);
+        assert_eq!(tab_ids(), ["home", "view", "map", "game", "diag", "help"]);
     }
 }

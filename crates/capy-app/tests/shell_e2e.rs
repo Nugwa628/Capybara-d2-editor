@@ -96,6 +96,12 @@ fn every_ribbon_button_and_default_key_works() {
          press Escape\n\
          ribbon-tab help\n\
          click help.shortcuts\n\
+         close-dialogs\n\
+         tool cmd file.exportPackage\n\
+         tool cmd file.importPackage\n\
+         tool cmd file.importDs1Dt1\n\
+         tool cmd presets.save\n\
+         wait 3\n\
          close-dialogs\n"
     );
     let home = tempfile::tempdir().unwrap();
@@ -104,7 +110,7 @@ fn every_ribbon_button_and_default_key_works() {
     let clicked = count_after(&stderr, "click-ribbon:");
     let pressed = count_after(&stderr, "press-all-keys:");
     eprintln!("{clicked} ribbon buttons clicked, {pressed} keys pressed");
-    assert!(clicked >= 40, "only {clicked} ribbon buttons were clicked");
+    assert!(clicked >= 65, "only {clicked} ribbon buttons were clicked");
     assert!(pressed >= 45, "only {pressed} keys were pressed");
     // Failing clicks must fail the script.
     let (code, stderr) = run_script(home.path(), &format!("open {MAP}\nclick no.such\n"), false);

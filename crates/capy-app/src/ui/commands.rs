@@ -565,6 +565,163 @@ pub const COMMANDS: &[Command] = &[
     ),
     cmd("help.shortcuts", "Shortcuts", "Help", icon::KEYBOARD, ""),
     cmd("help.about", "About", "Help", icon::INFO, ""),
+    // ---- Tile libraries, presets, game data, diagnostics, packages ----
+    cmd(
+        "tiles.dt1Manager",
+        "DT1 libraries (duplicate, rename, recolour)...",
+        "Tile libraries",
+        icon::FOLDER,
+        "",
+    ),
+    cmd(
+        "tiles.settings",
+        "Tile settings (.ini)...",
+        "Tile libraries",
+        icon::SETTINGS,
+        "",
+    ),
+    cmd(
+        "tiles.collision",
+        "Collision flags of the 5x5 sub-tiles...",
+        "Tile libraries",
+        icon::FLAG,
+        "",
+    ),
+    cmd(
+        "tiles.paint",
+        "Paint tile pixels...",
+        "Tile libraries",
+        icon::PAINTBRUSH,
+        "",
+    ),
+    cmd(
+        "tiles.actSafe",
+        "Make a library act-safe...",
+        "Tile libraries",
+        icon::PALETTE,
+        "",
+    ),
+    cmd(
+        "tiles.review",
+        "Review the map's libraries (duplicates, own tiles)...",
+        "Tile libraries",
+        icon::COPY_CHECK,
+        "",
+    ),
+    cmd(
+        "presets.save",
+        "Save the selection as a preset...",
+        "Presets",
+        icon::PLUS,
+        "",
+    ),
+    cmd(
+        "presets.builder",
+        "Preset builder (20x20)...",
+        "Presets",
+        icon::BOXES,
+        "",
+    ),
+    cmd(
+        "presets.suggest",
+        "Suggest presets from this map...",
+        "Presets",
+        icon::SCAN_SEARCH,
+        "",
+    ),
+    cmd(
+        "game.addToGame",
+        "Add the map to the game (Levels, LvlPrest, LvlTypes)...",
+        "Game",
+        icon::PLUS,
+        "",
+    ),
+    cmd(
+        "game.changeType",
+        "Change the level type...",
+        "Game",
+        icon::ARROW_RIGHT_LEFT,
+        "",
+    ),
+    cmd(
+        "game.typePackages",
+        "Type packages...",
+        "Game",
+        icon::PACKAGE_CHECK,
+        "",
+    ),
+    cmd(
+        "game.entryText",
+        "Entering text...",
+        "Game",
+        icon::SCROLL_TEXT,
+        "",
+    ),
+    cmd("game.cube", "Cube recipe...", "Game", icon::BOX, ""),
+    cmd(
+        "game.customObject",
+        "Custom object...",
+        "Game",
+        icon::IMAGE,
+        "",
+    ),
+    cmd(
+        "game.automap",
+        "Automap editor...",
+        "Game",
+        icon::MAP_PINNED,
+        "",
+    ),
+    cmd("game.tables", "Tables...", "Game", icon::LIST_TREE, ""),
+    cmd(
+        "diag.unusedDt1",
+        "Unused DT1s...",
+        "Diagnostics",
+        icon::SCAN_SEARCH,
+        "",
+    ),
+    cmd(
+        "diag.restore",
+        "Restore archived assets...",
+        "Diagnostics",
+        icon::HISTORY,
+        "",
+    ),
+    cmd(
+        "diag.compat",
+        "Compatibility check...",
+        "Diagnostics",
+        icon::CHECK,
+        "",
+    ),
+    cmd(
+        "diag.crashLog",
+        "Crash log reader...",
+        "Diagnostics",
+        icon::SCROLL_TEXT,
+        "",
+    ),
+    cmd(
+        "file.exportPackage",
+        "Export: map package (.zip)...",
+        "File",
+        icon::PACKAGE_CHECK,
+        "",
+    ),
+    cmd(
+        "file.importPackage",
+        "Import: map package...",
+        "File",
+        icon::FILE_INPUT,
+        "",
+    ),
+    cmd(
+        "file.importDs1Dt1",
+        "Import: DS1 with its DT1s...",
+        "File",
+        icon::FILE_INPUT,
+        "",
+    ),
 ];
 
 /// The registry entry of `id`.
@@ -883,6 +1040,9 @@ pub fn enabled(state: &AppState, id: &str) -> bool {
     if !find(id).is_some_and(|c| c.available) {
         return false;
     }
+    if let Some(on) = super::tools::enabled(state, id) {
+        return on;
+    }
     let suffix = |p: &str| id.strip_prefix(p).and_then(layer_name);
     if let Some(layer) = suffix("layer.").or_else(|| suffix("solo.")) {
         return has_layer(state, layer);
@@ -944,6 +1104,9 @@ pub fn enabled(state: &AppState, id: &str) -> bool {
 
 /// Is the toggle or tool `id` on (drawn highlighted)?
 pub fn active(state: &AppState, id: &str) -> bool {
+    if let Some(on) = super::tools::active(state, id) {
+        return on;
+    }
     let tool = state.edit.tool;
     let objects = |mode| tool == Tool::Objects && state.objects.mode == mode;
     let suffix = |p: &str| id.strip_prefix(p).and_then(layer_name);
@@ -1069,6 +1232,9 @@ pub fn run(state: &mut AppState, id: &str) -> bool {
             state.cancel_paste();
         }
         return false;
+    }
+    if super::tools::run(state, id) {
+        return true;
     }
     let suffix = |p: &str| id.strip_prefix(p).and_then(layer_name);
     if let Some(layer) = suffix("layer.") {

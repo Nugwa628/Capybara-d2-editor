@@ -30,6 +30,7 @@ pub mod theme;
 mod thumbs;
 mod tiles;
 mod toasts;
+pub mod tools;
 
 use std::path::Path;
 
@@ -41,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::AppMode;
 use crate::state::AppState;
 
-pub use commands::{COMMANDS, Combo, enabled as command_enabled};
+pub use commands::{COMMANDS, Combo, enabled as command_enabled, run as commands_run};
 pub use map_tools::cancel_gesture as cancel_map_gesture;
 pub use thumbs::tile_key as tile_key_for;
 
@@ -278,6 +279,7 @@ pub fn draw(ctx: &egui::Context, state: &mut AppState, dock: &mut Dock) {
     sprites::dialogs(ctx, state);
     if mode == AppMode::Map {
         shell::windows(ctx, state);
+        tools::windows(ctx, state);
     }
     toasts::show(ctx, state);
 }

@@ -7,7 +7,7 @@ All notable changes to this project are documented here.
 ### Changed
 - **The Map Editor looks and works like DS1 Studio** (Sprites mode is
   unchanged and is reached with the **Sprites** button in the top bar): a
-  ribbon (Home, View, Map, Help) replaces the menus and the tool strip; the
+  ribbon (Home, View, Map, Game, Diagnostics, Help) replaces the menus and the tool strip; the
   map list sits on the left grouped by folder with counts; the right column
   holds the Tiles browser with collapsible Cell, History, Tags & groups,
   Layers and Map sections; a Show bar of layer chips (Shift-click shows one
@@ -47,6 +47,26 @@ All notable changes to this project are documented here.
   Z, P, F3-F6, ...) are reserved.
 
 ### Added
+- **Tile libraries** (Map tab): a DT1 manager (open, duplicate, rename,
+  recolour by hue / saturation / brightness / tint), tile settings with DT1
+  Tools `.ini` export and import, collision-flag painting on a tile's 5x5
+  sub-tiles, pixel painting on a tile block, Make act-safe, and a review of
+  duplicate, clashing and mixed-colour libraries with "collect the placed
+  tiles into an own DT1".
+- **Presets** (right column tab): the preset library, Save selection as
+  preset, Place (preview, then click; undoable), a 20x20 preset builder and
+  Suggest.
+- **Game tab**: Add to game, Change level type, Type packages, Entering text,
+  Cube recipe, Custom object (the COF is not written yet), an Automap editor
+  and a **Tables** spreadsheet editor with column help. Tables the game only
+  has as compiled `.bin` cannot be opened yet. Edited files go to your saves
+  with a CHANGED.txt entry and a history snapshot, like maps.
+- **Diagnostics tab**: Compatibility check with one-click fixes, Crash log
+  reader, Unused DT1s with archiving inside `capybara\archive`, Restore
+  assets.
+- **Map packages**: Home > Export > Map package (.zip), Import > Map package...
+  (merge into the saves, table rows applied through the type-package merge)
+  and Import > DS1 with its DT1s...
 - **Themes**: DS1 Studio's nine themes (DS1 Studio is the default), custom
   themes from share codes (DS1 Studio / PD2 Filter Forge format), in
   View > Theme and Preferences. Segoe UI is used when Windows has it; icons

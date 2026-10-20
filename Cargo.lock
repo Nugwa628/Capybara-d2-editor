@@ -1699,6 +1699,7 @@ dependencies = [
  "capy-edit",
  "capy-history",
  "capy-index",
+ "capy-mod",
  "capy-paint",
  "capy-render",
  "capy-sprite",
