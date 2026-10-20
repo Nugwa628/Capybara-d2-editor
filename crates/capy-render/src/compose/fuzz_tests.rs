@@ -95,6 +95,7 @@ fn hostile_tile() -> impl Strategy<Value = Tile> {
                 sub_index: sub,
                 rarity,
                 subtile_flags: [0; 25],
+                preserved: Default::default(),
                 blocks,
             },
         )

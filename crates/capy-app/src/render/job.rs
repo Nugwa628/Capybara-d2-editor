@@ -325,6 +325,7 @@ mod tests {
             sub_index: sub,
             rarity: 1,
             subtile_flags: [0; 25],
+            preserved: Default::default(),
             blocks: (0..5).map(|i| block(i * 32, y, pixel)).collect(),
         }
     }

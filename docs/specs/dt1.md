@@ -373,3 +373,47 @@ the loader uses all-TRUE (`txtread.c:1017-1018`).
     fails. Confirm LvlTypes.txt uses "0" for empty slots, or make the port skip blanks.
 12. CT_NULL File column reuses the previous `tmp` (`txtread.c:831-838`). Port should treat an all-blank
     column as empty.
+
+---
+
+## 13. Writing (P11, `Dt1::to_bytes`, `Block::{isometric, rle, with_pixels}`)
+
+Rules the writer follows; each was checked against every readable file of both corpora
+(619 version-7.6 files, 41,080 tiles, 895,820 sub-blocks), which all write back byte for byte.
+
+- **One canonical layout.** Every shipped file has the tile header array at 276, then each
+  tile's region in tile order: its 20-byte sub-block headers, then their data in block order,
+  data offsets relative to the region start, `tiles_length` (+76) = region length, no gaps,
+  no sharing, nothing after the last region. The writer always produces this layout, so a
+  file with shared or gapped data (legal to read, never shipped) parses back to the same
+  model but not the same bytes.
+- **Tiles without blocks** point at the current end of the file (the start of the next
+  tile's region) with length 0, as the game's own files and the reference writer do.
+- **Kept tile-header bytes.** +36 (4 bytes) is non-zero in most tiles and varies between
+  tiles; +88..+92 holds a leaked pointer in some expansion tiles. Both are kept in
+  `Tile::preserved` together with +16 and +65..+72 (zero everywhere). Added tiles get
+  zeros (the reference's blocker tile uses `ff 00 ff 00` at +36; nothing reads it).
+- **Written as zero:** the 260-byte name buffer, sub-block header +4..+6 and +12..+16 (zero in
+  every shipped file). The length at +10 is written as a `u16`; the reader takes a `u16`, so
+  a block over 65535 bytes is `NotRepresentable` rather than silently truncated.
+- **Version.** Only major 7 is written; the `flags` dword is stored as-is. The 4.1 files
+  (six per install) do not parse and so cannot be written.
+- **Format word.** `raw_format` is what is stored; a model whose `format` disagrees with it
+  (`Isometric` iff `raw_format == 1`) is rejected instead of changing meaning on reload.
+- **Isometric encoding** stores all 256 diamond positions; a position the image leaves
+  transparent (or does not cover) becomes index 0, which draws nothing. Pixels outside the
+  diamond are dropped.
+- **RLE encoding** (the shipped convention, reproduced byte for byte for every corpus
+  block): per row, `(skip, count, literals)` for each run of opaque pixels with `skip`
+  counted from the end of the previous run, trailing transparent pixels not encoded, then
+  `(0, 0)` - also after the last row. Rows are terminated down to the last opaque one and at
+  least `min_rows` (walls `0x1001`: 32, `0x2005` floor pieces: 15); `with_pixels` keeps the
+  block's previous row count. Never in the corpus but accepted by the decoder: runs over 255
+  continue with `skip = 0`, skips over 255 use `(255, 0)` pairs.
+- **Index 0 is not storable as a colour.** Decoders give literal 0 alpha 0, so an RLE
+  literal 0 is dropped on re-encode (shipped files contain none: re-encoding is exact) and
+  an opaque index-0 pixel in an input image decodes as transparent.
+- Opaque pixels left of or above a block's `(x, y)` cannot be expressed in RLE (skips are
+  unsigned) and are `NotRepresentable`; the caller picks a block origin that covers them.
+- The writer does not recompute derived header fields (`width`, `height`, `roof_height`):
+  a caller that rebuilds blocks updates them (the reference sets `width = max(x + 32)`).

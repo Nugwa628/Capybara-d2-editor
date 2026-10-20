@@ -2,6 +2,7 @@
 //! private-corpus files must never panic `Dt1::parse` or tile rendering.
 //! Knobs: `PROPTEST_CASES`, `CAPY_FUZZ_ITERS`.
 
+use super::write::opaque;
 use super::*;
 use crate::ds1::fuzz_support::{Lcg, corpus_seeds, fuzz_iters, mutate, run_corpus_mutations};
 
@@ -14,8 +15,19 @@ fn exercise(bytes: &[u8]) {
     let palette = crate::palette::Palette {
         colors: [[1, 2, 3]; 256],
     };
+    // whatever parses writes back to the same model
+    let out = dt1.to_bytes().unwrap();
+    assert_eq!(Dt1::parse(&out).unwrap(), dt1);
     for tile in &dt1.tiles {
         let _ = tile.key();
+        // re-encoding a block's pixels keeps them (when it can be stored)
+        for block in tile.blocks.iter().filter(|b| b.data.len() <= 4096) {
+            if let Ok(img) = block.render()
+                && let Ok(re) = block.with_pixels(&img)
+            {
+                assert_eq!(opaque(&re.render().unwrap()), opaque(&img));
+            }
+        }
         if let Ok(img) = tile.render() {
             check_image(&img);
             assert_eq!(img.to_rgba(&palette).len(), img.pixels.len() * 4);
@@ -161,4 +173,54 @@ fn fuzz_shared_block_headers_cannot_amplify() {
 fn fuzz_corpus_dt1_mutations() {
     let seeds = corpus_seeds("dt1", 16, 512 * 1024);
     run_corpus_mutations("dt1", &seeds, fuzz_iters(24), exercise);
+}
+
+#[test]
+fn fuzz_encoders_on_extreme_images() {
+    // offsets and positions at the ends of their ranges, ragged pixel
+    // buffers (the fields are public): the encoders error or succeed, and a
+    // success decodes back to the opaque pixels it was given
+    let mut rng = Lcg(0xD71);
+    let edges = [
+        i32::MIN,
+        i32::MIN + 1,
+        -70_000,
+        -1,
+        0,
+        1,
+        70_000,
+        i32::MAX - 1,
+        i32::MAX,
+    ];
+    for i in 0..fuzz_iters(400) {
+        let (w, h) = (rng.below(300) as u32, rng.below(40) as u32);
+        let n = (w * h) as usize;
+        let ragged = i % 7 == 0;
+        let len = if ragged { rng.below(n + 3) } else { n };
+        let mut img = IndexedImage {
+            width: w,
+            height: h,
+            offset_x: edges[rng.below(edges.len())],
+            offset_y: edges[rng.below(edges.len())],
+            pixels: (0..len).map(|_| rng.next() as u8 | 1).collect(),
+            alpha: (0..len)
+                .map(|_| if rng.below(3) == 0 { 0 } else { 255 })
+                .collect(),
+        };
+        if i % 3 == 0 {
+            img.offset_x = rng.below(64) as i32 - 32;
+            img.offset_y = rng.below(64) as i32 - 32;
+        }
+        let x = [i16::MIN, -32, 0, 31, i16::MAX][rng.below(5)];
+        let y = [i16::MIN, -15, 0, 15, i16::MAX][rng.below(5)];
+        let iso = Block::isometric(x, y, 0, 0, &img);
+        assert_eq!(iso.data.len(), 256);
+        let min_rows = [0, 15, 32, 40_000, usize::MAX][rng.below(5)];
+        if let Ok(rle) = Block::rle(x, y, 0, 0, 0x1001, &img, min_rows) {
+            assert!(rle.data.len() <= 65535);
+            if !ragged && let Ok(back) = rle.render() {
+                assert_eq!(opaque(&back), opaque(&img));
+            }
+        }
+    }
 }
