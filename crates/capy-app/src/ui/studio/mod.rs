@@ -19,10 +19,14 @@ pub mod checks;
 pub mod dialogs;
 pub mod export;
 pub mod levels;
+pub mod libs;
+pub mod modes;
 pub mod paint;
 pub mod script;
 pub mod sections;
+pub mod stack;
 pub mod views;
+pub mod walkplan;
 pub mod wallcats;
 
 use std::collections::BTreeMap;
@@ -150,6 +154,11 @@ pub struct StudioState {
     /// Shift+wheel: the stacked tile last stepped to at a cell.
     pub stack: Option<((u32, u32), usize)>,
     pub stack_accum: f32,
+    /// Alt-painting: the layer each cell of the stroke went to.
+    pub stack_placed: Option<stack::Placed>,
+    /// Alt was held when a Rectangle drag started.
+    pub stack_rect: bool,
+    pub modes: modes::Modes,
     pub dialogs: dialogs::Dialogs,
     pub sections: sections::SectionsState,
     pub analysis: views::Analysis,
@@ -174,6 +183,9 @@ impl Default for StudioState {
             drag: None,
             stack: None,
             stack_accum: 0.0,
+            stack_placed: None,
+            stack_rect: false,
+            modes: modes::Modes::default(),
             dialogs: dialogs::Dialogs::default(),
             sections: sections::SectionsState::default(),
             analysis: views::Analysis::default(),
@@ -379,9 +391,13 @@ pub fn status_hint(state: &AppState) -> Option<&'static str> {
         }
         (true, PaintMode::Fill, true) => "Click to erase the connected area of the same tile",
         _ => match current_view(state) {
-            ViewMode::Walk => "Walkability: green walkable, red blocked, yellow monsters only",
-            ViewMode::Automap => "Automap preview (view only)",
-            ViewMode::Light => "Level light from Levels.txt (view only)",
+            ViewMode::Walk => {
+                "Walkability: green walkable, red blocked, yellow monsters only; paint with the Cell and Sub-tile tools"
+            }
+            ViewMode::Automap => {
+                "Automap: pick Paint, Pick or Clear in the panel, then click cells"
+            }
+            ViewMode::Light => "Level light from Levels.txt: edit it in the panel",
             ViewMode::Roofs => "Roof hiding areas; Shift+H shows the roofs as from inside",
             _ if state.edit.tool == Tool::SelectBox => {
                 "Drag to select; double-click selects every copy of a tile; drag a map edge to resize"

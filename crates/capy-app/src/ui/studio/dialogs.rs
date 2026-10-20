@@ -270,8 +270,16 @@ pub struct RerollDialog {
     pub opts: RerollOptions,
     /// Checked floor tiles of the map's tile set: (DT1 index, tile index).
     pub picks: BTreeSet<(usize, usize)>,
-    /// The DT1 listed.
+    /// The DT1 listed: an index into the map's DT1s, or past them into
+    /// `ext_libs` (libraries of the level type the map does not load).
     pub dt1: usize,
+    /// Other libraries of the level type (or of every type).
+    pub ext_libs: Vec<String>,
+    pub ext_all: bool,
+    /// Parsed libraries, loaded when first listed.
+    pub ext_cache: BTreeMap<String, d2_formats::dt1::Dt1>,
+    /// Checked floors of those libraries: (library path, tile index).
+    pub ext_picks: BTreeSet<(String, usize)>,
 }
 
 pub fn open_reroll(state: &mut AppState) {
@@ -283,7 +291,15 @@ pub fn open_reroll(state: &mut AppState) {
         _ => 0,
     };
     let in_selection = !doc.selection.is_empty();
+    let ext_libs = state
+        .active
+        .map(|i| super::libs::level_type_libs(state, i, false))
+        .unwrap_or_default();
     state.studio.dialogs.reroll = Some(RerollDialog {
+        ext_libs,
+        ext_all: false,
+        ext_cache: BTreeMap::new(),
+        ext_picks: BTreeSet::new(),
         layer,
         in_selection,
         opts: RerollOptions {
@@ -340,12 +356,91 @@ pub fn walk_table(tiles: &capy_render::TileSet) -> BTreeMap<(u8, u8), u32> {
     out
 }
 
+/// Copies the checked floors of other libraries into `<map>_custom.dt1`
+/// (free numbers across the map's tile set), lists the file in the map and
+/// returns the new floors as re-roll choices.
+fn add_external_floors(
+    state: &mut AppState,
+    index: usize,
+    picks: &BTreeSet<(String, usize)>,
+    cache: &BTreeMap<String, d2_formats::dt1::Dt1>,
+) -> Result<Vec<FloorChoice>, String> {
+    use super::libs;
+    let cpath = libs::custom_path(&state.docs[index].path);
+    let mut custom = libs::read_dt1(state, &cpath)?.unwrap_or(d2_formats::dt1::Dt1 {
+        version: (7, 6),
+        tiles: Vec::new(),
+    });
+    let mut taken = libs::taken_keys(state, index, Some(&custom));
+    let mut out = libs::FloorCopies::default();
+    let paths: BTreeSet<&String> = picks.iter().map(|(p, _)| p).collect();
+    for path in paths {
+        let wanted: BTreeSet<usize> = picks
+            .iter()
+            .filter(|(p, _)| p == path)
+            .map(|(_, t)| *t)
+            .collect();
+        let owned;
+        let src = match cache.get(path) {
+            Some(d) => d,
+            None => {
+                owned = libs::read_dt1(state, &GamePath::new(path))?
+                    .ok_or_else(|| format!("{path} was not found"))?;
+                &owned
+            }
+        };
+        libs::copy_floors(src, &wanted, &mut taken, &mut out)?;
+    }
+    custom.tiles.extend(out.tiles);
+    libs::save_dt1(state, &cpath, &custom)?;
+    let after = libs::with_file(&state.docs[index].ds1, &cpath);
+    state.exec(
+        index,
+        EditOp::ReplaceModel {
+            label: "List floor library".to_owned(),
+            after: Box::new(after),
+        },
+    );
+    libs::attach_to_info(state, index, &cpath);
+    Ok(out
+        .choices
+        .into_iter()
+        .map(|(main, sub, rarity, walk)| FloorChoice {
+            main,
+            sub,
+            rarity,
+            walk,
+        })
+        .collect())
+}
+
 /// Builds the choices of the checked tiles and runs the re-roll.
 pub fn apply_reroll(state: &mut AppState, index: usize, d: &RerollDialog) -> bool {
+    state.docs[index].edit.begin_group("Re-roll floors");
+    let ok = apply_reroll_inner(state, index, d);
+    state.docs[index].edit.end_group();
+    ok
+}
+
+fn apply_reroll_inner(state: &mut AppState, index: usize, d: &RerollDialog) -> bool {
     let Some(tiles) = state.docs[index].tiles.clone() else {
         return false;
     };
     let mut choices: BTreeMap<(u8, u8), FloorChoice> = BTreeMap::new();
+    if !d.ext_picks.is_empty() {
+        match add_external_floors(state, index, &d.ext_picks, &d.ext_cache) {
+            Ok(list) => {
+                for c in list {
+                    let e = choices.entry((c.main, c.sub)).or_insert(c.clone());
+                    e.rarity = e.rarity.max(c.rarity);
+                }
+            }
+            Err(e) => {
+                state.error(format!("Re-roll floors: {e}"));
+                return false;
+            }
+        }
+    }
     for &(dt1, t) in &d.picks {
         let Some(tile) = tiles.tile(&capy_render::TileRef { dt1, tile: t }) else {
             continue;
@@ -380,6 +475,56 @@ pub fn apply_reroll(state: &mut AppState, index: usize, d: &RerollDialog) -> boo
     )
 }
 
+/// A library path without the `data\global\tiles\` prefix.
+fn short_lib(p: &str) -> String {
+    p.trim_start_matches("data\\global\\tiles\\")
+        .replace('\\', "/")
+}
+
+/// The scripted/API form of the other-libraries re-roll: floors `tiles` (all
+/// floors when empty) of library `lib` become choices next to the map's own.
+pub fn reroll_from_library(
+    state: &mut AppState,
+    index: usize,
+    lib: &str,
+    tiles: &[usize],
+    layer: u8,
+    seed: u64,
+) -> Result<(), String> {
+    let dt1 = super::libs::read_dt1(state, &GamePath::new(lib))?
+        .ok_or_else(|| format!("{lib} was not found"))?;
+    let picks: BTreeSet<(String, usize)> = dt1
+        .tiles
+        .iter()
+        .enumerate()
+        .filter(|(i, t)| t.orientation == 0 && (tiles.is_empty() || tiles.contains(i)))
+        .map(|(i, _)| (lib.to_owned(), i))
+        .collect();
+    if picks.is_empty() {
+        return Err(format!("{lib} has no matching floor tiles"));
+    }
+    let d = RerollDialog {
+        layer,
+        in_selection: false,
+        opts: RerollOptions {
+            preserve_walkability: false,
+            avoid_repeats: true,
+            seed,
+        },
+        picks: BTreeSet::new(),
+        dt1: 0,
+        ext_libs: Vec::new(),
+        ext_all: false,
+        ext_cache: BTreeMap::from([(lib.to_owned(), dt1)]),
+        ext_picks: picks,
+    };
+    if apply_reroll(state, index, &d) {
+        Ok(())
+    } else {
+        Err("the re-roll changed nothing".to_owned())
+    }
+}
+
 fn reroll_window(ctx: &Context, state: &mut AppState) {
     let Some(mut d) = state.studio.dialogs.reroll.take() else {
         return;
@@ -403,8 +548,43 @@ fn reroll_window(ctx: &Context, state: &mut AppState) {
                 .replace('\\', "/")
         })
         .collect();
-    d.dt1 = d.dt1.min(paths.len().saturating_sub(1));
-    let list = floors_of(&tiles, d.dt1);
+    let n_own = paths.len();
+    d.dt1 = d.dt1.min((n_own + d.ext_libs.len()).saturating_sub(1));
+    let ext_path: Option<String> = d
+        .dt1
+        .checked_sub(n_own)
+        .and_then(|i| d.ext_libs.get(i).cloned());
+    if let Some(p) = &ext_path
+        && !d.ext_cache.contains_key(p)
+    {
+        match super::libs::read_dt1(state, &GamePath::new(p)) {
+            Ok(Some(dt1)) => {
+                d.ext_cache.insert(p.clone(), dt1);
+            }
+            Ok(None) => state.warn(format!("{p} was not found")),
+            Err(e) => state.warn(e),
+        }
+    }
+    let list = match ext_path.as_ref().and_then(|p| d.ext_cache.get(p)) {
+        Some(dt1) => dt1
+            .tiles
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.orientation == 0)
+            .map(|(i, t)| {
+                (
+                    i,
+                    t.main_index as u8,
+                    t.sub_index as u8,
+                    t.rarity,
+                    t.animated != 0,
+                )
+            })
+            .collect(),
+        None if ext_path.is_some() => Vec::new(),
+        None => floors_of(&tiles, d.dt1),
+    };
+    let mut refresh_ext = false;
     egui::Window::new("Re-roll floors")
         .id(Id::new("studio_reroll"))
         .open(&mut open)
@@ -435,22 +615,44 @@ fn reroll_window(ctx: &Context, state: &mut AppState) {
                 ui.checkbox(&mut d.opts.avoid_repeats, "Avoid adjacent repeats");
                 ui.add(egui::DragValue::new(&mut d.opts.seed).prefix("variation "));
             });
+            let shown = match &ext_path {
+                Some(p) => format!("+ {}", short_lib(p)),
+                None => paths.get(d.dt1).cloned().unwrap_or_default(),
+            };
             egui::ComboBox::from_id_salt("reroll_dt1")
                 .width(400.0)
-                .selected_text(paths.get(d.dt1).cloned().unwrap_or_default())
+                .selected_text(shown)
                 .show_ui(ui, |ui| {
                     for (i, p) in paths.iter().enumerate() {
                         ui.selectable_value(&mut d.dt1, i, p);
                     }
+                    if !d.ext_libs.is_empty() {
+                        ui.separator();
+                        ui.weak("Other libraries (copied into the map's own DT1)");
+                    }
+                    for (i, p) in d.ext_libs.iter().enumerate() {
+                        ui.selectable_value(&mut d.dt1, n_own + i, format!("+ {}", short_lib(p)))
+                            .on_hover_text(p);
+                    }
                 });
+            if ui
+                .checkbox(&mut d.ext_all, "Offer the libraries of every level type")
+                .changed()
+            {
+                refresh_ext = true;
+            }
             ui.horizontal(|ui| {
                 if ui.small_button("Check every floor of this DT1").clicked() {
                     for (t, ..) in &list {
-                        d.picks.insert((d.dt1, *t));
+                        match &ext_path {
+                            Some(p) => d.ext_picks.insert((p.clone(), *t)),
+                            None => d.picks.insert((d.dt1, *t)),
+                        };
                     }
                 }
                 if ui.small_button("Clear").clicked() {
                     d.picks.clear();
+                    d.ext_picks.clear();
                 }
             });
             egui::ScrollArea::vertical()
@@ -461,26 +663,40 @@ fn reroll_window(ctx: &Context, state: &mut AppState) {
                         ui.weak("This DT1 has no floor tiles.");
                     }
                     for (t, m, s, rarity, anim) in &list {
-                        let mut on = d.picks.contains(&(d.dt1, *t));
+                        let ext_key = ext_path.as_ref().map(|p| (p.clone(), *t));
+                        let mut on = match &ext_key {
+                            Some(k) => d.ext_picks.contains(k),
+                            None => d.picks.contains(&(d.dt1, *t)),
+                        };
                         let text = format!(
                             "#{t}  {m}/{s}  rarity {rarity}{}",
                             if *anim { "  animated" } else { "" }
                         );
                         if ui.checkbox(&mut on, text).changed() {
-                            if on {
-                                d.picks.insert((d.dt1, *t));
-                            } else {
-                                d.picks.remove(&(d.dt1, *t));
+                            match (ext_key, on) {
+                                (Some(k), true) => {
+                                    d.ext_picks.insert(k);
+                                }
+                                (Some(k), false) => {
+                                    d.ext_picks.remove(&k);
+                                }
+                                (None, true) => {
+                                    d.picks.insert((d.dt1, *t));
+                                }
+                                (None, false) => {
+                                    d.picks.remove(&(d.dt1, *t));
+                                }
                             }
                         }
                     }
                 });
             ui.separator();
+            let checked = d.picks.len() + d.ext_picks.len();
             ui.horizontal(|ui| {
-                ui.label(format!("{} tile(s) checked", d.picks.len()));
+                ui.label(format!("{checked} tile(s) checked"));
                 if ui
                     .add_enabled(
-                        !d.picks.is_empty(),
+                        checked > 0,
                         egui::Button::new(RichText::new("Re-roll").strong()),
                     )
                     .clicked()
@@ -491,8 +707,18 @@ fn reroll_window(ctx: &Context, state: &mut AppState) {
                     close = true;
                 }
             });
-            ui.weak("Tiles from other DT1s need the DT1 manager (later). One Ctrl+Z undoes it.");
+            ui.weak(
+                "Floors from other libraries are copied under free numbers into \
+                 <map>_custom.dt1 (saved next to the map, listed in it). One Ctrl+Z undoes the re-roll.",
+            );
         });
+    if refresh_ext {
+        if let Some(i) = state.active {
+            d.ext_libs = super::libs::level_type_libs(state, i, d.ext_all);
+        }
+        d.ext_picks.clear();
+        d.dt1 = d.dt1.min(n_own.saturating_sub(1));
+    }
     if apply && apply_reroll(state, index, &d) {
         close = true;
     }

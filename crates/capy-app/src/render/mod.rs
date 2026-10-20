@@ -459,6 +459,7 @@ fn class_materials(
             materials.add(TileMaterial {
                 atlas: image.clone(),
                 blend,
+                tint: Vec4::ONE,
             })
         })
         .collect()
@@ -539,6 +540,25 @@ fn drive_builds(
         if let Some(dr) = render.docs.remove(&id) {
             for e in dr.entities() {
                 commands.entity(e).despawn();
+            }
+        }
+    }
+
+    // Level light: the active map's materials multiply by the light colour.
+    let active_id = state.active.and_then(|i| state.docs.get(i)).map(|d| d.id);
+    let tint = crate::ui::studio::modes::light_tint(&mut state);
+    let tint = Vec4::new(tint[0], tint[1], tint[2], 1.0);
+    for (id, dr) in &render.docs {
+        let want = if Some(*id) == active_id {
+            tint
+        } else {
+            Vec4::ONE
+        };
+        for h in dr.materials.iter().flatten() {
+            if materials.get(h).is_some_and(|m| m.tint != want)
+                && let Some(mut m) = materials.get_mut(h)
+            {
+                m.tint = want;
             }
         }
     }

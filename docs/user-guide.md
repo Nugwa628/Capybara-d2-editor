@@ -470,9 +470,9 @@ through them, **F1-F6** pick one, and **View > Mode** has a button for each.
 |---|---|---|
 | F1 | Tiles | The map as the game draws it. |
 | F2 | Objects | The Objects tool (as **O**). |
-| F3 (W) | Walkability | Every sub-tile coloured: green walkable, yellow monsters only, red blocked, violet floorless void a player can walk into, orange the edge next to it. |
-| F4 (A) | Automap | A preview of the automap: walls light, floors dark. View only for now. |
-| F5 (Shift+L) | Level light | The map darkened by its Levels.txt light (Intensity, Red, Green, Blue), with the values in a badge. View only for now. |
+| F3 (W) | Walkability | Every sub-tile coloured: green walkable, yellow monsters only, red blocked, violet floorless void a player can walk into, orange the edge next to it. A tool panel paints walkability (see below). |
+| F4 (A) | Automap | A preview of the automap: each cell lit by the picture (cel) its tile has in AutoMap.txt, red where the tile has none. Editable (see below). |
+| F5 (Shift+L) | Level light | The map multiplied by its Levels.txt light (Intensity, Red, Green, Blue), with the values in a badge. Editable (see below). |
 | F6 (H) | Roof hiding | Each hide area (pop) with its trigger rectangle and the tiles it hides. **Shift+H** draws the map as if the player stood inside: those tiles disappear. |
 
 On top of any mode:
@@ -492,6 +492,42 @@ On top of any mode:
 - **Animate** (**Shift+N**) plays object animations and animated floors:
   water, lava and other tiles whose DT1 variants are animation frames
   (10 frames per second).
+
+#### Editing in the Automap, Level light and Walkability modes
+
+Each of these modes shows a small tool panel at the top left of the map.
+
+- **Automap.** AutoMap.txt opens for the map's level. Pick **Paint** (click a
+  cell: its tile gets the **Picture** number you set), **Pick** (click a
+  cell: take its picture) or **Clear** (the tile leaves the automap); tick
+  **Whole style** to apply it to every sequence of the tile's style. This is
+  the same edit as **Game > Automap**, so a rule belongs to a tile, not a
+  cell: every cell with that tile changes. **Save AutoMap.txt** writes the
+  table to the saves folder (the safety check of the Automap editor runs
+  first); until then the panel says "Unsaved AutoMap.txt edits".
+- **Level light.** The sliders show the Levels.txt Intensity, Red, Green and
+  Blue of the map's level (0 intensity = the act's daylight). The map is
+  multiplied by the colour live (intensity x colour, as the game does).
+  **Save to Levels.txt** writes the row to the saves folder; **Revert**
+  drops the change. Profiles that ship only a compiled `Levels.bin` can't be
+  saved (there is no text table to write).
+- **Walkability.** Tools: **Select**, **Cell** (paint whole cells with the
+  DS1 "unwalkable" flag, bit 17, as the Cell flags command does) and
+  **Sub-tile** (paint single sub-tiles, with a brush of 1 to 5 sub-tiles
+  and the flags walk, light, jump and player). **Block** adds the flags,
+  **Clear** takes them away. A sub-tile stroke can't change the DT1s the map
+  shares, so it puts a hidden blocker floor tile (no picture, only flags)
+  into a free floor layer of the cell, or swaps a tile that blocks the
+  sub-tile for a copy without the flag, in that cell only. The new tiles go
+  to `<map>_walk.dt1`, saved next to the map and listed in it; they are only
+  ever added, so undo never leaves a cell on a missing tile. A cell whose two
+  floor layers are both used can't take a blocker (use the Cell tool). One
+  stroke is one undo step.
+  **No-spawn area** makes the rooms under the selection (the whole map with
+  no selection) spawn no random monsters while staying walkable and looking
+  the same: every region's seed gets a hidden floor tile (a floored seed's
+  tile is copied to floor 2 first). **Whole rooms** does it for every
+  floored cell instead of only the seeds.
 
 The **Upper walls** and **Lower walls** chips in the Show bar hide one group
 of wall tiles on every wall layer (**9** toggles lower walls, **Shift+9**
@@ -690,6 +726,15 @@ and its four bytes, and checkboxes for **Hidden** (bit 31), **Unwalkable**
   cell with the same tile (orientation, main and sub; edges only, not
   corners). Clicking inside the selection keeps the fill inside it.
 
+**Stack painting:** hold **Alt** while painting (Freehand or Rectangle) and
+each cell goes on the first empty layer of the active layer's kind (the
+active layer first, then the others), adding a layer when the map has room
+(up to 4 wall and 2 floor layers; the map's DS1 version may need an
+upgrade). With every layer taken the tile on the active layer is replaced.
+Going over a cell again in the same stroke repaints it on the layer it got.
+Shadows and tags have one layer and paint as usual. One stroke is one undo
+step, adding the layer included.
+
 **Random mix:** **Ctrl+click** several tiles in the Tiles column. Paint,
 Rectangle and Fill area then pick one of them at random for every cell
 (Ctrl+click a tile again to take it out). Each stroke, rectangle or fill is
@@ -714,6 +759,12 @@ copy of the tile under the pointer (Shift adds them to the selection).
   avoids repeating a neighbour, keeps each cell's walkability when
   **Preserve walkability** is on (cells with no matching tile stay as they
   are) and leaves empty cells alone. **Variation** changes the result.
+  The DT1 list also offers **other libraries of the level type** (marked
+  `+`; tick **Offer the libraries of every level type** for all of them).
+  Floors ticked there are copied, under free tile numbers, into
+  `<map>_custom.dt1`, which is saved next to the map in the saves folder
+  and listed in the map; an animated floor takes all its frames. The
+  copies and the re-roll are one undo step.
 - **Map > Reassign tiles...**: rows of old -> new tile numbers. Every cell
   with an old number gets the new one on every layer, for example after
   renumbering tiles in a DT1.
@@ -1648,7 +1699,10 @@ into the paint brush.
 
 ### The Tiles panel
 
-From top to bottom:
+From top to bottom: the category chips, the **DT1** drop-down (one of the
+active map's DT1s, or all of them), the filter box and the thumbnail grid.
+Everything else is in the **Search options** section under the filter box
+(closed at start):
 
 - **The query box.** Results update as you type. Free text matches the
   tile's name (an alias you gave it, or the generated name such as
@@ -1656,7 +1710,7 @@ From top to bottom:
   word must match. Filter tokens narrow it down (table below). A query that
   can't be read is shown in red with a caret under the problem. **x**
   clears it.
-- **Scope**: **This map's tile set** (only the DT1s the active map loads;
+- **Scope** (in **Search options**): **This map's tile set** (only the DT1s the active map loads;
   needs a map whose LvlType is known), **Whole profile** (every tile), or
   **Sprites** (DC6, DCC and COF files). The number on the right is the
   thumbnail size: **Ctrl+mouse wheel** over the panel resizes the

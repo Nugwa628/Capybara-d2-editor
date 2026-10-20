@@ -242,9 +242,17 @@ fn begin_gesture(
                 state.notify("Pick a tile first: use the Eyedropper (I) on the map");
                 return;
             }
-            state.docs[index]
-                .edit
-                .begin_group(if erase { "Erase" } else { "Paint" });
+            // Alt: stack onto the next free layer instead of replacing.
+            state.studio.stack_placed =
+                (mods.alt && !erase && super::studio::stack::stackable(layer))
+                    .then(Default::default);
+            state.docs[index].edit.begin_group(if erase {
+                "Erase"
+            } else if state.studio.stack_placed.is_some() {
+                "Paint (stacked)"
+            } else {
+                "Paint"
+            });
             state.edit.gesture = Some(Gesture::Brush {
                 doc: doc_id,
                 layer,
@@ -357,6 +365,11 @@ fn stroke(
     if cells.is_empty() {
         return true;
     }
+    if !erase && let Some(mut placed) = state.studio.stack_placed.take() {
+        let ok = super::studio::stack::paint_cells(state, index, layer, &cells, &mut placed);
+        state.studio.stack_placed = Some(placed);
+        return ok;
+    }
     if !erase && let Some(op) = super::studio::paint::freehand_mix(state, layer, &cells) {
         return state.exec(index, op);
     }
@@ -379,7 +392,10 @@ pub fn end_gesture(state: &mut AppState, apply: bool) {
     };
     let scope = state.edit.scope;
     match g {
-        Gesture::Brush { .. } => state.docs[index].edit.end_group(),
+        Gesture::Brush { .. } => {
+            state.studio.stack_placed = None;
+            state.docs[index].edit.end_group();
+        }
         Gesture::Box { drag, op, .. } if apply => {
             let doc = &mut state.docs[index];
             let layers = scope_of(scope, doc);

@@ -112,6 +112,7 @@ pub fn step(state: &mut AppState, cmd: &StudioCmd) -> Result<bool, String> {
                 return Err("replace failed".to_owned());
             }
         }
+        StudioCmd::Mode { word, args } => return super::modes::script(state, index, word, args),
         StudioCmd::DragEdge { edge, cells } => {
             let (w, h) = (
                 f64::from(state.docs[index].ds1.width),

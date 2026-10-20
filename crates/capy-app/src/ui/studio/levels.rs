@@ -54,6 +54,11 @@ fn parse_rows(table: &d2_formats::txt::TxtTable) -> BTreeMap<i32, LevelRow> {
     out
 }
 
+/// Forget the rows read so far (Levels.txt was saved).
+pub fn invalidate(state: &mut AppState) {
+    state.studio.levels.epoch = None;
+}
+
 /// Every Levels.txt row of the open profile (`None` when it cannot be read).
 pub fn rows(state: &mut AppState) -> Option<Arc<BTreeMap<i32, LevelRow>>> {
     let epoch = state.session_epoch;
