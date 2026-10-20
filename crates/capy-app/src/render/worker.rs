@@ -104,6 +104,7 @@ fn run_job(req: JobRequest, objects: Option<&ObjectSource<'_>>) -> JobResult {
                 prior,
                 div,
                 tick,
+                filter: key.filter.clone(),
             },
             objects,
         )

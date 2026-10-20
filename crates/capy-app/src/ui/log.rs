@@ -21,7 +21,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             |ui, range| {
                 for entry in &state.log[range] {
                     let (tag, color) = match entry.level {
-                        LogLevel::Info => ("INFO ", Color32::GRAY),
+                        LogLevel::Info => ("INFO ", state.shell.shades.muted),
                         LogLevel::Warn => ("WARN ", Color32::from_rgb(220, 180, 60)),
                         LogLevel::Error => ("ERROR", Color32::from_rgb(230, 90, 90)),
                     };

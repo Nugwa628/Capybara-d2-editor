@@ -1,10 +1,13 @@
 //! Editing operations as data, so a failed attempt can be shown to the user
 //! (for a missing DS1 version) and tried again after the map was upgraded.
 
+use std::collections::BTreeMap;
+
 use capy_edit::{
-    CellValue, Clipboard, Document, EditError, LayerRef, MoveMode, MoveReport, PasteMode,
-    PastePreview, Selection,
+    Brush, CellRect, CellValue, Clipboard, Document, EditError, FloorChoice, LayerRef, MoveMode,
+    MoveReport, PasteMode, PastePreview, RerollOptions, Rng, Selection, TileKey,
 };
+use d2_formats::ds1::Group;
 
 use crate::doc::layer_label;
 
@@ -72,6 +75,59 @@ pub enum EditOp {
         object: usize,
         indices: Vec<usize>,
     },
+    // ---- P9 map editing (`capy_edit` map_edit operations) ----
+    /// Paint (or, with an empty mix, erase) a rectangle; several brushes
+    /// paint a seeded random mix.
+    PaintRect {
+        layer: LayerRef,
+        rect: CellRect,
+        mix: Vec<Brush>,
+        seed: u64,
+    },
+    /// Paint a random mix on the listed cells (freehand with several tiles).
+    PaintMix {
+        layer: LayerRef,
+        cells: Vec<(u32, u32)>,
+        mix: Vec<Brush>,
+        seed: u64,
+    },
+    /// Fill (or erase) the connected area of the same tile around a cell,
+    /// inside the selection when `in_selection`.
+    FloodFill {
+        layer: LayerRef,
+        x: u32,
+        y: u32,
+        mix: Vec<Brush>,
+        in_selection: bool,
+        seed: u64,
+    },
+    ReplaceTiles {
+        layers: Vec<LayerRef>,
+        from: TileKey,
+        to: TileKey,
+        in_selection: bool,
+    },
+    RerollFloors {
+        layer: u8,
+        in_selection: bool,
+        choices: Vec<FloorChoice>,
+        opts: RerollOptions,
+        /// Walkability signature per (main, sub) of the map's tile set.
+        walk: BTreeMap<(u8, u8), u32>,
+    },
+    ReassignTiles(BTreeMap<TileKey, TileKey>),
+    ResizeEdges {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    },
+    AddGroup(Group),
+    SetGroup {
+        index: usize,
+        group: Group,
+    },
+    DeleteGroup(usize),
 }
 
 impl EditOp {
@@ -98,6 +154,18 @@ impl EditOp {
             EditOp::MovePathPoint { .. } => "Move path point".to_owned(),
             EditOp::SetPathAction { .. } => "Path action".to_owned(),
             EditOp::DeletePathPoints { .. } => "Delete path points".to_owned(),
+            EditOp::PaintRect { mix, .. } if mix.is_empty() => "Erase rectangle".to_owned(),
+            EditOp::PaintRect { .. } => "Paint rectangle".to_owned(),
+            EditOp::PaintMix { .. } => "Paint".to_owned(),
+            EditOp::FloodFill { mix, .. } if mix.is_empty() => "Erase area".to_owned(),
+            EditOp::FloodFill { .. } => "Fill area".to_owned(),
+            EditOp::ReplaceTiles { .. } => "Replace tiles".to_owned(),
+            EditOp::RerollFloors { .. } => "Re-roll floors".to_owned(),
+            EditOp::ReassignTiles(_) => "Reassign tiles".to_owned(),
+            EditOp::ResizeEdges { .. } => "Resize map".to_owned(),
+            EditOp::AddGroup(_) => "Add group".to_owned(),
+            EditOp::SetGroup { .. } => "Edit group".to_owned(),
+            EditOp::DeleteGroup(_) => "Delete group".to_owned(),
         }
     }
 }
@@ -111,6 +179,12 @@ pub enum OpOutcome {
     Cut(Clipboard),
     /// The index of a placed object.
     Added(usize),
+    /// Cells a replace, re-roll or reassign changed (and, for a re-roll, the
+    /// cells it had to skip).
+    Count {
+        changed: usize,
+        skipped: usize,
+    },
 }
 
 /// Result of one attempt.
@@ -196,6 +270,86 @@ pub fn run(doc: &mut Document, selection: &Selection, op: &EditOp) -> OpResult {
                 OpOutcome::Done
             })
         }
+        EditOp::PaintRect {
+            layer,
+            rect,
+            mix,
+            seed,
+        } => wrap(
+            doc.paint_rect(*layer, *rect, mix, &mut Rng::new(*seed)),
+            |()| OpOutcome::Done,
+        ),
+        EditOp::PaintMix {
+            layer,
+            cells,
+            mix,
+            seed,
+        } => wrap(
+            doc.paint_mix(*layer, cells, mix, &mut Rng::new(*seed)),
+            |()| OpOutcome::Done,
+        ),
+        EditOp::FloodFill {
+            layer,
+            x,
+            y,
+            mix,
+            in_selection,
+            seed,
+        } => {
+            let within = in_selection.then_some(selection);
+            wrap(
+                doc.flood_fill(*layer, *x, *y, mix, within, &mut Rng::new(*seed)),
+                |()| OpOutcome::Done,
+            )
+        }
+        EditOp::ReplaceTiles {
+            layers,
+            from,
+            to,
+            in_selection,
+        } => {
+            let within = in_selection.then_some(selection);
+            wrap(doc.replace_tiles(layers, *from, *to, within), |n| {
+                OpOutcome::Count {
+                    changed: n,
+                    skipped: 0,
+                }
+            })
+        }
+        EditOp::RerollFloors {
+            layer,
+            in_selection,
+            choices,
+            opts,
+            walk,
+        } => {
+            let area = in_selection.then_some(selection);
+            let walk_of = |m: u8, s: u8| walk.get(&(m, s)).copied();
+            wrap(
+                doc.reroll_floors(*layer, area, choices, opts, &walk_of),
+                |r| OpOutcome::Count {
+                    changed: r.changed,
+                    skipped: r.skipped,
+                },
+            )
+        }
+        EditOp::ReassignTiles(moves) => wrap(doc.reassign_tiles(moves), |n| OpOutcome::Count {
+            changed: n,
+            skipped: 0,
+        }),
+        EditOp::ResizeEdges {
+            left,
+            top,
+            right,
+            bottom,
+        } => wrap(doc.resize_edges(*left, *top, *right, *bottom), |()| {
+            OpOutcome::Done
+        }),
+        EditOp::AddGroup(g) => wrap(doc.add_group(*g), |_| OpOutcome::Done),
+        EditOp::SetGroup { index, group } => {
+            wrap(doc.set_group(*index, *group), |()| OpOutcome::Done)
+        }
+        EditOp::DeleteGroup(index) => wrap(doc.delete_group(*index), |()| OpOutcome::Done),
     }
 }
 

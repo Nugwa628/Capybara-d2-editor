@@ -357,6 +357,9 @@ fn stroke(
     if cells.is_empty() {
         return true;
     }
+    if !erase && let Some(op) = super::studio::paint::freehand_mix(state, layer, &cells) {
+        return state.exec(index, op);
+    }
     let value = if erase {
         CellValue::EMPTY
     } else {

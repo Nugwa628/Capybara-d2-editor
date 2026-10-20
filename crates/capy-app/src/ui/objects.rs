@@ -26,6 +26,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         .id_salt("objects_panel")
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            super::studio::checks::section(ui, state, index);
             // While placing, the picker comes first.
             if state.edit.tool == Tool::Objects && state.objects.mode == ObjectMode::Place {
                 add_picker(ui, state, index);

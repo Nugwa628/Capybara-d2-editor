@@ -11,5 +11,6 @@ pub mod prompt;
 pub mod save;
 pub mod script;
 pub mod script_palette;
+pub mod script_studio;
 pub mod state;
 pub mod tools;

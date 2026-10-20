@@ -204,6 +204,8 @@ struct DocRender {
     outline_div: Option<u32>,
     /// The entries the meshes were made from, and the zoom they are laid out for.
     entries: Option<Arc<Vec<SceneEntry>>>,
+    /// The animated floors among `entries`.
+    anims: Arc<scene::TileAnims>,
     mesh_div: u32,
 }
 
@@ -223,6 +225,7 @@ impl DocRender {
             bounds: None,
             outline_div: None,
             entries: None,
+            anims: Arc::new(scene::TileAnims::new()),
             mesh_div: 0,
         }
     }
@@ -333,6 +336,7 @@ pub fn desired_key(doc: &MapDoc, gamma: f32, objects: Option<u64>) -> Option<Bui
         palette_act: info.palette_act,
         dt1_files: info.dt1_files.clone(),
         objects,
+        filter: doc.filter.clone(),
     })
 }
 
@@ -489,7 +493,8 @@ fn install_build(
             .unwrap_or_default();
         install_runs(commands, meshes, &class_mats, doc, &mut slots, piece_runs);
         dr.pieces.push(PieceRender {
-            frames: scene::piece_frames(&out.entries, piece, tick),
+            // Built at floor frame 0: `sync_scene` moves animated pieces on.
+            frames: scene::piece_frames_anim(&out.entries, piece, tick, &out.anims, None),
             piece: piece.clone(),
             slots,
         });
@@ -501,6 +506,7 @@ fn install_build(
     }
     assign_z(commands, dr);
     dr.entries = Some(out.entries.clone());
+    dr.anims = out.anims.clone();
     dr.mesh_div = div;
 }
 
@@ -710,6 +716,11 @@ fn drive_builds(
     }
 }
 
+/// How far into their animation water and lava are (`None`: frame 0).
+fn floor_secs(state: &AppState, render: &MapRender) -> Option<f64> {
+    (!render.static_objects && state.config.animate_objects).then_some(state.objects.clock)
+}
+
 /// The animation tick the map shows now.
 fn shown_tick(state: &AppState, render: &MapRender) -> Option<u32> {
     shown_tick_at(state, render, state.objects.clock)
@@ -742,6 +753,7 @@ fn sync_scene(
     };
     let div = render.div_for(doc);
     let tick = shown_tick(&state, &render);
+    let secs = floor_secs(&state, &render);
     let id = doc.id;
     let Some(dr) = render.docs.get_mut(&id) else {
         return;
@@ -756,21 +768,24 @@ fn sync_scene(
     };
     let zoom_changed = dr.mesh_div != div;
     let mut changed = false;
+    let anims = dr.anims.clone();
     for pr in &mut dr.pieces {
-        if !zoom_changed && !pr.piece.objects {
+        if !zoom_changed && !pr.piece.objects && !scene::piece_animates(&pr.piece, &anims) {
             continue;
         }
-        let frames = scene::piece_frames(&entries, &pr.piece, tick);
+        let frames = scene::piece_frames_anim(&entries, &pr.piece, tick, &anims, secs);
         if !zoom_changed && frames == pr.frames {
             continue;
         }
-        let runs = scene::build_piece(
+        let runs = scene::build_piece_anim(
             &entries,
             &pr.piece,
             &layout,
             div,
             &|r| tiles.geometry(r),
             tick,
+            &anims,
+            secs,
         );
         install_runs(
             &mut commands,

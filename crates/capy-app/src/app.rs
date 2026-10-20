@@ -177,6 +177,7 @@ pub fn run(startup: Prepared) -> AppExit {
         .insert_resource(splash)
         .add_systems(Startup, (setup_cameras, begin_startup_profile))
         .add_systems(Update, crate::branding::set_window_icons)
+        .add_systems(Update, crate::ui::studio::export::capture_view)
         .add_systems(
             Update,
             (

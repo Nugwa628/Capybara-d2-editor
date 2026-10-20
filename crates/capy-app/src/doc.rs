@@ -225,6 +225,8 @@ pub struct MapDoc {
     /// While set, `ds1` is this history snapshot (shown read-only), not the
     /// edited map.
     pub snapshot_view: Option<capy_history::SnapshotId>,
+    /// Wall groups and roof hiding left out of the drawing (P10).
+    pub filter: crate::render::job::TileFilter,
 }
 
 impl MapDoc {
@@ -278,6 +280,7 @@ impl MapDoc {
             fitted: false,
             autosaved_revision: None,
             snapshot_view: None,
+            filter: crate::render::job::TileFilter::default(),
         }
     }
 

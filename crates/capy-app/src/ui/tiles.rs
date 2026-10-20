@@ -1,4 +1,8 @@
-//! Tiles panel: the asset browser (P3).
+//! Tiles panel: the asset browser (P3), laid out like ds1-studio's tile
+//! palette: category chips (Floors, Walls, Shadows, Objects, Roofs,
+//! Special) and a DT1 drop-down over the filter box, which keeps Capybara's
+//! query language (the chips and the drop-down only edit its `type:` and
+//! `file:` tokens). Ctrl+click adds tiles to the random paint mix.
 //!
 //! A query box over `Index::search` (live, debounced), scope toggles, pinned
 //! saved searches, the Recent and Favorites sections, and a virtualised
@@ -48,6 +52,8 @@ struct TileEvents {
     double: bool,
     menu: Option<Pos2>,
     star: bool,
+    /// Ctrl was held on the click (random mix).
+    ctrl: bool,
 }
 
 pub fn show(ui: &mut Ui, state: &mut AppState) {
@@ -55,6 +61,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     // is laid out for what is on screen.
     let panel = ui.max_rect().intersect(ui.clip_rect());
     resize_with_ctrl_wheel(ui, state, panel);
+    studio_bar(ui, state);
     query_bar(ui, state);
     scope_bar(ui, state);
     saved_searches(ui, state);
@@ -369,7 +376,7 @@ fn grid_tile(
         Vec2::new(rect.width() - 4.0, label_h),
     );
     let mut job = egui::text::LayoutJob::default();
-    label_job(&mut job, asset, alias, 11.0, false);
+    label_job(&mut job, asset, alias, 11.0, false, &state.shell.shades);
     job.wrap = egui::text::TextWrapping::truncate_at_width(label_rect.width());
     let galley = ui.painter().layout_job(job);
     ui.painter_at(label_rect)
@@ -378,7 +385,7 @@ fn grid_tile(
     let stroke = if selected {
         Stroke::new(2.0, SELECTED)
     } else if resp.hovered() {
-        Stroke::new(1.0, Color32::from_gray(140))
+        Stroke::new(1.0, state.shell.shades.border2)
     } else {
         Stroke::NONE
     };
@@ -404,7 +411,8 @@ fn list_row(
         ui.painter()
             .rect_filled(rect, 2.0, Color32::from_rgba_unmultiplied(255, 220, 90, 40));
     } else if resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, Color32::from_gray(45));
+        ui.painter()
+            .rect_filled(rect, 2.0, state.shell.shades.hover);
     }
     let star_edge = (height - 4.0).min(16.0);
     let star_rect = Rect::from_center_size(
@@ -431,7 +439,7 @@ fn list_row(
         rect.right() - 2.0
     };
     let mut job = egui::text::LayoutJob::default();
-    label_job(&mut job, asset, alias, 12.0, true);
+    label_job(&mut job, asset, alias, 12.0, true, &state.shell.shades);
     job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - text_left).max(10.0));
     let galley = ui.painter().layout_job(job);
     let pos = Pos2::new(text_left, rect.center().y - galley.size().y / 2.0);
@@ -460,6 +468,7 @@ fn label_job(
     alias: Option<&str>,
     size: f32,
     place: bool,
+    shades: &super::theme::Shades,
 ) {
     let format = |color: Color32| egui::text::TextFormat {
         font_id: FontId::proportional(size),
@@ -467,17 +476,17 @@ fn label_job(
         ..Default::default()
     };
     if let Some(a) = alias {
-        job.append(a, 0.0, format(Color32::from_rgb(150, 210, 255)));
+        job.append(a, 0.0, format(shades.accent_text));
         if place {
-            job.append(&asset.gen_name, 8.0, format(Color32::from_gray(120)));
+            job.append(&asset.gen_name, 8.0, format(shades.muted));
         }
         return;
     }
     let name = display_name(asset, None);
     let (short, where_) = short_name(&name);
-    job.append(&short, 0.0, format(Color32::from_gray(205)));
+    job.append(&short, 0.0, format(shades.text));
     if place && let Some(w) = where_ {
-        job.append(w, 8.0, format(Color32::from_gray(120)));
+        job.append(w, 8.0, format(shades.muted));
     }
 }
 
@@ -500,6 +509,7 @@ fn events(
             ev.star = true;
         } else {
             ev.clicked = true;
+            ev.ctrl = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
         }
     }
     if resp.double_clicked() && !on_star {
@@ -519,6 +529,10 @@ fn handle(state: &mut AppState, key: &str, ev: TileEvents) {
     if ev.star {
         state.toggle_star(key);
     }
+    if ev.clicked && ev.ctrl {
+        add_to_mix(state, key);
+        return;
+    }
     if ev.clicked || ev.double {
         state.browser.selected = Some(key.to_owned());
         state.browser.grid_focus = true;
@@ -532,6 +546,126 @@ fn handle(state: &mut AppState, key: &str, ev: TileEvents) {
         state.browser.selected = Some(key.to_owned());
         state.open_tile_menu(key, pos);
     }
+}
+
+/// Ctrl+click: the tile joins (or leaves) the random paint mix.
+fn add_to_mix(state: &mut AppState, key: &str) {
+    let Some((_, id)) = crate::browser::brush::parse_tile_key(key) else {
+        return;
+    };
+    let (active, version) = state
+        .active_doc()
+        .map_or((capy_edit::LayerRef::Floor(0), 18), |d| {
+            (d.active_layer, d.ds1.version)
+        });
+    match crate::browser::brush::brush_for(id, active, version) {
+        Ok((layer, value)) => {
+            state.browser.selected = Some(key.to_owned());
+            super::studio::paint::toggle_mix(state, layer, value);
+        }
+        Err(e) => state.error(e),
+    }
+}
+
+// ───────────────────────── category chips and DT1 ─────────────────────────
+
+/// ds1-studio's tile categories and the query token each stands for.
+pub const CATEGORIES: [(&str, &str); 6] = [
+    ("Floors", "type:floor"),
+    ("Walls", "type:wall"),
+    ("Shadows", "type:shadow"),
+    ("Objects", "type:tree"),
+    ("Roofs", "type:roof"),
+    ("Special", "type:special"),
+];
+
+/// `query` with every token starting with one of `prefixes` dropped and
+/// `add` (if any) appended.
+pub fn with_token(query: &str, prefixes: &[&str], add: Option<&str>) -> String {
+    let mut parts: Vec<&str> = query
+        .split_whitespace()
+        .filter(|t| {
+            let lower = t.to_ascii_lowercase();
+            !prefixes.iter().any(|p| lower.starts_with(p))
+        })
+        .collect();
+    if let Some(a) = add {
+        parts.push(a);
+    }
+    parts.join(" ")
+}
+
+fn has_token(query: &str, token: &str) -> bool {
+    query
+        .split_whitespace()
+        .any(|t| t.eq_ignore_ascii_case(token))
+}
+
+const CLASS_TOKENS: [&str; 1] = ["type:"];
+
+fn set_query(ui: &Ui, state: &mut AppState, query: String) {
+    state.browser.query = query;
+    let now = ui.input(|i| i.time);
+    state.browser.live.flush(now);
+}
+
+/// Category chips and the DT1 drop-down.
+fn studio_bar(ui: &mut Ui, state: &mut AppState) {
+    let s = state.shell.shades;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for (label, token) in CATEGORIES {
+            let on = has_token(&state.browser.query, token);
+            if super::shell::chip(ui, &s, label, on, true)
+                .on_hover_text(format!("{label} ({token})"))
+                .clicked()
+            {
+                let q = with_token(&state.browser.query, &CLASS_TOKENS, (!on).then_some(token));
+                set_query(ui, state, q);
+            }
+        }
+    });
+    let dt1s: Vec<String> = state.map_dt1s();
+    if dt1s.is_empty() {
+        return;
+    }
+    let current = state
+        .browser
+        .query
+        .split_whitespace()
+        .find_map(|t| t.strip_prefix("file:"))
+        .map(str::to_owned);
+    let name = |p: &str| p.rsplit('\\').next().unwrap_or(p).to_owned();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("DT1").size(11.5).color(s.muted));
+        egui::ComboBox::from_id_salt("tiles_dt1")
+            .width(ui.available_width() - 8.0)
+            .selected_text(
+                current
+                    .clone()
+                    .unwrap_or_else(|| format!("Every DT1 of the map ({})", dt1s.len())),
+            )
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(current.is_none(), "Every DT1 of the map")
+                    .clicked()
+                {
+                    let q = with_token(&state.browser.query, &["file:"], None);
+                    state.browser.scope = crate::browser::scope::Scope::MapTileSet;
+                    set_query(ui, state, q);
+                }
+                for p in &dt1s {
+                    let n = name(p);
+                    let on = current.as_deref() == Some(n.as_str());
+                    if ui.selectable_label(on, &n).on_hover_text(p).clicked() {
+                        let token = format!("file:{n}");
+                        let q = with_token(&state.browser.query, &["file:"], Some(&token));
+                        state.browser.scope = crate::browser::scope::Scope::MapTileSet;
+                        set_query(ui, state, q);
+                    }
+                }
+            });
+    });
 }
 
 // ───────────────────────── sections ─────────────────────────
@@ -1158,6 +1292,20 @@ fn used_in_window(ctx: &egui::Context, state: &mut AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn category_tokens_replace_each_other() {
+        assert_eq!(
+            with_token("grass type:wall act:1", &CLASS_TOKENS, Some("type:floor")),
+            "grass act:1 type:floor"
+        );
+        assert_eq!(with_token("type:floor", &CLASS_TOKENS, None), "");
+        assert_eq!(
+            with_token("file:a.dt1 x", &["file:"], Some("file:b.dt1")),
+            "x file:b.dt1"
+        );
+        assert!(has_token("a TYPE:floor", "type:floor"));
+    }
 
     #[test]
     fn short_names_put_the_index_first() {

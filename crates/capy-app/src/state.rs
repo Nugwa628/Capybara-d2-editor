@@ -165,6 +165,8 @@ pub struct AppState {
     pub objects: crate::objects::ObjectsState,
     /// The Map Editor's shell: theme, shortcuts, windows, ribbon state.
     pub shell: crate::ui::shell::ShellState,
+    /// ds1-studio parity tools and views (P9/P10).
+    pub studio: crate::ui::studio::StudioState,
     /// Tile libraries, presets, game data and package tool windows.
     pub tools: crate::ui::tools::ToolsState,
 }
@@ -215,6 +217,7 @@ impl AppState {
             settings: SettingsUi::default(),
             objects: crate::objects::ObjectsState::default(),
             shell,
+            studio: crate::ui::studio::StudioState::default(),
             tools: crate::ui::tools::ToolsState::default(),
         }
     }
@@ -731,6 +734,30 @@ impl AppState {
         ));
         self.active = Some(self.docs.len() - 1);
         self.refresh_doc_info(self.docs.len() - 1);
+    }
+
+    /// Show a map made in the editor (Map > New map) as a tab of the open
+    /// profile. Returns its index; `None` without a profile.
+    pub fn open_new_map(&mut self, path: GamePath, ds1: Ds1) -> Option<usize> {
+        let profile_id = self.session.as_ref()?.profile.id.clone();
+        let id = self.next_doc_id;
+        self.next_doc_id += 1;
+        let source = SourceInfo {
+            category: SourceCategory::Saves,
+            layer_name: "new map".to_owned(),
+        };
+        self.docs.push(MapDoc::new(
+            id,
+            profile_id,
+            path,
+            source,
+            ds1,
+            &self.config.layer_visibility,
+        ));
+        let index = self.docs.len() - 1;
+        self.active = Some(index);
+        self.refresh_doc_info(index);
+        Some(index)
     }
 
     pub fn close_doc(&mut self, index: usize) {

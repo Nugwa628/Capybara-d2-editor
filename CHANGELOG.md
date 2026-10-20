@@ -42,11 +42,42 @@ All notable changes to this project are documented here.
   Ctrl+A, Ctrl+D, Delete, Esc, Enter, G. New: Shift+O (toggle the Objects
   tool), F1 (leave it), Home (100%), = and - (zoom), K (minimap), Shift+F
   (just the map), 1-0 (show/hide layers), Shift+1-0 (show one layer only),
-  Backspace (show all), Ctrl+1-7 (active layer). DS1 Studio's keys for
-  features that come later (U, L, Ctrl+H, Shift+Delete, Tab, W, A, R, H,
-  Z, P, F3-F6, ...) are reserved.
+  Backspace (show all), Ctrl+1-7 (active layer), U (rectangle), L (fill
+  area), Ctrl+H (find & replace), Tab / Shift+Tab and F1-F6 (view modes),
+  W / A / H / Shift+L (walkability, automap, roof hiding, level light
+  views), Shift+H (roofs as if inside), R (8x8 rooms), Z (game view), 9 /
+  Shift+9 (lower walls), PrintScreen (copy the view). DS1 Studio's keys
+  for features that come later (Shift+Delete, P) are reserved.
 
 ### Added
+- **Map editing (DS1 Studio parity, P9):** Rectangle (U) and Fill area (L)
+  paint and erase next to Freehand; random-mix painting (Ctrl+click several
+  tiles in Tiles: Paint picks one per cell); Find & replace tiles (Ctrl+H);
+  Re-roll floors and Reassign tiles (Map tab); New map (saved at once to the
+  saves folder); resize by dragging a map edge with the Select tool;
+  Shift+wheel steps through the tiles stacked in a cell; double-click
+  selects every copy of a tile; the Cell section shows each layer's raw
+  dword and bytes with Hidden / Unwalkable / Block jump checkboxes; Tags &
+  groups edits object groups (add, move, resize, delete; undoable); the
+  Objects window lists object checks (outside the map, duplicates, unknown
+  ids); Export ▾ writes the map or the selection as PNG, and PrintScreen
+  copies the map view to the clipboard.
+- **Views and overlays (P10):** view modes Tiles, Objects, Walkability,
+  Automap and Level light (view only for now) and Roof hiding, cycled with
+  Tab / Shift+Tab or F1-F6; the walkability overlay and a walkable-area
+  badge (DS1 Studio's number and colours); spawn regions, warps (click a
+  label to open the target level's map) and roof-hiding areas; the 8x8
+  game rooms grid (R); Game view framing at a chosen screen size (Z);
+  water, lava and other animated floors play in the map (Animate,
+  Shift+N, now covers tiles too).
+- **Tiles column like DS1 Studio:** Floors / Walls / Shadows / Objects /
+  Roofs / Special chips, a DT1 drop-down for the map's libraries and the
+  filter box (Capybara's query language still works; the chips and the
+  drop-down edit its `type:` and `file:` tokens). Under the Show bar,
+  Upper walls / Lower walls chips and a DT1 wall-categories row decide
+  which group each library's walls belong to.
+- The minimap shows the map itself (drawn small in the background) instead
+  of a schematic.
 - **Tile libraries** (Map tab): a DT1 manager (open, duplicate, rename,
   recolour by hue / saturation / brightness / tint), tile settings with DT1
   Tools `.ini` export and import, collision-flag painting on a tile's 5x5
@@ -73,6 +104,11 @@ All notable changes to this project are documented here.
   come from the Lucide icon font (ISC).
 - Right-click menu on the map (Cut, Copy, Paste, Delete, Select all,
   Deselect, Move to layer, flags, Fit), and Help > About.
+
+### Fixed
+- Tile labels, list rows and the Log's INFO tag used fixed light greys that
+  were hard to read on the light themes (Parchment, Snow); they follow the
+  theme now.
 
 ## [1.1.0] - 2026-10-20
 

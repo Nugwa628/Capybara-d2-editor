@@ -120,6 +120,13 @@ impl AppState {
                     doc.object_sel.clear();
                 }
             }
+            OpOutcome::Count { changed, skipped } => {
+                let mut text = format!("{}: {changed} cell(s) changed", op.name());
+                if skipped > 0 {
+                    text.push_str(&format!(", {skipped} left alone (no matching choice)"));
+                }
+                self.notify(text);
+            }
             OpOutcome::Added(object) => {
                 if let Some(doc) = self.docs.get_mut(index) {
                     doc.object_sel = vec![object];
