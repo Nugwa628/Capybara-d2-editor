@@ -78,3 +78,20 @@ Exit codes: 0 ok (missing tiles and objects are warnings); 1 runtime
 condition (I/O, a profile that will not open, a map whose tile set cannot be
 found without `--lvltype`, render or write failure); 2 usage error only (bad,
 missing, unknown or repeated flags, bad values, unknown verb for `help`).
+
+## `mcp` verb (P13)
+
+`mcp --profile <id|path.toml>` serves MCP (JSON-RPC 2.0, one message per
+line, protocol versions 2025-06-18 / 2025-03-26 / 2024-11-05) on stdin/stdout:
+`initialize`, `ping`, `tools/list`, `tools/call`. `capy_cli::mcp::serve(root,
+profile, &mut input, &mut output)` is the testable entry point. Tools:
+`list_maps open_map new_map map_info get_cells paint set_cell copy_area
+find_replace reroll resize_map set_cell_flags list_objects add_object
+edit_objects undo redo check_map render_map save_map`. One map is open at a
+time and edited through `capy_edit::Document` (so a session equals the same
+direct calls, tested); `save_map` writes `capybara\saves\<profile>` +
+`CHANGED.txt` + a history snapshot and never the game folder. Tool failures are
+results with `isError`; protocol errors are JSON-RPC errors. `render_map`
+returns a PNG image content. Not ported from ds1-studio: `regions`,
+`no_spawn_area`, `list_tiles`, `list_placeable`, `add_layer`, `clear`,
+`history`, overlay rendering.

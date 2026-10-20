@@ -302,6 +302,30 @@ profile file that can't be read is an error (exit code 1).
 
 ---
 
+## mcp
+
+```
+mcp --profile <id|path.toml>
+```
+
+Serves the Model Context Protocol over stdin/stdout (JSON-RPC 2.0, one
+message per line) so an AI assistant can edit maps with the editor's own
+logic. Nothing but protocol messages is written to stdout. Register it in an
+MCP client as the command `CapybarasD2Editor.exe mcp --profile vanilla`.
+
+Tools: `list_maps`, `open_map`, `new_map`, `map_info`, `get_cells`, `paint`,
+`set_cell`, `copy_area`, `find_replace`, `reroll`, `resize_map`,
+`set_cell_flags`, `list_objects`, `add_object`, `edit_objects`, `undo`,
+`redo`, `check_map`, `render_map` (returns a PNG) and `save_map`.
+
+One map is open at a time; edits can be undone until the map is replaced.
+`save_map` writes to `capybara\saves\<profile>\<game path>`, adds the file to
+`CHANGED.txt` and records a history snapshot, exactly as the editor's Save
+does. The game folder is never written. A tool that fails returns a result
+marked `isError` with the reason.
+
+---
+
 ## help
 
 ```

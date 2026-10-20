@@ -13,6 +13,7 @@ verbs:
   index     show or build the asset index of a profile
   maps      list the maps of a profile
   profiles  list the profiles in capybara\\profiles
+  mcp       serve map-editing tools over MCP (stdio) for AI assistants
   help      this text; `help <verb>` for one verb (also --help, -h, /?)
 
 Without a verb the editor starts. Game folders are never written to. The
@@ -71,6 +72,18 @@ profiles list
   are written first for the installs found (the default locations and the
   Diablo II registry key, read-only).";
 
+const MCP: &str = "\
+mcp --profile <id|path.toml>
+
+  Serves the Model Context Protocol over stdin/stdout (JSON-RPC 2.0, one
+  message per line) so an AI assistant can edit maps. Tools: list_maps,
+  open_map, new_map, map_info, get_cells, paint, set_cell, copy_area,
+  find_replace, reroll, resize_map, set_cell_flags, list_objects, add_object,
+  edit_objects, undo, redo, check_map, render_map, save_map. One map is open
+  at a time; save_map writes to capybara\\saves\\<profile> (listed in
+  CHANGED.txt, with a history snapshot), never to the game folder. Nothing but
+  protocol messages is written to stdout.";
+
 const HELP: &str = "\
 help [verb]
 
@@ -82,6 +95,7 @@ fn text_for(verb: &str) -> Option<&'static str> {
         "index" => Some(INDEX),
         "maps" => Some(MAPS),
         "profiles" => Some(PROFILES),
+        "mcp" => Some(MCP),
         "help" => Some(HELP),
         _ => None,
     }

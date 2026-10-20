@@ -21,6 +21,8 @@ pub enum HistoryError {
     UnknownSnapshot(u64),
     #[error("history index: {0}")]
     Index(String),
+    #[error("map package: {0}")]
+    Package(String),
     #[error("milestone: {0}")]
     Milestone(String),
 }

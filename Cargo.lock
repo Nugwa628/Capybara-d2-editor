@@ -1721,6 +1721,8 @@ dependencies = [
 name = "capy-cli"
 version = "1.1.0"
 dependencies = [
+ "capy-edit",
+ "capy-history",
  "capy-index",
  "capy-render",
  "d2-assets",

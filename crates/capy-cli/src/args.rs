@@ -54,10 +54,13 @@ pub enum Command {
         filter: Option<String>,
     },
     ProfilesList,
+    Mcp {
+        profile: OsString,
+    },
     Help(Option<String>),
 }
 
-pub const VERBS: [&str; 5] = ["render", "index", "maps", "profiles", "help"];
+pub const VERBS: [&str; 6] = ["render", "index", "maps", "profiles", "mcp", "help"];
 
 /// First arguments that mean `help` (compared case-insensitively).
 pub const HELP_ALIASES: [&str; 4] = ["help", "--help", "-h", "/?"];
@@ -78,7 +81,10 @@ pub fn parse(args: &[OsString]) -> Result<Option<Command>, UsageError> {
         return parse_help(rest).map(Some);
     }
     // `render --help` (any help alias after a real verb) is that verb's help.
-    let is_verb = matches!(verb.as_str(), "render" | "index" | "maps" | "profiles");
+    let is_verb = matches!(
+        verb.as_str(),
+        "render" | "index" | "maps" | "profiles" | "mcp"
+    );
     let asks_help = rest.iter().any(|a| {
         a.to_str()
             .is_some_and(|t| HELP_ALIASES.contains(&t.to_ascii_lowercase().as_str()))
@@ -91,6 +97,7 @@ pub fn parse(args: &[OsString]) -> Result<Option<Command>, UsageError> {
         "index" => parse_index(rest).map(Some),
         "maps" => parse_maps(rest).map(Some),
         "profiles" => parse_profiles(rest).map(Some),
+        "mcp" => parse_mcp(rest).map(Some),
         _ => Ok(None),
     }
 }
@@ -400,4 +407,17 @@ fn parse_help(args: &[OsString]) -> Result<Command, UsageError> {
             format!("unexpected argument {:?}", extra.to_string_lossy()),
         )),
     }
+}
+
+fn parse_mcp(args: &[OsString]) -> Result<Command, UsageError> {
+    const V: &str = "mcp";
+    let mut p = split(V, args, &["profile"])?;
+    if let Some(extra) = p.positionals.first() {
+        return Err(usage(
+            V,
+            format!("unexpected argument {:?}", extra.to_string_lossy()),
+        ));
+    }
+    let profile = p.require(V, "profile")?;
+    Ok(Command::Mcp { profile })
 }

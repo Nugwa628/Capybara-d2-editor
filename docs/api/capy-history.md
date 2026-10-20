@@ -125,3 +125,29 @@ impl Milestones {
     pub fn log(&self, limit: usize) -> Result<Vec<MilestoneInfo>>;            // newest first
 }
 ```
+
+## Map packages (P13, `package.rs`)
+
+```rust
+pub fn export_package(spec: &PackageSpec) -> Result<Vec<u8>>;      // the .zip bytes; deterministic
+pub fn export_package_to(out: &Path, spec: &PackageSpec) -> Result<()>;
+pub fn read_package(bytes: &[u8]) -> Result<Package>;              // verifies manifest, sizes, blake3, no extra files
+pub fn import_package(saves: &SavesDir, bytes: &[u8], opts: &ImportOptions) -> Result<ImportReport>;
+pub fn import_loose_map(saves: &SavesDir, ds1_file: &Path, ds1_path: &GamePath, folder: &Path,
+                        needed: &[GamePath], opts: &ImportOptions) -> Result<LooseImport>;
+pub struct PackageSpec { map_path: Option<GamePath>, map_bytes, files: Vec<PackEntry>, rows: Vec<TableRows>, note }
+pub struct PackEntry { path: GamePath, bytes: Vec<u8>, base_game: bool }
+pub struct TableRows { table, header: Vec<String>, rows: Vec<Vec<String>> }   // handed back, never applied
+pub struct ImportOptions { on_conflict: OnConflict /* Skip | Overwrite */, include_base_game: bool }
+pub struct ImportReport { map, written, unchanged, conflicts, skipped_base_game, rows }
+```
+
+The zip holds `capybara-package.json` (format `capybara-map-package`, version 1)
+and every file at its game path with `/` separators. The zip reader/writer is
+in-crate (stored and deflate over `flate2`; no zip64 or encryption), so no new
+dependency or licence entry. Imports write only through `SavesDir` (so each
+file lands in `CHANGED.txt`), validate every path before the first write, and
+merge: identical files are `unchanged`, differing ones are kept or overwritten
+per `on_conflict`. `import_loose_map` finds each needed DT1 in the folder by
+game path, then by file name anywhere below it; unfound ones are `missing`.
+Callers snapshot (`SnapshotStore`) as they see fit.
