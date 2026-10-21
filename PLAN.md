@@ -505,6 +505,7 @@ Goal: give end users ds1-studio's UI and layout for map editing, then add every 
   - Backlog: an interrupted index build restarts from scratch; a `capybara\log.txt` for Bevy's log in release; a `d2-formats` font-table reader (the splash parses `.tbl` fonts in the app); the splash keeps the old program's timing (the door plays once, then frames 8/9 flicker).
 - Release: one exe only, no separate console `capy.exe` (user, 2026-10-19). The GUI-subsystem exe attaches to the parent console; from cmd the prompt can return before CLI output finishes (documented; redirection and exit codes work).
 - `capy-render`: a mod colormap that maps a visible index to 0 makes that pixel transparent here; DS1Edit keeps it opaque. No vanilla row does this. Match DS1Edit later.
+- **To add (user, 2026-10-21):** Up/Down arrow keys move the selection through the file list on the left (Sprites list, and the other browser lists), opening the selected file as the click does; Left/Right collapse and expand folders in the Sprites tree.
 - `capy-render`: DS1Edit re-derives DCC indices with `palette_find_closest` (first duplicate colour wins, `cof.c:149-170`), causing ~3 pixel differences on Coldcrow. Not reproduced; low value.
 
 ## Known gaps
