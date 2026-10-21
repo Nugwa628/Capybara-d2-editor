@@ -34,15 +34,15 @@ fn lookup_by_seqnum_and_class() {
     assert!(sequence(24).is_none());
     let leap = sequence(13).expect("Leap");
     assert_eq!(leap.name, "Leap");
-    assert_eq!(class_slot("1HS"), Some(2));
+    assert_eq!(class_slot("1HS"), Some(3));
     assert_eq!(class_slot("zzz"), None);
     let steps = leap.steps("hth").expect("a table");
     assert_eq!(steps.len(), 15);
     assert!(steps.iter().all(|s| s.mode == "s1"));
     assert_eq!(steps[5].event, SeqEvent::MeleeAttack);
-    // Whirlwind has no table for two-handed swords or spears.
+    // Whirlwind has no table for bows or crossbows.
     let ww = sequence(10).expect("Whirlwind");
-    assert!(ww.steps("2hs").is_none() && ww.steps("2ht").is_none());
+    assert!(ww.steps("bow").is_none() && ww.steps("xbw").is_none());
     let a: Vec<_> = ww
         .steps("hth")
         .expect("hth")
@@ -55,9 +55,9 @@ fn lookup_by_seqnum_and_class() {
 #[test]
 fn modes_change_mid_sequence_and_padding_is_dropped() {
     let fend = sequence(9).expect("Fend");
-    let raw = fend.by_class[class_slot("1hs").unwrap()].expect("raw");
+    let raw = fend.by_class[class_slot("2ht").unwrap()].expect("raw");
     assert_eq!(raw.len(), 16);
-    let steps = fend.steps("1hs").expect("steps");
+    let steps = fend.steps("2ht").expect("steps");
     assert_eq!(steps.len(), 15, "the trailing all-zero entry is padding");
     assert_eq!((steps[2].mode, steps[3].mode), ("a1", "a2"));
     assert_eq!((steps[2].frame, steps[3].frame), (2, 2));
@@ -148,6 +148,13 @@ fn corpus_skills_are_covered_and_steps_fit_the_cofs() {
                     let cof = Cof::parse(&bytes).expect("cof");
                     if step.frame >= cof.frames_per_direction {
                         over += 1;
+                        // Known leftovers: Unmorph's last step is the frame
+                        // one past the end of a 15-frame COF; the barbarian's
+                        // bare-hand A1 has 12 frames but Double Swing names
+                        // 13 and 14. Anything else means a wrong table.
+                        let known = (seq.name == "Unmorph" && step.frame == 15)
+                            || (seq.name == "Double Swing" && *code == "hth");
+                        assert!(known, "{name}: {skill} {}{code}", step.mode);
                         eprintln!(
                             "past the last frame: {name}: {skill} ({}) {}{} frame {} of {}",
                             seq.name, step.mode, code, step.frame, cof.frames_per_direction
@@ -160,10 +167,40 @@ fn corpus_skills_are_covered_and_steps_fit_the_cofs() {
         assert!(used > 0, "{name}: no player skill with a sequence");
     }
     eprintln!("{checked} steps checked against real COFs, {over} past the last frame");
-    // A few steps name the frame just past the end (the game presumably
-    // clamps); a wholesale mismatch would mean a wrong table.
+    assert!(over <= 40, "{over} steps are out of range");
+}
+
+/// The classes of `seqnum` that have a table.
+fn classes_of(seqnum: u32) -> Vec<&'static str> {
+    let seq = sequence(seqnum).unwrap();
+    CLASS_CODES
+        .iter()
+        .copied()
+        .filter(|c| seq.steps(c).is_some())
+        .collect()
+}
+
+/// Pins the slot order (see `CLASS_CODES`) with what the game's skills imply.
+#[test]
+fn slot_order_matches_what_the_skills_need() {
+    assert_eq!(
+        classes_of(7),
+        vec!["hth", "bow", "xbw"],
+        "Strafe: bows only"
+    );
+    let ww = classes_of(10);
+    assert!(!ww.contains(&"bow") && !ww.contains(&"xbw"), "{ww:?}");
+    assert!(ww.contains(&"2hs") && ww.contains(&"1hs") && ww.contains(&"stf"));
+    assert_eq!(classes_of(2), vec!["hth", "1hs", "2hs"], "Sacrifice");
+    assert_eq!(classes_of(1), vec!["hth", "1ht", "2ht"], "Jab");
+    assert_eq!(classes_of(8), vec!["hth", "1ht", "2ht"], "Impale");
+    assert_eq!(classes_of(9), vec!["hth", "1ht", "2ht"], "Fend");
+    // Charge (a paladin skill): nothing for dual wield.
+    let charge = classes_of(4);
     assert!(
-        over * 50 < checked,
-        "{over} of {checked} steps are out of range"
+        !charge
+            .iter()
+            .any(|c| ["1js", "1jt", "1ss", "1st", "ht1", "ht2"].contains(c)),
+        "{charge:?}"
     );
 }

@@ -828,9 +828,9 @@ mod tests {
 
     #[test]
     fn a_sequence_plays_its_steps_in_order_across_modes() {
-        // Fend with a one-hand swing weapon: A1 and A2 interleave.
+        // Fend with a spear: A1 and A2 interleave.
         let fend = player_seq::sequence(9).unwrap();
-        let steps = fend.steps("1hs").unwrap();
+        let steps = fend.steps("2ht").unwrap();
         let r = resolve_steps(steps, |m| Some(if m == "a1" { 20 } else { 16 }));
         assert_eq!(r.missing, Vec::<&str>::new());
         assert_eq!(r.clamped, 0);

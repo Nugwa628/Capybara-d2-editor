@@ -23,16 +23,24 @@
 //! code in D2Common.dll, so later versions are assumed (not verified) to
 //! carry the same ones.
 //!
-//! Two arrays (Fend with a one-hand swing weapon, Projection) end with an
+//! Two arrays (Fend with a spear, Projection) end with an
 //! all-zero entry: mode 0 (`dt`), frame 0. It is padding in the original;
 //! [`PlayerSequence::steps`] drops it.
 
 use crate::txt::TxtTable;
 
-/// Weapon class codes in the slot order of a sequence record (the order of
-/// D2MOO's `D2WeaponClasses`).
+/// Weapon class codes in the slot order of a sequence record. The game finds
+/// a slot through D2MOO's `gWeaponIndexToClassMap`, whose order this is. It is
+/// not the order of D2MOO's `D2WeaponClasses` enum, which the names of D2MOO's
+/// step arrays (`Jab_BOW`, `Strafe_2HS`, `Sacrifice_1HT`, ...) follow, so those
+/// names are misleading; the arrays here are named for the class they serve.
+/// Evidence for this order: Strafe (a bow skill) fills only slots 5 and 6
+/// (bow, crossbow); Whirlwind and Charge leave 5 and 6 empty (no bow or
+/// crossbow); Jab, Impale and Fend fill slots 1 and 2 (javelin, spear);
+/// Sacrifice fills 3 and 4 (one- and two-hand swing); Charge leaves every
+/// dual-wield slot (8 and up) empty (paladins cannot dual-wield).
 pub const CLASS_CODES: [&str; 14] = [
-    "hth", "bow", "1hs", "1ht", "stf", "2hs", "2ht", "xbw", "1js", "1jt", "1ss", "1st", "ht1",
+    "hth", "1ht", "2ht", "1hs", "2hs", "bow", "xbw", "stf", "1js", "1jt", "1ss", "1st", "ht1",
     "ht2",
 ];
 
@@ -168,7 +176,7 @@ static HAND_TO_HAND1: [SeqStep; 13] = [
     st("a1", 12, N),
 ];
 
-static JAB_BOW: [SeqStep; 18] = [
+static JAB_1HT: [SeqStep; 18] = [
     st("a1", 5, N),
     st("a1", 6, SOUND),
     st("a1", 8, N),
@@ -189,7 +197,7 @@ static JAB_BOW: [SeqStep; 18] = [
     st("a2", 13, N),
 ];
 
-static JAB_1HS: [SeqStep; 21] = [
+static JAB_2HT: [SeqStep; 21] = [
     st("a1", 2, N),
     st("a1", 7, SOUND),
     st("a1", 9, N),
@@ -230,7 +238,7 @@ static HAND_TO_HAND2: [SeqStep; 14] = [
     st("a1", 13, N),
 ];
 
-static SACRIFICE_1HT: [SeqStep; 7] = [
+static SACRIFICE_1HS: [SeqStep; 7] = [
     st("a2", 0, N),
     st("a2", 2, N),
     st("a2", 4, N),
@@ -240,7 +248,7 @@ static SACRIFICE_1HT: [SeqStep; 7] = [
     st("a2", 13, N),
 ];
 
-static SACRIFICE_STF: [SeqStep; 8] = [
+static SACRIFICE_2HS: [SeqStep; 8] = [
     st("a1", 0, N),
     st("a1", 2, N),
     st("a1", 4, N),
@@ -251,7 +259,7 @@ static SACRIFICE_STF: [SeqStep; 8] = [
     st("a1", 15, N),
 ];
 
-static CHASTISE_1HT: [SeqStep; 16] = [
+static CHASTISE_1HS: [SeqStep; 16] = [
     st("s1", 3, N),
     st("s1", 4, N),
     st("s1", 5, N),
@@ -288,7 +296,7 @@ static CHARGE: [SeqStep; 15] = [
     st("a1", 12, N),
 ];
 
-static DEFIANCE_1HT: [SeqStep; 6] = [
+static DEFIANCE_1HS: [SeqStep; 6] = [
     st("a2", 5, N),
     st("a2", 6, N),
     st("a2", 7, MELEE),
@@ -315,7 +323,7 @@ static INFERNO: [SeqStep; 15] = [
     st("sc", 13, N),
 ];
 
-static STRAFE_2HS: [SeqStep; 13] = [
+static STRAFE_BOW: [SeqStep; 13] = [
     st("a1", 0, N),
     st("a1", 1, N),
     st("a1", 2, N),
@@ -331,7 +339,7 @@ static STRAFE_2HS: [SeqStep; 13] = [
     st("a1", 13, N),
 ];
 
-static STRAFE_2HT: [SeqStep; 20] = [
+static STRAFE_XBW: [SeqStep; 20] = [
     st("a1", 0, N),
     st("a1", 1, N),
     st("a1", 2, N),
@@ -354,7 +362,7 @@ static STRAFE_2HT: [SeqStep; 20] = [
     st("a1", 19, N),
 ];
 
-static IMPALE_BOW: [SeqStep; 21] = [
+static IMPALE_1HT: [SeqStep; 21] = [
     st("a1", 0, N),
     st("a1", 1, N),
     st("a1", 1, N),
@@ -378,7 +386,7 @@ static IMPALE_BOW: [SeqStep; 21] = [
     st("a1", 14, N),
 ];
 
-static IMPALE_1HS: [SeqStep; 24] = [
+static IMPALE_2HT: [SeqStep; 24] = [
     st("a1", 0, N),
     st("a1", 1, N),
     st("a1", 1, N),
@@ -405,7 +413,7 @@ static IMPALE_1HS: [SeqStep; 24] = [
     st("a1", 17, N),
 ];
 
-static FEND_BOW: [SeqStep; 16] = [
+static FEND_1HT: [SeqStep; 16] = [
     st("a1", 0, N),
     st("a1", 1, N),
     st("a1", 2, N),
@@ -424,7 +432,7 @@ static FEND_BOW: [SeqStep; 16] = [
     st("a1", 14, N),
 ];
 
-static FEND_1HS: [SeqStep; 16] = [
+static FEND_2HT: [SeqStep; 16] = [
     st("a1", 0, N),
     st("a1", 1, N),
     st("a1", 2, N),
@@ -514,7 +522,7 @@ static LEAP: [SeqStep; 15] = [
     st("s1", 14, MELEE),
 ];
 
-static LEAP_ATTACK_HTH: [SeqStep; 22] = [
+static LEAP_ATTACK_HTH_ETC: [SeqStep; 22] = [
     st("s1", 0, N),
     st("s1", 1, N),
     st("s1", 2, N),
@@ -539,7 +547,7 @@ static LEAP_ATTACK_HTH: [SeqStep; 22] = [
     st("a1", 11, N),
 ];
 
-static LEAP_ATTACK_BOW_1HT: [SeqStep; 25] = [
+static LEAP_ATTACK_1HT_1HS: [SeqStep; 25] = [
     st("s1", 0, N),
     st("s1", 1, N),
     st("s1", 2, N),
@@ -567,7 +575,7 @@ static LEAP_ATTACK_BOW_1HT: [SeqStep; 25] = [
     st("a1", 15, N),
 ];
 
-static LEAP_ATTACK_1HS_XBW: [SeqStep; 28] = [
+static LEAP_ATTACK_2HT_STF: [SeqStep; 28] = [
     st("s1", 0, N),
     st("s1", 1, N),
     st("s1", 2, N),
@@ -598,7 +606,7 @@ static LEAP_ATTACK_1HS_XBW: [SeqStep; 28] = [
     st("a1", 18, N),
 ];
 
-static LEAP_ATTACK_STF: [SeqStep; 27] = [
+static LEAP_ATTACK_2HS: [SeqStep; 27] = [
     st("s1", 0, N),
     st("s1", 1, N),
     st("s1", 2, N),
@@ -834,8 +842,8 @@ pub static PLAYER_SEQUENCES: [PlayerSequence; 23] = [
         name: "Jab",
         by_class: [
             Some(&HAND_TO_HAND1),
-            Some(&JAB_BOW),
-            Some(&JAB_1HS),
+            Some(&JAB_1HT),
+            Some(&JAB_2HT),
             None,
             None,
             None,
@@ -856,8 +864,8 @@ pub static PLAYER_SEQUENCES: [PlayerSequence; 23] = [
             Some(&HAND_TO_HAND2),
             None,
             None,
-            Some(&SACRIFICE_1HT),
-            Some(&SACRIFICE_STF),
+            Some(&SACRIFICE_1HS),
+            Some(&SACRIFICE_2HS),
             None,
             None,
             None,
@@ -876,7 +884,7 @@ pub static PLAYER_SEQUENCES: [PlayerSequence; 23] = [
             Some(&HAND_TO_HAND2),
             None,
             None,
-            Some(&CHASTISE_1HT),
+            Some(&CHASTISE_1HS),
             None,
             None,
             None,
@@ -916,7 +924,7 @@ pub static PLAYER_SEQUENCES: [PlayerSequence; 23] = [
             Some(&HAND_TO_HAND2),
             None,
             None,
-            Some(&DEFIANCE_1HT),
+            Some(&DEFIANCE_1HS),
             None,
             None,
             None,
@@ -958,8 +966,8 @@ pub static PLAYER_SEQUENCES: [PlayerSequence; 23] = [
             None,
             None,
             None,
-            Some(&STRAFE_2HS),
-            Some(&STRAFE_2HT),
+            Some(&STRAFE_BOW),
+            Some(&STRAFE_XBW),
             None,
             None,
             None,
@@ -974,8 +982,8 @@ pub static PLAYER_SEQUENCES: [PlayerSequence; 23] = [
         name: "Impale",
         by_class: [
             Some(&HAND_TO_HAND1),
-            Some(&IMPALE_BOW),
-            Some(&IMPALE_1HS),
+            Some(&IMPALE_1HT),
+            Some(&IMPALE_2HT),
             None,
             None,
             None,
@@ -994,8 +1002,8 @@ pub static PLAYER_SEQUENCES: [PlayerSequence; 23] = [
         name: "Fend",
         by_class: [
             Some(&HAND_TO_HAND1),
-            Some(&FEND_BOW),
-            Some(&FEND_1HS),
+            Some(&FEND_1HT),
+            Some(&FEND_2HT),
             None,
             None,
             None,
@@ -1093,20 +1101,20 @@ pub static PLAYER_SEQUENCES: [PlayerSequence; 23] = [
         seqnum: 14,
         name: "Leap Attack",
         by_class: [
-            Some(&LEAP_ATTACK_HTH),
-            Some(&LEAP_ATTACK_BOW_1HT),
-            Some(&LEAP_ATTACK_1HS_XBW),
-            Some(&LEAP_ATTACK_BOW_1HT),
-            Some(&LEAP_ATTACK_STF),
+            Some(&LEAP_ATTACK_HTH_ETC),
+            Some(&LEAP_ATTACK_1HT_1HS),
+            Some(&LEAP_ATTACK_2HT_STF),
+            Some(&LEAP_ATTACK_1HT_1HS),
+            Some(&LEAP_ATTACK_2HS),
             None,
             None,
-            Some(&LEAP_ATTACK_1HS_XBW),
-            Some(&LEAP_ATTACK_HTH),
-            Some(&LEAP_ATTACK_HTH),
-            Some(&LEAP_ATTACK_HTH),
-            Some(&LEAP_ATTACK_HTH),
-            Some(&LEAP_ATTACK_HTH),
-            Some(&LEAP_ATTACK_HTH),
+            Some(&LEAP_ATTACK_2HT_STF),
+            Some(&LEAP_ATTACK_HTH_ETC),
+            Some(&LEAP_ATTACK_HTH_ETC),
+            Some(&LEAP_ATTACK_HTH_ETC),
+            Some(&LEAP_ATTACK_HTH_ETC),
+            Some(&LEAP_ATTACK_HTH_ETC),
+            Some(&LEAP_ATTACK_HTH_ETC),
         ],
     },
     PlayerSequence {
