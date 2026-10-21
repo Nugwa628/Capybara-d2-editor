@@ -6,9 +6,13 @@ use std::path::{Path, PathBuf};
 
 use bevy_egui::egui;
 use capy_paint::{GifOptions, animated_gif_with, delay_for_fps, rgba_to_indexed};
-use capy_sprite::Sprite;
+use capy_sprite::{Sprite, UnitKind};
+use d2_assets::{GamePath, Overlay};
 use d2_formats::IndexedImage;
+use d2_formats::cof::Cof;
 use d2_formats::palette::Palette;
+use d2_formats::player_seq::{self, SeqStep};
+use d2_formats::txt::TxtTable;
 
 use super::cof::CofView;
 use super::viewer::ViewerState;
@@ -44,6 +48,9 @@ pub struct GifSettings {
     pub solid: Option<[u8; 3]>,
     /// A COF layer to export alone; `None` exports the composite.
     pub part: Option<usize>,
+    /// A skill's `seqnum`: a character COF plays that sequence instead of
+    /// `start..=end` of its own frames (which then index the sequence).
+    pub seqnum: Option<u32>,
 }
 
 impl GifSettings {
@@ -59,6 +66,7 @@ impl GifSettings {
             scale: 1,
             solid: None,
             part: None,
+            seqnum: None,
         }
     }
 
@@ -123,6 +131,8 @@ pub fn selected_dirs(s: &GifSettings, current: usize, total: usize) -> Vec<usize
 pub enum GifSource<'a> {
     Sprite(&'a Sprite),
     Cof(&'a CofView),
+    /// A character COF played in a skill's sequence order.
+    Seq(&'a SeqPlan),
 }
 
 impl GifSource<'_> {
@@ -130,6 +140,7 @@ impl GifSource<'_> {
         match self {
             GifSource::Sprite(s) => s.directions.len(),
             GifSource::Cof(c) => c.directions(),
+            GifSource::Seq(p) => p.directions(),
         }
     }
 
@@ -137,6 +148,7 @@ impl GifSource<'_> {
         match self {
             GifSource::Sprite(s) => s.frames_per_direction(),
             GifSource::Cof(c) => c.frames(),
+            GifSource::Seq(p) => p.steps.len(),
         }
     }
 
@@ -159,15 +171,235 @@ impl GifSource<'_> {
                     .collect())
             }
             GifSource::Cof(c) => (start..=end)
-                .map(|f| {
-                    let r = c.compose(dir, f, palette)?;
-                    Ok(rgba_to_indexed(
-                        r.width, r.height, r.offset_x, r.offset_y, &r.pixels, palette,
-                    ))
+                .map(|f| indexed_frame(c, dir, f, palette))
+                .collect(),
+            GifSource::Seq(p) => (start..=end)
+                .map(|i| {
+                    let &(view, frame) = p
+                        .steps
+                        .get(i)
+                        .ok_or_else(|| format!("no sequence step {}", i + 1))?;
+                    indexed_frame(&p.views[view], dir, frame, palette)
                 })
                 .collect(),
         }
     }
+}
+
+/// One composed COF frame mapped to the palette.
+fn indexed_frame(
+    c: &CofView,
+    dir: usize,
+    frame: usize,
+    palette: &Palette,
+) -> Result<IndexedImage, String> {
+    let r = c.compose(dir, frame, palette)?;
+    Ok(rgba_to_indexed(
+        r.width, r.height, r.offset_x, r.offset_y, &r.pixels, palette,
+    ))
+}
+
+/// A step list resolved against the frame counts of the mode COFs.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Resolved {
+    /// (mode, frame) in play order, frames inside their COF.
+    pub order: Vec<(&'static str, usize)>,
+    /// Modes whose COF is missing (each once, in first-use order).
+    pub missing: Vec<&'static str>,
+    /// Steps that named a frame past the end of their COF.
+    pub clamped: usize,
+}
+
+/// Orders a sequence's steps for playback. `frames_in(mode)` is the frame
+/// count of that mode's COF, `None` when there is none. A step past the last
+/// frame shows the last frame (the game's behaviour is not known; the
+/// shipped data has a handful of these). Steps of a missing mode are left
+/// out and reported.
+pub fn resolve_steps(steps: &[SeqStep], frames_in: impl Fn(&str) -> Option<usize>) -> Resolved {
+    let mut out = Resolved::default();
+    for s in steps {
+        match frames_in(s.mode) {
+            None | Some(0) => {
+                if !out.missing.contains(&s.mode) {
+                    out.missing.push(s.mode);
+                }
+            }
+            Some(n) => {
+                let frame = usize::from(s.frame);
+                out.clamped += usize::from(frame >= n);
+                out.order.push((s.mode, frame.min(n - 1)));
+            }
+        }
+    }
+    out
+}
+
+/// A character COF's frames in a skill's sequence order: one loaded COF per
+/// mode the sequence uses (same token, weapon class and armour as the
+/// Viewer's) and the (COF, frame) list to play.
+pub struct SeqPlan {
+    pub seqnum: u32,
+    /// The Viewer revision it was built from.
+    pub revision: u64,
+    views: Vec<CofView>,
+    steps: Vec<(usize, usize)>,
+    /// Why it cannot be exported (shown in orange).
+    pub problems: Vec<String>,
+    /// Worth knowing, but it still exports.
+    pub notes: Vec<String>,
+}
+
+impl SeqPlan {
+    fn directions(&self) -> usize {
+        self.views
+            .iter()
+            .map(CofView::directions)
+            .min()
+            .unwrap_or(0)
+    }
+
+    pub fn playable(&self) -> bool {
+        self.problems.is_empty() && !self.steps.is_empty()
+    }
+
+    /// Resolves sequence `seqnum` for `base`'s weapon class, loading the COF
+    /// of every mode it uses through `overlay`.
+    pub fn build(
+        seqnum: u32,
+        base: &CofView,
+        revision: u64,
+        overlay: Option<&Overlay>,
+        names: &[GamePath],
+    ) -> SeqPlan {
+        let mut plan = SeqPlan {
+            seqnum,
+            revision,
+            views: Vec::new(),
+            steps: Vec::new(),
+            problems: Vec::new(),
+            notes: Vec::new(),
+        };
+        let class = base.name.class.as_str();
+        let Some(seq) = player_seq::sequence(seqnum) else {
+            plan.problems.push(format!("No sequence {seqnum}"));
+            return plan;
+        };
+        let Some(steps) = seq.steps(class) else {
+            plan.problems.push(format!(
+                "{} has no sequence for the {} weapon class",
+                seq.name,
+                class.to_ascii_uppercase()
+            ));
+            return plan;
+        };
+        let prefer: Vec<(String, String)> = base
+            .layers
+            .iter()
+            .map(|l| (l.code.to_owned(), l.armor.clone()))
+            .collect();
+        let mut modes: Vec<&'static str> = Vec::new();
+        for s in steps {
+            if !modes.contains(&s.mode) {
+                modes.push(s.mode);
+            }
+        }
+        let mut loaded: Vec<Option<usize>> = Vec::new();
+        for &mode in &modes {
+            let mut name = base.name.clone();
+            name.mode = mode.to_owned();
+            let path = name.game_path(base.kind);
+            let bytes = overlay.and_then(|o| o.read_bytes(&path).ok().flatten());
+            let view = match bytes.map(|b| Cof::parse(&b)) {
+                None => {
+                    plan.problems.push(format!(
+                        "Missing COF for mode {}: {}",
+                        mode.to_uppercase(),
+                        path
+                    ));
+                    None
+                }
+                Some(Err(e)) => {
+                    plan.problems.push(format!("Cannot read {path}: {e}"));
+                    None
+                }
+                Some(Ok(cof)) => {
+                    let mut v = CofView::load(cof, name, Some(path), overlay, names, &prefer);
+                    // Keep the layers the Viewer has hidden hidden.
+                    for (i, l) in v.layers.clone().iter().enumerate() {
+                        let hidden = base
+                            .layers
+                            .iter()
+                            .any(|b| b.component == l.component && !b.visible);
+                        if hidden {
+                            v.set_visible(i, false);
+                        }
+                    }
+                    plan.views.push(v);
+                    Some(plan.views.len() - 1)
+                }
+            };
+            loaded.push(view);
+        }
+        let index_of = |mode: &str| {
+            let at = modes.iter().position(|m| *m == mode)?;
+            loaded[at]
+        };
+        let resolved = resolve_steps(steps, |m| index_of(m).map(|i| plan.views[i].frames()));
+        plan.steps = resolved
+            .order
+            .iter()
+            .filter_map(|&(m, f)| Some((index_of(m)?, f)))
+            .collect();
+        if resolved.clamped > 0 {
+            plan.notes.push(format!(
+                "{} step(s) name a frame past the end of their COF and show its last frame",
+                resolved.clamped
+            ));
+        }
+        plan
+    }
+}
+
+/// One choice of the "Skill sequence" list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SeqChoice {
+    pub seqnum: u32,
+    /// "Leap (seq 13)".
+    pub label: String,
+}
+
+/// The skills of `token`'s class that play a player sequence, from the
+/// profile's `skills.txt`; every sequence by name when there is none (a
+/// compiled-only profile, or a token that is not a player class).
+pub fn seq_choices(overlay: Option<&Overlay>, token: &str) -> Vec<SeqChoice> {
+    let table = overlay
+        .and_then(|o| {
+            o.read_bytes(&GamePath::new("data\\global\\excel\\skills.txt"))
+                .ok()
+                .flatten()
+        })
+        .and_then(|b| TxtTable::parse(&b).ok());
+    let class = player_seq::class_of_token(token);
+    let mut out: Vec<SeqChoice> = table
+        .map(|t| player_seq::skills_using(&t))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| class.is_none_or(|c| s.class == c))
+        .map(|s| SeqChoice {
+            seqnum: s.seqnum,
+            label: format!("{} (seq {})", s.name, s.seqnum),
+        })
+        .collect();
+    if out.is_empty() {
+        out = player_seq::PLAYER_SEQUENCES
+            .iter()
+            .map(|s| SeqChoice {
+                seqnum: u32::from(s.seqnum),
+                label: format!("{} (seq {})", s.name, s.seqnum),
+            })
+            .collect();
+    }
+    out
 }
 
 /// One encoded GIF.
@@ -278,6 +510,10 @@ pub struct GifDialog {
     pub open: bool,
     /// Frames per direction of the source.
     pub frame_count: usize,
+    /// The skills offered for a character COF (`None` until first needed).
+    pub seq_choices: Option<Vec<SeqChoice>>,
+    /// The chosen skill's sequence, loaded.
+    pub seq_plan: Option<SeqPlan>,
 }
 
 #[derive(Clone)]
@@ -312,8 +548,64 @@ impl GifDialog {
             error: None,
             open: true,
             frame_count,
+            seq_choices: None,
+            seq_plan: None,
         }
     }
+
+    /// Why the chosen skill sequence cannot be exported, if it cannot.
+    pub fn sequence_problem(&self) -> Option<String> {
+        let want = self.settings.seqnum?;
+        match &self.seq_plan {
+            Some(p) if p.seqnum == want && p.problems.is_empty() && p.steps.is_empty() => {
+                Some("The sequence has no frames".to_owned())
+            }
+            Some(p) if p.seqnum == want => p.problems.first().cloned(),
+            _ => Some("The sequence is still loading".to_owned()),
+        }
+    }
+}
+
+/// Brings the dialog's skill list and loaded sequence up to date with the
+/// Viewer's COF and the chosen skill; resets the frame range when the
+/// sequence changes. Call before drawing or exporting.
+pub fn sync_sequence(
+    dlg: &mut GifDialog,
+    viewer: &ViewerState,
+    overlay: Option<&Overlay>,
+    names: &[GamePath],
+) {
+    let base = viewer
+        .cof()
+        .filter(|c| !dlg.from_editor && c.kind == UnitKind::Character);
+    let Some(base) = base else {
+        // Nothing to sequence (the Viewer moved on to something else).
+        if dlg.settings.seqnum.take().is_some() || dlg.seq_plan.take().is_some() {
+            reset_range(dlg, viewer);
+        }
+        return;
+    };
+    if dlg.seq_choices.is_none() {
+        dlg.seq_choices = Some(seq_choices(overlay, &base.name.token));
+    }
+    let have = dlg.seq_plan.as_ref().map(|p| (p.seqnum, p.revision));
+    let want = dlg.settings.seqnum.map(|n| (n, viewer.revision));
+    if have == want {
+        return;
+    }
+    dlg.seq_plan = want.map(|(n, rev)| SeqPlan::build(n, base, rev, overlay, names));
+    reset_range(dlg, viewer);
+}
+
+/// The whole of the current source as the frame range.
+fn reset_range(dlg: &mut GifDialog, viewer: &ViewerState) {
+    let frames = source_of(viewer, dlg).map_or(0, |s| s.frames());
+    dlg.frame_count = frames;
+    dlg.settings.start = 0;
+    dlg.settings.end = frames.saturating_sub(1);
+    dlg.range_text = range_label(&dlg.settings);
+    dlg.thumb_key = u64::MAX;
+    dlg.preview_frame = 0;
 }
 
 pub fn range_label(s: &GifSettings) -> String {
@@ -323,6 +615,13 @@ pub fn range_label(s: &GifSettings) -> String {
 /// What `dlg` exports from: a single COF layer, the dialog's copy of a
 /// sprite, or the Viewer's COF composite.
 pub fn source_of<'a>(viewer: &'a ViewerState, dlg: &'a GifDialog) -> Option<GifSource<'a>> {
+    if let (Some(n), Some(p)) = (dlg.settings.seqnum, &dlg.seq_plan)
+        && p.seqnum == n
+        && p.playable()
+        && !dlg.from_editor
+    {
+        return Some(GifSource::Seq(p));
+    }
     if let (Some(i), Some(c)) = (dlg.settings.part, viewer.cof())
         && !dlg.from_editor
     {
@@ -340,7 +639,9 @@ pub fn source_of<'a>(viewer: &'a ViewerState, dlg: &'a GifDialog) -> Option<GifS
 
 /// Applies one `key=value` setting (scripts and tests):
 /// `range=3-7` (1-based), `dirs=cur|all|0,2`, `output=per|seq`, `fps=N`,
-/// `loop=on|off`, `scale=N`, `bg=none|RRGGBB`, `part=none|N`.
+/// `loop=on|off`, `scale=N`, `bg=none|RRGGBB`, `part=none|N`,
+/// `seq=none|N` (a skill's seqnum; the range then covers the sequence, so set
+/// `range` in a later command).
 pub fn apply_setting(
     s: &mut GifSettings,
     key: &str,
@@ -387,6 +688,13 @@ pub fn apply_setting(
         }
         "part" => {
             s.part = if value == "none" {
+                None
+            } else {
+                Some(value.parse().map_err(|_| bad())?)
+            }
+        }
+        "seq" => {
+            s.seqnum = if value == "none" {
                 None
             } else {
                 Some(value.parse().map_err(|_| bad())?)
@@ -516,6 +824,34 @@ mod tests {
         assert_eq!(firsts, vec![2, 3, 4, 12, 13, 14, 22, 23, 24]);
         s.dirs = DirChoice::Ticked;
         assert!(build(GifSource::Sprite(&sp), &s, 0, &p).is_err());
+    }
+
+    #[test]
+    fn a_sequence_plays_its_steps_in_order_across_modes() {
+        // Fend with a spear: A1 and A2 interleave.
+        let fend = player_seq::sequence(9).unwrap();
+        let steps = fend.steps("2ht").unwrap();
+        let r = resolve_steps(steps, |m| Some(if m == "a1" { 20 } else { 16 }));
+        assert_eq!(r.missing, Vec::<&str>::new());
+        assert_eq!(r.clamped, 0);
+        assert_eq!(
+            &r.order[..5],
+            &[("a1", 0), ("a1", 1), ("a1", 2), ("a2", 2), ("a1", 6)]
+        );
+        assert_eq!(r.order.len(), 15, "the padding entry is gone");
+
+        // Whirlwind (one mode): frame 3 is played twice.
+        let ww = player_seq::sequence(10).unwrap().steps("hth").unwrap();
+        let r = resolve_steps(ww, |_| Some(10));
+        let frames: Vec<usize> = r.order.iter().map(|&(_, f)| f).collect();
+        assert_eq!(frames, vec![0, 1, 2, 3, 3, 4, 5, 6]);
+        assert!(r.order.iter().all(|&(m, _)| m == "a1"));
+
+        // A missing mode is reported once; a short COF clamps.
+        let r = resolve_steps(steps, |m| (m == "a1").then_some(4));
+        assert_eq!(r.missing, vec!["a2"]);
+        assert_eq!(r.clamped, 7);
+        assert!(r.order.iter().all(|&(m, f)| m == "a1" && f < 4));
     }
 
     #[test]

@@ -1276,8 +1276,9 @@ but not converted or saved.
 #### DT1 tile sets
 
 A `.dt1` opens as a list of tiles: **Tile** picks one by index, or type its
-**orientation**, **main** and **sub** to jump to it. Tile sets are read-only;
-the only way to change one is **Convert to palette...**.
+**orientation**, **main** and **sub** to jump to it. **Open in editor** edits
+the tiles in the sprite editor (every tile is a frame; saving re-encodes only
+the blocks you changed). **Convert to palette...** remaps the whole set.
 
 ### The Converter
 
@@ -1350,9 +1351,24 @@ transparency. Without one, each frame is anchored at its bottom centre.
 
 **Export GIF...** in the Viewer, **Animated GIF...** in the Converter and
 **Export > Animated GIF...** in the Editor open one window. It works on a
-DC6/DCC, or on a COF (an object or monster), which is exported composed with
-all visible layers and blend modes as the Viewer shows it, or as one part
-chosen in **Part**.
+DC6/DCC, or on a COF (an object, monster or character), which is exported
+composed with all visible layers and blend modes as the Viewer shows it, or
+as one part chosen in **Part**.
+
+- **Skill sequence** (character COFs): skills with `anim = SQ` in
+  `skills.txt` (Leap, Leap Attack, Whirlwind, Arctic Blast, Double Swing,
+  Frenzy, ...) have no COF of their own. The game plays frames of the
+  character's attack, cast or special COFs in a fixed order that depends on
+  the weapon class; pick a skill (for example "Leap (seq 13)") to export that
+  order instead of the COF's own. Each step uses the COF of its own mode for
+  the same character, weapon class and armour as the open one, so a
+  sequence can switch between modes (A1/A2) partway. The frame range, the
+  thumbnails and the preview then count steps of the sequence. If a mode's
+  COF is missing for the weapon class, or the skill has no sequence for it,
+  the problem is shown in orange and **Export...** is disabled. A few steps
+  name a frame one past the end of their COF; those show its last frame. The
+  tables come from the 1.10 game code and are the same for every skill that
+  shares a `seqnum`.
 
 - **Frames:** a strip of thumbnails. Click one to set the first frame,
   Shift+click to set the last, or type a range such as `3-7` (1-based).

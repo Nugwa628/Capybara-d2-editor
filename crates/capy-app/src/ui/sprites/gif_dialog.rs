@@ -4,11 +4,13 @@
 use std::hash::{Hash, Hasher};
 
 use bevy_egui::egui::{self, Color32, Id, Pos2, Rect, Sense, Stroke, Ui, Vec2};
+use capy_sprite::UnitKind;
 
 use super::{paint_checker, rgba_texture};
 use crate::sprites::dialog::Purpose;
 use crate::sprites::gif_export::{
     DirChoice, GifDialog, OutputMode, ThumbTex, parse_range, range_label, selected_dirs, source_of,
+    sync_sequence,
 };
 use crate::state::AppState;
 
@@ -18,6 +20,11 @@ pub fn window(ctx: &egui::Context, state: &mut AppState) {
     let Some(mut dlg) = state.sprites.gif.take() else {
         return;
     };
+    {
+        let overlay = state.sprite_overlay();
+        let names: &[d2_assets::GamePath] = state.session.as_ref().map_or(&[], |s| &s.sprites);
+        sync_sequence(&mut dlg, &state.sprites.viewer, overlay.as_deref(), names);
+    }
     let palette = state.sprite_palette();
     let epoch = state.session_epoch;
     let pal_key = state.sprites.palette.key(epoch);
@@ -82,6 +89,8 @@ fn body(
         thumb_dir,
         dlg.settings.part,
         dlg.from_editor,
+        dlg.settings.seqnum,
+        dlg.seq_plan.as_ref().map(|p| p.seqnum),
     )
         .hash(&mut h);
     let key = h.finish();
@@ -130,28 +139,33 @@ fn body(
                     .collect()
             })
             .unwrap_or_default();
-        ui.horizontal(|ui| {
-            ui.label("Part");
-            let text = match dlg.settings.part {
-                None => "Composed (all visible layers, blend modes)".to_owned(),
-                Some(i) => layers
-                    .iter()
-                    .find(|(j, _)| *j == i)
-                    .map_or_else(|| "?".to_owned(), |(_, t)| t.clone()),
-            };
-            egui::ComboBox::from_id_salt("gif_part")
-                .selected_text(text)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut dlg.settings.part,
-                        None,
-                        "Composed (all visible layers, blend modes)",
-                    );
-                    for (i, t) in &layers {
-                        ui.selectable_value(&mut dlg.settings.part, Some(*i), t);
-                    }
-                });
+        ui.add_enabled_ui(dlg.settings.seqnum.is_none(), |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Part");
+                let text = match dlg.settings.part {
+                    None => "Composed (all visible layers, blend modes)".to_owned(),
+                    Some(i) => layers
+                        .iter()
+                        .find(|(j, _)| *j == i)
+                        .map_or_else(|| "?".to_owned(), |(_, t)| t.clone()),
+                };
+                egui::ComboBox::from_id_salt("gif_part")
+                    .selected_text(text)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut dlg.settings.part,
+                            None,
+                            "Composed (all visible layers, blend modes)",
+                        );
+                        for (i, t) in &layers {
+                            ui.selectable_value(&mut dlg.settings.part, Some(*i), t);
+                        }
+                    });
+            });
         });
+        if viewer.cof().is_some_and(|c| c.kind == UnitKind::Character) {
+            sequence_choice(ui, dlg);
+        }
     }
 
     ui.separator();
@@ -323,7 +337,10 @@ fn body(
     ui.horizontal(|ui| {
         let busy = state.sprites.dialogs.is_open();
         if ui
-            .add_enabled(!chosen.is_empty() && !busy, egui::Button::new("Export..."))
+            .add_enabled(
+                !chosen.is_empty() && !busy && dlg.sequence_problem().is_none(),
+                egui::Button::new("Export..."),
+            )
             .clicked()
         {
             dlg.error = None;
@@ -340,6 +357,52 @@ fn body(
             dlg.settings.options().scale
         ));
     });
+}
+
+/// The "Skill sequence" list of a character COF: None, or a skill whose
+/// sequence replaces the COF's own frame order. Problems are shown in orange.
+fn sequence_choice(ui: &mut Ui, dlg: &mut GifDialog) {
+    let choices = dlg.seq_choices.clone().unwrap_or_default();
+    let before = dlg.settings.seqnum;
+    ui.horizontal(|ui| {
+        ui.label("Skill sequence");
+        let text = match before {
+            None => "None (the COF's frame order)".to_owned(),
+            Some(n) => choices
+                .iter()
+                .find(|c| c.seqnum == n)
+                .map_or_else(|| format!("seq {n}"), |c| c.label.clone()),
+        };
+        egui::ComboBox::from_id_salt("gif_skill_seq")
+            .selected_text(text)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut dlg.settings.seqnum,
+                    None,
+                    "None (the COF's frame order)",
+                );
+                for c in &choices {
+                    ui.selectable_value(&mut dlg.settings.seqnum, Some(c.seqnum), &c.label);
+                }
+            })
+            .response
+            .on_hover_text(
+                "Skills with anim SQ have no COF of their own: the game plays these frames of \
+                 the character's attack/cast COFs in a fixed order.",
+            );
+    });
+    if dlg.settings.seqnum != before {
+        ui.ctx().request_repaint();
+    }
+    let orange = Color32::from_rgb(235, 150, 50);
+    if let Some(p) = &dlg.seq_plan {
+        for line in &p.problems {
+            ui.colored_label(orange, line);
+        }
+        for line in &p.notes {
+            ui.weak(line);
+        }
+    }
 }
 
 /// Plays the chosen range at the chosen speed on the chosen background.
