@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [1.2.3] - 2026-10-21
 
 ### Added
 - **Skill sequences in Export GIF.** For a character COF, **Skill sequence**
