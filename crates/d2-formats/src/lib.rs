@@ -17,6 +17,7 @@ pub mod ds1;
 pub mod dt1;
 pub mod excel;
 pub mod palette;
+pub mod player_seq;
 pub mod remap;
 pub mod tables;
 pub mod tbl;

@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+- **Skill sequences in Export GIF.** For a character COF, **Skill sequence**
+  exports the frame order the game uses for skills with `anim = SQ` (Leap,
+  Leap Attack, Whirlwind, Arctic Blast, Double Swing, Frenzy, ...), taking each
+  step's frame from its own mode's COF for the open weapon class and armour.
+  The tables are the 1.10 player sequences (D2MOO's decompilation of
+  D2Common.dll), in `d2_formats::player_seq`. A missing mode COF is reported
+  in orange and disables Export.
+
+### Fixed
+- The user guide said GIF export of a COF works on objects and monsters only
+  (characters work too) and that DT1 tile sets are read-only (they can be
+  edited in the sprite editor since 1.2.2).
+
 ## [1.2.2] - 2026-10-20
 
 ### Added

@@ -756,6 +756,7 @@ fn sprite_step(state: &mut AppState, cmd: &Cmd) -> Option<Step> {
                 crate::sprites::gif_export::apply_setting(&mut d.settings, k, v, frames, dirs)?;
             }
             d.range_text = crate::sprites::gif_export::range_label(&d.settings);
+            state.sync_gif_sequence();
             Ok(())
         })(),
         Cmd::SpriteGifExport(file) => state.gif_export(file).map(|_| ()),

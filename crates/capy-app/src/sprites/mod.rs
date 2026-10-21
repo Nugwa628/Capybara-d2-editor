@@ -809,9 +809,22 @@ impl AppState {
         Ok(())
     }
 
+    /// Loads the chosen skill sequence of the open Export GIF window (the
+    /// window does this every frame; scripts and exports call it directly).
+    pub fn sync_gif_sequence(&mut self) {
+        let Some(mut dlg) = self.sprites.gif.take() else {
+            return;
+        };
+        let overlay = self.sprite_overlay();
+        let names: &[GamePath] = self.session.as_ref().map_or(&[], |s| &s.sprites);
+        gif_export::sync_sequence(&mut dlg, &self.sprites.viewer, overlay.as_deref(), names);
+        self.sprites.gif = Some(dlg);
+    }
+
     /// Encodes what the Export GIF window selects and writes it at `picked`
     /// (several directions become `<name>_dNN.gif` beside it).
     pub fn gif_export(&mut self, picked: &Path) -> Result<String, String> {
+        self.sync_gif_sequence();
         let palette = self.sprite_palette();
         let result = (|| {
             let dlg = self
@@ -819,6 +832,9 @@ impl AppState {
                 .gif
                 .as_ref()
                 .ok_or("open the Export GIF window first")?;
+            if let Some(problem) = dlg.sequence_problem() {
+                return Err(problem);
+            }
             let source = gif_export::source_of(&self.sprites.viewer, dlg)
                 .ok_or("nothing to export: the sprite is gone")?;
             let files = gif_export::build(source, &dlg.settings, dlg.current_dir, &palette)?;
