@@ -19,6 +19,8 @@ credit for that design goes to its author; go check it out.
 
 ## Features
 ![Uploading image.png…]()
+![Uploading image.png…]()
+
 
 - **Map editing.** Textured map view that draws tiles in DS1Edit's order. Box,
   lasso, tile-ID and "select identical" selection, paint, erase, eyedropper,
