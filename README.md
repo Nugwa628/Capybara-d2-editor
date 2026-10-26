@@ -19,6 +19,12 @@ credit for that design goes to its author; go check it out.
 
 ## Features
 
+![The whole program: map list, map view and Tiles browser](docs/images/program.png)
+
+![The Map Editor zoomed in on the Rogue Encampment](docs/images/map-editor.jpg)
+
+![The Sprites editor painting an inventory graphic](docs/images/sprite-editor.png)
+
 - **Map editing.** Textured map view that draws tiles in DS1Edit's order. Box,
   lasso, tile-ID and "select identical" selection, paint, erase, eyedropper,
   and object move/delete. Copy and paste across maps with a conflict preview.
