@@ -18,6 +18,7 @@ credit for that design goes to its author; go check it out.
 - A Diablo II install (classic 1.13c/1.14d, or Median XL). It is only read.
 
 ## Features
+![Uploading image.png…]()
 
 - **Map editing.** Textured map view that draws tiles in DS1Edit's order. Box,
   lasso, tile-ID and "select identical" selection, paint, erase, eyedropper,
