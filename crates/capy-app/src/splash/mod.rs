@@ -517,22 +517,26 @@ mod tests {
     #[test]
     fn real_game_files_when_extracted() {
         // Uses the private extracted corpus when it exists (not in CI).
-        // The nearest testdata\private (agent worktrees sit inside the checkout).
+        // CAPY_PRIVATE_DIR, else the nearest testdata\private (agent
+        // worktrees sit inside the checkout). Game paths are joined per
+        // component (a whole `data\...` string is one name off Windows).
+        let native = |root: &std::path::Path, p: &str| d2_assets::GamePath::new(p).to_native(root);
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let Some(root) = manifest
-            .ancestors()
-            .map(|a| {
-                a.join("testdata")
-                    .join("private")
-                    .join("extracted")
-                    .join("vanilla")
-            })
-            .find(|r| r.join(DOOR_FILE).is_file())
+        let private = std::env::var_os("CAPY_PRIVATE_DIR").map(std::path::PathBuf::from);
+        let Some(root) = private
+            .into_iter()
+            .chain(
+                manifest
+                    .ancestors()
+                    .map(|a| a.join("testdata").join("private")),
+            )
+            .map(|a| a.join("extracted").join("vanilla"))
+            .find(|r| native(r, DOOR_FILE).is_file())
         else {
             eprintln!("skipped: no extracted vanilla files");
             return;
         };
-        let read = |p: &str| std::fs::read(root.join(p)).map_err(|e| format!("{p}: {e}"));
+        let read = |p: &str| std::fs::read(native(&root, p)).map_err(|e| format!("{p}: {e}"));
         let art = build_art(&read).expect("builds from the real files");
         assert_eq!(art.frames.len(), 10);
         // the door opens: frame 9 is lighter in the door than frame 0
@@ -546,7 +550,12 @@ mod tests {
             art.title.height
         );
         // For a look by eye: target\tmp\splash_unit\door-<n>.png at 2x.
-        let out = manifest.join(r"..\..\target\tmp\splash_unit");
+        let out = manifest
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("tmp")
+            .join("splash_unit");
         std::fs::create_dir_all(&out).expect("out dir");
         for (i, f) in art.frames.iter().enumerate() {
             let v = art::compose_view(f, Some(&art.title), 2);

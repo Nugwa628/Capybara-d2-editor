@@ -54,6 +54,15 @@ fn saves(home: &Path) -> PathBuf {
     home.join("capybara").join("saves").join("vanilla")
 }
 
+/// `base` joined with a `\`-separated path one component at a time: the
+/// whole `a\b` string would be a single file name off Windows.
+fn under(base: &Path, rel: impl AsRef<str>) -> PathBuf {
+    rel.as_ref()
+        .split(['\\', '/'])
+        .filter(|c| !c.is_empty())
+        .fold(base.to_path_buf(), |p, c| p.join(c))
+}
+
 fn changed(home: &Path) -> String {
     std::fs::read_to_string(saves(home).join("CHANGED.txt")).unwrap_or_default()
 }
@@ -75,7 +84,7 @@ fn recolouring_a_dt1_lands_in_the_saves_with_a_changed_entry() {
     );
     let (code, stderr) = run_script(home.path(), &script);
     assert_eq!(code, Some(0), "script failed:\n{stderr}");
-    let file = saves(home.path()).join(DT1);
+    let file = under(&saves(home.path()), DT1);
     let bytes = std::fs::read(&file).expect("the DT1 is in the saves");
     let dt1 = d2_formats::dt1::Dt1::parse(&bytes).expect("the saved DT1 parses");
     assert!(!dt1.tiles.is_empty());
@@ -132,7 +141,7 @@ fn a_preset_is_saved_placed_and_undone() {
     );
     let (code, stderr) = run_script(home.path(), &script);
     assert_eq!(code, Some(0), "script failed:\n{stderr}");
-    let dir = saves(home.path()).join("data\\ds1studio\\presets");
+    let dir = under(&saves(home.path()), "data\\ds1studio\\presets");
     let files: Vec<_> = std::fs::read_dir(&dir)
         .expect("the presets folder")
         .flatten()
@@ -190,11 +199,14 @@ fn a_preset_package_exports_imports_and_copies_its_tiles_into_a_dt1() {
         .unwrap_or_else(|| panic!("no copy result:\n{stderr}"));
     eprintln!("{copy}");
     if copy.contains("Copied") {
-        let own = saves(&home_b).join("data\\global\\tiles\\act4\\lava\\entry1_custom.dt1");
+        let own = under(
+            &saves(&home_b),
+            "data\\global\\tiles\\act4\\lava\\entry1_custom.dt1",
+        );
         let dt1 = d2_formats::dt1::Dt1::parse(&std::fs::read(own).unwrap()).unwrap();
         assert!(!dt1.tiles.is_empty());
     }
-    let dir = saves(&home_b).join("data\\ds1studio\\presets");
+    let dir = under(&saves(&home_b), "data\\ds1studio\\presets");
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
     assert!(changed(&home_b).contains("ds1studio"));
 }
@@ -214,7 +226,7 @@ fn collision_flags_are_painted_and_saved() {
     );
     let (code, stderr) = run_script(home.path(), &script);
     assert_eq!(code, Some(0), "script failed:\n{stderr}");
-    let bytes = std::fs::read(saves(home.path()).join(DT1)).expect("saved DT1");
+    let bytes = std::fs::read(under(&saves(home.path()), DT1)).expect("saved DT1");
     let dt1 = d2_formats::dt1::Dt1::parse(&bytes).unwrap();
     assert_eq!(&dt1.tiles[0].subtile_flags[..3], &[5, 5, 5]);
 }
@@ -232,8 +244,11 @@ fn a_table_cell_edit_is_saved() {
          tool assert-saved data\\global\\excel\\lvlprest.txt\n";
     let (code, stderr) = run_script(home.path(), script);
     assert_eq!(code, Some(0), "script failed:\n{stderr}");
-    let saved =
-        std::fs::read(saves(home.path()).join("data\\global\\excel\\lvlprest.txt")).unwrap();
+    let saved = std::fs::read(under(
+        &saves(home.path()),
+        "data\\global\\excel\\lvlprest.txt",
+    ))
+    .unwrap();
     let doc = d2_formats::txt::TxtDoc::parse(&saved);
     let col = doc.column("Pops").expect("Pops column");
     assert_eq!(doc.cell(1, col).as_deref(), Some("7"));
@@ -280,7 +295,7 @@ fn a_map_package_exports_and_imports_into_another_profile_home() {
     );
     assert_eq!(code, Some(0), "import failed:\n{stderr}");
     // The imported map is the exported one, byte for byte.
-    let imported = std::fs::read(saves(&home_b).join(MAP)).unwrap();
+    let imported = std::fs::read(under(&saves(&home_b), MAP)).unwrap();
     let in_zip = pkg
         .files
         .iter()
@@ -309,16 +324,16 @@ fn a_custom_object_writes_dc6_cof_and_objects_txt() {
     );
     let (code, stderr) = run_script(&home, &script);
     assert_eq!(code, Some(0), "script failed:\n{stderr}");
-    let objects = std::fs::read(saves(&home).join("data\\global\\excel\\objects.txt")).unwrap();
+    let objects = std::fs::read(under(&saves(&home), "data\\global\\excel\\objects.txt")).unwrap();
     let doc = d2_formats::txt::TxtDoc::parse(&objects);
     let token = doc.cell(20, doc.column("Token").unwrap()).unwrap();
     assert_eq!(token.len(), 2);
     let t = token.to_lowercase();
-    let base = saves(&home).join(format!("data\\global\\objects\\{t}"));
-    let cof = std::fs::read(base.join(format!("cof\\{t}nuhth.cof"))).expect("the COF");
+    let base = under(&saves(&home), format!("data\\global\\objects\\{t}"));
+    let cof = std::fs::read(under(&base, format!("cof\\{t}nuhth.cof"))).expect("the COF");
     let cof = d2_formats::cof::Cof::parse(&cof).unwrap();
     assert_eq!((cof.directions, cof.frames_per_direction), (1, 2));
-    let dc6 = std::fs::read(base.join(format!("tr\\{t}trlitnuhth.dc6"))).expect("the DC6");
+    let dc6 = std::fs::read(under(&base, format!("tr\\{t}trlitnuhth.dc6"))).expect("the DC6");
     assert_eq!(d2_formats::dc6::Dc6::parse(&dc6).unwrap().frames.len(), 2);
     let log = changed(&home);
     assert!(log.contains(".cof") && log.contains(".dc6") && log.contains("objects.txt"));

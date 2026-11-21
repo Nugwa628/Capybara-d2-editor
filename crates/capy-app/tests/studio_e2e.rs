@@ -16,6 +16,15 @@ use d2_assets::{GamePath, MapCatalog, Profile};
 
 const MAP: &str = "data\\global\\tiles\\act1\\town\\townn1.ds1";
 
+/// `base` joined with a `\`-separated path one component at a time: the
+/// whole `a\b` string would be a single file name off Windows.
+fn under(base: &Path, rel: impl AsRef<str>) -> PathBuf {
+    rel.as_ref()
+        .split(['\\', '/'])
+        .filter(|c| !c.is_empty())
+        .fold(base.to_path_buf(), |p, c| p.join(c))
+}
+
 fn vanilla_dir() -> Option<PathBuf> {
     let dir = std::env::var_os("CAPY_VANILLA_DIR")
         .map(PathBuf::from)
@@ -171,12 +180,14 @@ fn map_editing_tools_and_view_modes_work_end_to_end() {
         "{sw}x{sh} vs {mw}x{mh}"
     );
     assert!(stderr.contains("copy-view: "), "{stderr}");
-    let saved = home
-        .path()
-        .join("capybara\\saves\\vanilla\\data\\global\\tiles\\act1\\town\\capye2e.ds1");
+    let saved = under(
+        home.path(),
+        "capybara\\saves\\vanilla\\data\\global\\tiles\\act1\\town\\capye2e.ds1",
+    );
     assert!(saved.is_file(), "the new map is saved");
     let changed =
-        std::fs::read_to_string(home.path().join("capybara\\saves\\vanilla\\CHANGED.txt")).unwrap();
+        std::fs::read_to_string(under(home.path(), "capybara\\saves\\vanilla\\CHANGED.txt"))
+            .unwrap();
     assert!(
         changed.to_ascii_lowercase().contains("capye2e.ds1"),
         "{changed}"

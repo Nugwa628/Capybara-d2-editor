@@ -60,6 +60,15 @@ fn saves(home: &Path) -> PathBuf {
     home.join("capybara").join("saves").join("vanilla")
 }
 
+/// `base` joined with a `\`-separated path one component at a time: the
+/// whole `a\b` string would be a single file name off Windows.
+fn under(base: &Path, rel: impl AsRef<str>) -> PathBuf {
+    rel.as_ref()
+        .split(['\\', '/'])
+        .filter(|c| !c.is_empty())
+        .fold(base.to_path_buf(), |p, c| p.join(c))
+}
+
 fn changed(home: &Path) -> String {
     std::fs::read_to_string(saves(home).join("CHANGED.txt"))
         .unwrap_or_default()
@@ -142,7 +151,11 @@ fn automap_painting_is_saved_to_automap_txt() {
     );
     let (code, stderr) = run_script(home.path(), &script);
     assert_eq!(code, Some(0), "script failed:\n{stderr}");
-    let bytes = std::fs::read(saves(home.path()).join("data\\global\\excel\\automap.txt")).unwrap();
+    let bytes = std::fs::read(under(
+        &saves(home.path()),
+        "data\\global\\excel\\automap.txt",
+    ))
+    .unwrap();
     let table = capy_mod::automap::AutomapTable::parse(&d2_formats::txt::TxtDoc::parse(&bytes));
     let (main, sub) = (i32::from(cell.main_index()), i32::from(cell.sub_index()));
     let hit = table.rules.iter().any(|r| {
@@ -185,7 +198,11 @@ fn level_light_is_saved_to_levels_txt_and_darkens_the_map() {
     );
     let (code, stderr) = run_script(home.path(), &script);
     assert_eq!(code, Some(0), "script failed:\n{stderr}");
-    let bytes = std::fs::read(saves(home.path()).join("data\\global\\excel\\levels.txt")).unwrap();
+    let bytes = std::fs::read(under(
+        &saves(home.path()),
+        "data\\global\\excel\\levels.txt",
+    ))
+    .unwrap();
     let doc = d2_formats::txt::TxtDoc::parse(&bytes);
     let (id, int) = (doc.column("Id").unwrap(), doc.column("Intensity").unwrap());
     let row = (0..doc.row_count())
@@ -254,7 +271,7 @@ fn walk_painting_works_by_cell_and_by_subtile_with_undo_and_save() {
     let list = changed(home.path());
     assert!(list.contains("townn1_walk.dt1"), "{list}");
     assert!(list.contains("townn1.ds1"), "{list}");
-    let walk = std::fs::read(saves(home.path()).join(MAP.replace(".ds1", "_walk.dt1"))).unwrap();
+    let walk = std::fs::read(under(&saves(home.path()), MAP.replace(".ds1", "_walk.dt1"))).unwrap();
     let dt1 = d2_formats::dt1::Dt1::parse(&walk).unwrap();
     assert!(
         dt1.tiles
@@ -262,7 +279,7 @@ fn walk_painting_works_by_cell_and_by_subtile_with_undo_and_save() {
             .any(|t| t.blocks.is_empty() && t.subtile_flags[12] & 1 != 0),
         "a blocker for the middle sub-tile"
     );
-    let saved = Ds1::parse(&std::fs::read(saves(home.path()).join(MAP)).unwrap()).unwrap();
+    let saved = Ds1::parse(&std::fs::read(under(&saves(home.path()), MAP)).unwrap()).unwrap();
     assert!(
         saved.tileset_refs().any(|r| String::from_utf8_lossy(r)
             .to_ascii_lowercase()
@@ -342,11 +359,11 @@ fn re_roll_takes_floors_from_another_library_of_the_level_type() {
     );
     let (code, stderr) = run_script(home.path(), &script);
     assert_eq!(code, Some(0), "script failed:\n{stderr}");
-    let custom = saves(home.path()).join(MAP.replace(".ds1", "_custom.dt1"));
+    let custom = under(&saves(home.path()), MAP.replace(".ds1", "_custom.dt1"));
     let dt1 = d2_formats::dt1::Dt1::parse(&std::fs::read(&custom).unwrap()).unwrap();
     assert!(dt1.tiles.iter().all(|t| t.orientation == 0));
     assert!(!dt1.tiles.is_empty());
-    let saved = Ds1::parse(&std::fs::read(saves(home.path()).join(MAP)).unwrap()).unwrap();
+    let saved = Ds1::parse(&std::fs::read(under(&saves(home.path()), MAP)).unwrap()).unwrap();
     assert!(
         saved.tileset_refs().any(|r| String::from_utf8_lossy(r)
             .to_ascii_lowercase()
