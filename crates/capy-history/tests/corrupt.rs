@@ -379,6 +379,15 @@ fn corrupt_changed_txt() {
     }
 }
 
+/// Replaces a file's bytes even when it is read-only: gix writes loose
+/// objects with mode 0444 on Unix, which `fs::write` cannot open. Unlinking
+/// needs only a writable folder there; Windows objects are not read-only.
+#[cfg(feature = "milestones")]
+fn overwrite(path: &Path, bytes: &[u8]) {
+    let _ = fs::remove_file(path);
+    fs::write(path, bytes).unwrap();
+}
+
 #[cfg(feature = "milestones")]
 #[test]
 fn corrupt_milestone_repository() {
@@ -414,7 +423,7 @@ fn corrupt_milestone_repository() {
     let n = iters().div_ceil(4);
     for i in 0..n {
         let k = rng.below(files.len());
-        fs::write(&files[k], mutate_bytes(&mut rng, &originals[k])).unwrap();
+        overwrite(&files[k], &mutate_bytes(&mut rng, &originals[k]));
         if let Ok(ms) = Milestones::open_or_init(&saves) {
             let _ = ms.log(10);
             if i % 4 == 0 {
@@ -423,7 +432,7 @@ fn corrupt_milestone_repository() {
         }
         // Restore everything (a commit may have written new objects; those stay).
         for (p, b) in files.iter().zip(&originals) {
-            fs::write(p, b).unwrap();
+            overwrite(p, b);
         }
     }
 }

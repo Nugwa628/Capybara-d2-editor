@@ -129,9 +129,14 @@ fn conflicts_are_kept_or_overwritten_and_base_game_files_are_optional() {
 fn damaged_and_hostile_packages_are_refused_before_any_write() {
     let (spec, _) = sample();
     let zip = export_package(&spec).unwrap();
+    // Flip a byte in the middle of the first entry's data (the manifest). A
+    // fixed fraction of the file length can land on a header field no reader
+    // uses (with the synthetic sample, `len / 3` hit a local header's date).
+    let name_len = usize::from(u16::from_le_bytes([zip[26], zip[27]]));
+    let extra_len = usize::from(u16::from_le_bytes([zip[28], zip[29]]));
+    let data_len = u32::from_le_bytes([zip[18], zip[19], zip[20], zip[21]]) as usize;
     let mut flipped = zip.clone();
-    let n = flipped.len() / 3;
-    flipped[n] ^= 0xFF;
+    flipped[30 + name_len + extra_len + data_len / 2] ^= 0xFF;
     assert!(matches!(
         read_package(&flipped),
         Err(HistoryError::Package(_))
