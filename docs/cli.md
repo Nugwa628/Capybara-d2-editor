@@ -343,6 +343,12 @@ Tools:
 - `tile_template {shape, mask?}`: the picture size for the shape, where its
   pixel (0,0) is in tile space, what part is drawable (floors and roofs: the
   160x79 diamond only), the sub-block count and the default sub-tile flags.
+  For walls, shadows and lower walls it also names where the cell's floor
+  diamond lies in the picture (the picture's anchor is the cell's bottom
+  corner) and, for left and right walls, doors and corner halves, the cell
+  edge shipped walls of that orientation stand on: draw the wall face above
+  that slanted line, since a picture filling the whole box covers the whole
+  cell.
   `mask: "base64"` adds the drawable area as one byte per pixel (1 =
   drawable), `mask: "png"` as a PNG.
 - `create_tile {shape, pixels?, fill?, placement?, transparent_index?,

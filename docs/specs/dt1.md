@@ -441,6 +441,19 @@ drawable area.
 | lower wall | 16-19 | as upper wall, `y` multiples of 32 from -96 to `art - 128` | x 0..160, y `-96..art - 96` | `height = -art`, `width = max x + 32` |
 | corner halves | 4 / 3 | orientation 4 uses x 0..64 (pixels x 0..80), orientation 3 x 64..128 (pixels 80..160) | one picture split at x = 80 | same main/sub (719 of 723 orientation 3 tiles have their orientation 4 half); width 96 / 160 |
 
+Where walls stand (`measure_wall_planes` in the same test file; anchor space, where the cell's
+floor diamond is top (80,-80), right (160,-40), bottom (80,0), left (0,-40) for every wall class,
+section 6): the lowest opaque pixel per column of shipped left walls (1, 5, 8, the half 4) runs along
+the north-west edge, about one sub-tile (8 px) inside it (median -39 at x 4, -50 at x 68); right walls
+(2, 6, 9, the half 3) along the north-east edge the same way. The median lowest pixel of a whole
+upper wall is 29 px above the bottom corner (cell y 51 of 80); only 5% reach it. A picture filling the
+whole template therefore covers the whole cell; `wall_foot` names the edge, and the New tile preview
+and `tile_template` show it. Lower walls (16-19) start at the cell's top edges and hang down (median
+lowest pixel 615 to 650 px below the anchor for 16, 17 and 19, 250 for 18). Rebuilding every corpus tile through the "As is"
+picture path gives the same pixels and the same map placement (`capy_render::TileGeometry`) as the
+shipped tile (`crates/capy-cli/tests/tile_create_placement.rs`; 41,080 tiles, the only placement
+differences are the header-only rebuild misses listed below).
+
 Sub-block formats and order:
 
 - **Floor and roof cells**: a cell whose 256 diamond positions are all opaque is isometric (format

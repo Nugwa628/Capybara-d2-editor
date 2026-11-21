@@ -1020,9 +1020,9 @@ the **New tile...** button next to the **DT1** drop-down of the Tiles panel
 | Floor | 0 | The 160x79 floor diamond of one cell. |
 | Roof | 15 | A diamond like a floor, drawn lifted by **Roof height** (most shipped roofs use 80). |
 | Shadow | 13 | Drawn on the shadow layer, standing on the cell like a wall. |
-| Upper wall | 1-9, 12, 14 | A picture 160 wide standing on the cell: Left wall (1), Right wall (2), North corner right / left part (3 / 4), East, West, South corner (5, 6, 7), Left / Right door (8, 9), Column / pillar (12), Tree / object (14). |
+| Upper wall | 1-9, 12, 14 | A picture 160 wide whose bottom row is the cell's bottom corner: Left wall (1), Right wall (2), North corner right / left part (3 / 4), East, West, South corner (5, 6, 7), Left / Right door (8, 9), Column / pillar (12), Tree / object (14). |
 | North corner (both halves) | 3 + 4 | One picture cut at x = 80 into the left half (4) and the right half (3), both with the same number; a cell holding 3 draws both. |
-| Lower wall | 16-19 | Drawn under the floor (cliffs, pits): Lower wall left, right, north, south. |
+| Lower wall | 16-19 | Drawn under the floor (cliffs, pits), hanging from the cell's top edges: Lower wall left, right, north, south. They show only in cells without a floor. |
 
 The small diamond next to the kind shows where on the cell a wall of that
 orientation stands (orange: the sub-tiles it blocks by default). Walls,
@@ -1031,6 +1031,21 @@ whole 32-pixel blocks, so the height is rounded up and the dialog shows what
 it becomes ("stored as 128 px"). The special marker tiles (orientations 10
 and 11: warps, stairs) cannot be made here, because the game's map flow does
 not take them.
+
+**Where a wall stands.** A wall's picture is a box 160 wide whose bottom
+row is the cell's *bottom* corner; the cell's floor diamond fills the
+bottom 80 rows of it (its top corner 80 rows up, its left and right corners
+40 rows up). Shipped walls do not fill that box: a left wall (1, 5, 8, and
+the left half 4) stands on the cell's north-west edge, a right wall (2, 6,
+9, and the right half 3) on its north-east edge, and its face rises from that
+slanted line, so the picture is a parallelogram. The preview draws that edge
+in orange. Paint the wall face above the orange line, slanted like it;
+whatever you paint below it is drawn over the cell's floor, so a plain
+rectangle becomes a slab that covers the whole cell down to its bottom
+corner. For a 128-pixel left wall the edge runs from (0, 88) to (80, 48) in
+the picture; `tile_template` in `capy mcp` gives these points for any shape.
+
+![A left wall drawn on the wall plane, with the orange edge it stands on](images/new-tile-wall-plane.png)
 
 **Picture.**
 
@@ -1045,7 +1060,8 @@ not take them.
   "protect transparent".
 
 **Preview.** The tile as the map view draws it on its cell: the yellow
-diamond is the cell's floor, blue is where pixels can go (the template), red
+diamond is the cell's floor, orange the edge shipped walls of the
+orientation stand on, blue is where pixels can go (the template), red
 marks picture pixels that fall outside it. Under it: the blocks and pixels
 each tile gets, and warnings when pixels are left out or use palette index
 0 (the transparent colour of DT1 tiles, so they would not show).
@@ -1072,6 +1088,30 @@ libraries, that library.
 - **Open in editor** opens the tiles in the sprite editor (below).
 
 ![Created brick walls standing in the Rogue Encampment](images/new-tile-in-map.jpg)
+
+#### Trying new tiles in the game
+
+Capybara writes loose files to `capybara\saves\<profile>` (the map, the
+own DT1 and the level tables, all listed in `CHANGED.txt`); it never writes
+MPQs. Copy the `data` folder from there into the game folder (a copy of it
+if you want to keep the original clean) and start the game so that it reads
+loose files:
+
+- **Diablo II 1.14d**: `Game.exe -direct -txt`. Capybara changes the `.txt`
+  tables (LvlTypes, LvlPrest); without `-txt` the game keeps its compiled
+  tables and does not load the new DT1.
+- **1.13c mods that ship compiled tables** (Median XL Sigma): start with
+  `-direct` only. Capybara patches the compiled `.bin` tables in place; the
+  `.txt` files written next to them come from the base game's archives, so
+  `-txt` would rebuild the mod's tables from vanilla ones.
+
+Created floors, walls, corner pairs and imported pictures load and draw in
+1.14d and Median XL Sigma exactly where the map view shows them, and walls
+block walking with their default sub-tile flags. A lower wall shows only in
+a cell without a floor, and levels whose LvlPrest row has `FillBlanks` 1
+(the Act 1 town) fill empty floor cells, which hides it. The map view
+draws a lower wall over the floors of the cells above it (the order of
+DS1Edit); the game draws every floor over it.
 
 #### Painting a new tile
 

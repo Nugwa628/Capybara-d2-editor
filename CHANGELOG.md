@@ -80,6 +80,14 @@ All notable changes to this project are documented here.
   path was joined as one file name (`a\b\c.dt1`) instead of per folder.
 - Linux: saved presets never showed up in the preset library, so placing one
   failed with "no preset named ...".
+- **Where a new wall stands.** The New tile dialog and `tile_template`
+  called the bottom of a wall's picture "the wall's base"; it is the cell's
+  bottom corner, 40 to 80 pixels below the edge shipped walls stand on, so a
+  plain rectangle became a slab covering the whole cell. The dialog's preview
+  now draws that edge in orange, its help says where to paint, and
+  `tile_template` gives the cell diamond and the edge in picture pixels. The
+  user guide explains the wall plane and how to try new tiles in the game
+  (1.14d: `-direct -txt`; Median XL: `-direct`).
 
 ## [1.2.3] - 2026-10-21
 
