@@ -417,3 +417,75 @@ Rules the writer follows; each was checked against every readable file of both c
   unsigned) and are `NotRepresentable`; the caller picks a block origin that covers them.
 - The writer does not recompute derived header fields (`width`, `height`, `roof_height`):
   a caller that rebuilds blocks updates them (the reference sets `width = max(x + 32)`).
+
+---
+
+## 14. Conventions for new tiles (measured)
+
+Measured over every readable file of both corpora (619 files, 41,080 tiles; the report is
+`measure_shipped_conventions` in `crates/capy-mod/tests/tiles_create_corpus.rs`, run with
+`CAPY_FULL_CORPUS=1`). `capy_mod::tiles_create` builds new tiles by these rules; rebuilding every
+corpus tile from its own render reproduces 100% of the pixels and 100% of the sub-blocks byte for
+byte (99.56% of whole tiles, 592 of 619 files; the misses are listed below).
+
+Coordinates are block `x`/`y` (anchor space, section 6). "Art height" is the pixel height of the
+drawable area.
+
+| Class | Orientations | Blocks | Drawable area | Header |
+|---|---|---|---|---|
+| floor | 0 | 5x5 grid of 32x15 diamonds at `x = 64 + 16(gx - gy)`, `y = 8(gx + gy)`, `grid_x/grid_y = gx/gy` | the 160x79 diamond at (0,0) | height -128 (all 23,998), width 160, roof 0 |
+| roof | 15 | as floor | as floor | height -128, width 160, `roof_height` 80 most often (763 of 1,735; then 240, 160, 190, 0, 120) |
+| upper wall | 1-9, 12, 14 | 32x32 cells, `x` in 0, 32, ..., 128, `y` multiples of 32 from `height + 32` to -32, grid 0/0 | x 0..160, y `-art..0` | `height = -(art + 32)` = top block y - 32 (every tile with blocks), `width = max x + 32` (every tile) |
+| shadow | 13 | as upper wall | as upper wall | as upper wall; heights -128 (1,140), -96 (607), -64 (103) |
+| special | 10, 11 | as upper wall | as upper wall | as upper wall (width is still `max x + 32`; the editor draws them 160 wide) |
+| lower wall | 16-19 | as upper wall, `y` multiples of 32 from -96 to `art - 128` | x 0..160, y `-96..art - 96` | `height = -art`, `width = max x + 32` |
+| corner halves | 4 / 3 | orientation 4 uses x 0..64 (pixels x 0..80), orientation 3 x 64..128 (pixels 80..160) | one picture split at x = 80 | same main/sub (719 of 723 orientation 3 tiles have their orientation 4 half); width 96 / 160 |
+
+Sub-block formats and order:
+
+- **Floor and roof cells**: a cell whose 256 diamond positions are all opaque is isometric (format
+  1; 556,423 blocks, none has a 0 byte); a partly covered cell is RLE `0x2005` with exactly 15
+  terminated rows (47,494 blocks, never a pixel outside the cell's diamond); an empty cell has no
+  block. Order: `gy` 4 down to 0, within it `gx` 4 down to 0 (the reverse of row-major).
+- **Wall, shadow and special cells**: RLE `0x1001`, always 32 terminated rows (252,336 blocks),
+  grid 0/0, empty cells have no block (no shipped wall block is empty). Order: upper walls top row
+  first, lower walls bottom row first; within a row right to left (x 128 down to 0).
+- Only formats 1, `0x1001` and `0x2005` occur.
+
+Other header fields:
+
+| Field | Convention |
+|---|---|
+| direction | 0: 3, 1: 1, 2: 2, 3: 3, 4: 3, 5: 1, 6: 2, 7: 4, 8: 1, 9: 2, 10: 1, 11: 2, 12-14: 3, 15: 5, 16-19: orientation - 10. Every tile but 42 floors (direction 0, in `whimsyfence.dt1`). |
+| rarity | 0 is the most common for every orientation (floors 17,967 of 23,998; 1 is next) |
+| sound, animated | 0 most common; animated floors use 1 or 4 (783) |
+| +36 | `ff 00 ff 00` most common (11,709 floors, most walls); varies |
+
+Sub-tile flags (`y * 5 + x`, row y = 0 first), most common pattern per orientation:
+
+| Orientation | Most common | Default for new tiles |
+|---|---|---|
+| 0 floor | none (13,221 of 23,998), then 0x01 everywhere (3,012) | none |
+| 1, 5 | 0x07 on column x = 0 (962 of 3,601 for 1) | 0x07 on column 0 |
+| 2, 6 | 0x07 on row y = 0 (952 of 3,707 for 2) | 0x07 on row 0 |
+| 3, 4 | 0x07 on row 0 and column 0 (212 / 220) | the same |
+| 7 | none (99), 0x01 at (0,0) (82), 0x07 at (0,0) (75) | 0x07 at (0,0) |
+| 8 | 0x07 at (0,0) and (0,4) (34 of 224) | the same |
+| 9 | 0x07 at (0,0) and (4,0) (41 of 163) | the same |
+| 10 | none (225, the 13-block marker diamonds), 0x07 on column 0 (170) | 0x07 on column 0 |
+| 11 | 0x07 on row 0 (198 of 314) | 0x07 on row 0 |
+| 12, 14 | none, then scattered patterns | none |
+| 13, 15, 16-19 | none (1,723 of 1,874; 1,727 of 1,735; nearly all lower walls) | none |
+
+0x07 = block walking + sight barrier + jump/flight barrier (`tiles_flags`).
+
+Rebuild misses (182 tiles; pixels and blocks are identical in every case, only header fields
+differ):
+
+- 42 floors in `mxl/zone/whimsy/whimsyfence.dt1` store direction 0 instead of 3.
+- 91 lower walls (`act2/arcane/sanctuary.dt1`, `inv_wall.dt1`, `worldstone.dt1`, `rockcliff.dt1`,
+  `cliff.dt1`) have blocks reaching 32 to 128 pixels below their declared height (396 lower walls
+  follow `height = -(art)` exactly). The inferred shape grows to hold every block, so the rebuilt
+  height is larger.
+- 49 wall and shadow tiles without blocks store height 0 and width 0; a rebuilt empty wall keeps
+  the 32-pixel minimum art height (stored -64).

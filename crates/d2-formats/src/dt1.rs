@@ -113,7 +113,8 @@ pub struct Tile {
     pub roof_height: i16,
     pub sound: u8,
     pub animated: u8,
-    /// The stored height, zero or negative (-80 for a floor, more for walls).
+    /// The stored height, zero or negative (-128 for every shipped floor and
+    /// roof, which the game draws 80 high; see `docs/specs/dt1.md` 14 for walls).
     pub height: i32,
     pub width: i32,
     pub orientation: i32,
