@@ -108,6 +108,10 @@ pub fn detect_kind(dir: &Path) -> InstallKind {
 
 /// Cleans a registry `InstallPath` string: trims NULs, whitespace, quotes
 /// and a trailing backslash. Empty or relative values are no path.
+///
+/// Registry values are Windows paths on every host (Wine's registry too),
+/// so this is plain string logic: the result is a Windows path, which
+/// [`wine_native_path`] maps into a Wine prefix off Windows.
 pub fn install_path_from_value(value: &str) -> Option<PathBuf> {
     let t = value
         .trim_matches(|c: char| c == '\0' || c.is_whitespace() || c == '"')
@@ -121,8 +125,15 @@ pub fn install_path_from_value(value: &str) -> Option<PathBuf> {
     } else {
         t.to_owned()
     };
-    let path = PathBuf::from(t);
-    path.is_absolute().then_some(path)
+    is_windows_absolute(&t).then(|| PathBuf::from(t))
+}
+
+/// `X:\...` / `X:/...` or a UNC path (`\\server\share`).
+fn is_windows_absolute(s: &str) -> bool {
+    let b = s.as_bytes();
+    let drive =
+        b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/');
+    drive || s.starts_with("\\\\") || s.starts_with("//")
 }
 
 /// One place an install may be.
@@ -161,10 +172,184 @@ pub fn registry_install_paths() -> Vec<Candidate> {
     out
 }
 
-/// The `InstallPath` values of the Diablo II registry keys: none off Windows.
+/// The `InstallPath` values of the Diablo II registry keys in the Wine
+/// prefixes found under the home folder ([`wine_prefixes`]), mapped to
+/// native paths ([`wine_install_paths`]). Only the `.reg` text files are
+/// read; nothing is written.
 #[cfg(not(windows))]
 pub fn registry_install_paths() -> Vec<Candidate> {
-    Vec::new()
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Vec::new();
+    };
+    let env_prefix = std::env::var_os("WINEPREFIX").map(PathBuf::from);
+    wine_install_paths(&wine_prefixes(&home, env_prefix.as_deref()))
+}
+
+/// Wine prefixes worth a look, existing ones only (they hold `system.reg`):
+/// `$WINEPREFIX`, `~/.wine`, every folder in `~/Games` (Lutris' default),
+/// every Bottles bottle and the Median XL launcher's own prefix.
+pub fn wine_prefixes(home: &Path, env_prefix: Option<&Path>) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut add = |p: PathBuf| {
+        if p.join("system.reg").is_file() && !out.contains(&p) {
+            out.push(p);
+        }
+    };
+    if let Some(p) = env_prefix.filter(|p| !p.as_os_str().is_empty()) {
+        add(p.to_path_buf());
+    }
+    add(home.join(".wine"));
+    for parent in [
+        home.join("Games"),
+        home.join(".local/share/bottles/bottles"),
+    ] {
+        let Ok(rd) = std::fs::read_dir(&parent) else {
+            continue;
+        };
+        let mut dirs: Vec<PathBuf> = rd.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+        dirs.sort();
+        dirs.into_iter().for_each(&mut add);
+    }
+    add(home.join(".d2launcher").join("wineprefix"));
+    out
+}
+
+/// The registry keys as Wine stores them: `system.reg` holds
+/// `HKLM\Software` (the 64-bit prefix's 32-bit view first, then a 32-bit
+/// prefix's own key), `user.reg` holds `HKCU\Software`.
+const WINE_KEYS: [(&str, &str); 3] = [
+    (
+        "system.reg",
+        r"Software\Wow6432Node\Blizzard Entertainment\Diablo II",
+    ),
+    ("system.reg", r"Software\Blizzard Entertainment\Diablo II"),
+    ("user.reg", r"Software\Blizzard Entertainment\Diablo II"),
+];
+
+/// Diablo II's `InstallPath` in each prefix, mapped to a native folder.
+/// Duplicates ([`same_path`]) are dropped.
+pub fn wine_install_paths(prefixes: &[PathBuf]) -> Vec<Candidate> {
+    let mut out: Vec<Candidate> = Vec::new();
+    for prefix in prefixes {
+        for (file, key) in WINE_KEYS {
+            let Ok(text) = std::fs::read_to_string(prefix.join(file)) else {
+                continue;
+            };
+            let Some(path) = wine_reg_value(&text, key, REGISTRY_VALUE)
+                .and_then(|v| install_path_from_value(&v))
+                .and_then(|w| wine_native_path(prefix, &w.to_string_lossy()))
+            else {
+                continue;
+            };
+            if !out.iter().any(|c| same_path(&c.path, &path)) {
+                out.push(Candidate {
+                    path,
+                    source: format!("registry (Wine prefix {})", prefix.display()),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// A string value from the text of a Wine `.reg` file: the `[key]` section
+/// (case-insensitive, `\\`-escaped as Wine writes it) and its `"name"="value"`
+/// line, unescaped. `None` when the key or value is missing or not a string.
+pub fn wine_reg_value(text: &str, key: &str, name: &str) -> Option<String> {
+    let header = key.replace('\\', "\\\\");
+    let mut in_key = false;
+    for line in text.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(rest) = line.strip_prefix('[') {
+            in_key = rest
+                .split_once(']')
+                .is_some_and(|(k, _)| k.eq_ignore_ascii_case(&header));
+            continue;
+        }
+        if !in_key {
+            continue;
+        }
+        let Some((n, v)) = line.split_once('=') else {
+            continue;
+        };
+        let n = n.trim();
+        if !(n.len() >= 2 && n.starts_with('"') && n.ends_with('"'))
+            || !n[1..n.len() - 1].eq_ignore_ascii_case(name)
+        {
+            continue;
+        }
+        let v = v.trim().strip_prefix('"')?.strip_suffix('"')?;
+        let mut out = String::with_capacity(v.len());
+        let mut chars = v.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                out.extend(chars.next());
+            } else {
+                out.push(c);
+            }
+        }
+        return Some(out);
+    }
+    None
+}
+
+/// The native path of a Windows path inside a Wine prefix: the drive comes
+/// from `dosdevices/<x>:` (`c:` falls back to `drive_c`), and each folder
+/// name is matched ignoring case as Wine does. Names that do not exist are
+/// kept as written. `None` for UNC paths and unmapped drives.
+pub fn wine_native_path(prefix: &Path, windows_path: &str) -> Option<PathBuf> {
+    let b = windows_path.as_bytes();
+    if b.len() < 2 || !b[0].is_ascii_alphabetic() || b[1] != b':' {
+        return None;
+    }
+    let drive = char::from(b[0].to_ascii_lowercase());
+    let device = prefix.join("dosdevices").join(format!("{drive}:"));
+    // `dosdevices/z:` is a link to `/`, `c:` to `../drive_c`: start from the
+    // real folder.
+    let mut out = if device.exists() {
+        std::fs::canonicalize(&device).unwrap_or(device)
+    } else if drive == 'c' && prefix.join("drive_c").is_dir() {
+        prefix.join("drive_c")
+    } else {
+        return None;
+    };
+    for part in windows_path[2..]
+        .split(['\\', '/'])
+        .filter(|p| !p.is_empty())
+    {
+        out = crate::path::find_entry_ci(&out, part).unwrap_or_else(|| out.join(part));
+    }
+    Some(out)
+}
+
+/// The first-run default folders for this host: [`DEFAULT_VANILLA_INSTALL`]
+/// and [`DEFAULT_MXL_INSTALL`] on Windows; elsewhere the vanilla folder of
+/// the default Wine prefix (`~/.wine`) and the Median XL launcher's game
+/// folder (`~/.d2launcher/bin/diablo2`).
+#[cfg(windows)]
+pub fn default_install_dirs() -> (PathBuf, PathBuf) {
+    (
+        PathBuf::from(DEFAULT_VANILLA_INSTALL),
+        PathBuf::from(DEFAULT_MXL_INSTALL),
+    )
+}
+
+/// The first-run default folders for this host: [`DEFAULT_VANILLA_INSTALL`]
+/// and [`DEFAULT_MXL_INSTALL`] on Windows; elsewhere the vanilla folder of
+/// the default Wine prefix (`~/.wine`) and the Median XL launcher's game
+/// folder (`~/.d2launcher/bin/diablo2`).
+#[cfg(not(windows))]
+pub fn default_install_dirs() -> (PathBuf, PathBuf) {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    (
+        home.join(".wine")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Diablo II"),
+        home.join(".d2launcher").join("bin").join("diablo2"),
+    )
 }
 
 /// Case-insensitive path equality, ignoring a trailing separator and the
@@ -210,12 +395,12 @@ pub struct InstallSearch {
 }
 
 impl InstallSearch {
-    /// [`DEFAULT_VANILLA_INSTALL`], [`DEFAULT_MXL_INSTALL`] and
-    /// [`registry_install_paths`] (read-only).
+    /// [`default_install_dirs`] and [`registry_install_paths`] (read-only).
     pub fn system() -> InstallSearch {
+        let (default_vanilla, default_mxl) = default_install_dirs();
         InstallSearch {
-            default_vanilla: PathBuf::from(DEFAULT_VANILLA_INSTALL),
-            default_mxl: PathBuf::from(DEFAULT_MXL_INSTALL),
+            default_vanilla,
+            default_mxl,
             registry: registry_install_paths(),
         }
     }
@@ -511,11 +696,69 @@ mod tests {
         assert_eq!(install_path_from_value(""), None);
         assert_eq!(install_path_from_value("\0"), None);
         assert_eq!(install_path_from_value("relative\\dir"), None);
-        #[cfg(windows)]
-        {
-            assert_eq!(install_path_from_value("E:\\"), Some(PathBuf::from("E:\\")));
-            assert_eq!(install_path_from_value("E:"), Some(PathBuf::from("E:\\")));
-        }
+        assert_eq!(install_path_from_value("\\dir"), None, "no drive");
+        assert_eq!(install_path_from_value("E:\\"), Some(PathBuf::from("E:\\")));
+        assert_eq!(install_path_from_value("E:"), Some(PathBuf::from("E:\\")));
+        assert_eq!(
+            install_path_from_value("\\\\nas\\games\\D2\\"),
+            Some(PathBuf::from(r"\\nas\games\D2"))
+        );
+    }
+
+    /// A Lutris-style prefix: the key in `system.reg`, `C:` and `Z:` drives.
+    #[test]
+    fn wine_registry_values_map_into_the_prefix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path();
+        let prefix = home.join("Games").join("diablo-ii");
+        let install = prefix
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Diablo II");
+        mkdir(&install);
+        mkdir(&prefix.join("dosdevices"));
+        std::fs::write(
+            prefix.join("system.reg"),
+            "WINE REGISTRY Version 2\r\n\r\n\
+             [Software\\\\Wow6432Node\\\\Blizzard Entertainment\\\\Diablo II] 1757488818\r\n\
+             #time=1dc22235c93016e\r\n\
+             \"GamePath\"=\"C:\\\\Program Files (x86)\\\\Diablo II\\\\Diablo II.exe\"\r\n\
+             \"InstallPath\"=\"C:\\\\program files (x86)\\\\Diablo II\\\\\"\r\n\
+             \r\n[Software\\\\Other] 1\r\n\"InstallPath\"=\"C:\\\\nope\"\r\n",
+        )
+        .expect("write");
+        let other = home.join("not-a-prefix");
+        mkdir(&other);
+        assert_eq!(wine_prefixes(home, Some(&other)), vec![prefix.clone()]);
+        let found = wine_install_paths(&wine_prefixes(home, None));
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            same_path(
+                &found[0].path,
+                &std::fs::canonicalize(&install).expect("real")
+            ),
+            "{found:?}"
+        );
+        assert!(found[0].source.starts_with("registry (Wine"), "{found:?}");
+
+        // Unmapped drives and UNC paths have no native folder.
+        assert_eq!(wine_native_path(&prefix, r"D:\Games"), None);
+        assert_eq!(wine_native_path(&prefix, r"\\nas\d2"), None);
+    }
+
+    #[test]
+    fn wine_reg_values_are_unescaped() {
+        let text = "[Software\\\\Blizzard Entertainment\\\\Diablo II] 1\n\
+                    \"installpath\"=\"Z:\\\\home\\\\me\\\\d2 \\\"x\\\"\\\\\"\n\
+                    \"Resolution\"=dword:00000000\n";
+        let key = r"software\blizzard entertainment\diablo ii";
+        assert_eq!(
+            wine_reg_value(text, key, "InstallPath").as_deref(),
+            Some(r#"Z:\home\me\d2 "x"\"#)
+        );
+        assert_eq!(wine_reg_value(text, key, "Resolution"), None);
+        assert_eq!(wine_reg_value(text, key, "Missing"), None);
+        assert_eq!(wine_reg_value(text, r"Software\Other", "InstallPath"), None);
     }
 
     #[test]

@@ -96,11 +96,11 @@ impl AppState {
     /// default locations, existing folders only, without duplicates.
     pub fn install_suggestions(&mut self) -> Vec<Candidate> {
         let mut out = self.registry_candidates();
-        for (path, what) in [
-            (crate::config::VANILLA_INSTALL, "default location"),
-            (crate::config::MXL_INSTALL, "default Median XL location"),
+        let (vanilla, mxl) = installs::default_install_dirs();
+        for (p, what) in [
+            (vanilla, "default location"),
+            (mxl, "default Median XL location"),
         ] {
-            let p = PathBuf::from(path);
             if p.is_dir() && !out.iter().any(|c| installs::same_path(&c.path, &p)) {
                 out.push(Candidate {
                     path: p,
