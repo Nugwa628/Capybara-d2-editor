@@ -162,16 +162,13 @@ mod tests {
 
     #[test]
     fn default_root_is_next_to_exe() {
-        let exe = Path::new("C:\\apps\\capy\\CapybarasD2Editor.exe");
-        assert_eq!(
-            root_from(None, exe),
-            Path::new("C:\\apps\\capy").join("capybara")
-        );
+        // Built with `join` so the separator is the host's: a literal
+        // `C:\\apps\\...` has no parent on Linux.
+        let dir = Path::new("apps").join("capy");
+        let exe = dir.join("CapybarasD2Editor.exe");
+        assert_eq!(root_from(None, &exe), dir.join("capybara"));
         // An empty override counts as unset.
-        assert_eq!(
-            root_from(Some(OsString::new()), exe),
-            Path::new("C:\\apps\\capy").join("capybara")
-        );
+        assert_eq!(root_from(Some(OsString::new()), &exe), dir.join("capybara"));
     }
 
     #[test]

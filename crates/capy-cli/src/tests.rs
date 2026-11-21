@@ -377,16 +377,18 @@ fn render_with_an_unopenable_profile_exits_1() {
 
 #[test]
 fn root_rule_matches_the_app() {
-    let exe = std::path::Path::new("C:\\apps\\capy\\x.exe");
+    // Built with `join` so the separator is the host's.
+    let dir = std::path::Path::new("apps").join("capy");
+    let exe = dir.join("x.exe");
     assert_eq!(
-        root_from(Some("D:\\home".into()), exe),
+        root_from(Some("D:\\home".into()), &exe),
         PathBuf::from("D:\\home")
     );
-    assert_eq!(root_from(Some(OsString::new()), exe), root_from(None, exe));
     assert_eq!(
-        root_from(None, exe),
-        PathBuf::from("C:\\apps\\capy").join("capybara")
+        root_from(Some(OsString::new()), &exe),
+        root_from(None, &exe)
     );
+    assert_eq!(root_from(None, &exe), dir.join("capybara"));
 }
 
 #[test]
