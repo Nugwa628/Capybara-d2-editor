@@ -26,10 +26,16 @@ fn root(kind: &str) -> Option<PathBuf> {
     }
 }
 
+/// A file of the extracted corpus by game path, ignoring case as the game
+/// does: table cells name `Act1/Town/TownN1.ds1`, the extracted files are
+/// lowercase, and Linux file systems are case-sensitive.
+fn read_game_file(root: &Path, game_path: &str) -> Option<Vec<u8>> {
+    let native = d2_assets::GamePath::new(game_path).find_native(root)?;
+    std::fs::read(native).ok()
+}
+
 fn read_table(root: &Path, name: &str) -> Option<TxtDoc> {
-    std::fs::read(root.join("data/global/excel").join(name))
-        .ok()
-        .map(|b| TxtDoc::parse(&b))
+    read_game_file(root, &format!("data/global/excel/{name}")).map(|b| TxtDoc::parse(&b))
 }
 
 fn tables_of(root: &Path) -> Tables {
@@ -53,7 +59,7 @@ impl Dt1Cache {
         self.cache
             .entry(key.clone())
             .or_insert_with(|| {
-                let bytes = std::fs::read(root.join("data/global/tiles").join(&key)).ok()?;
+                let bytes = read_game_file(&root, &format!("data/global/tiles/{key}"))?;
                 let dt1 = Dt1::parse(&bytes).ok()?;
                 Some(dt1.tiles.iter().filter_map(|t| t.key()).collect())
             })
@@ -94,7 +100,7 @@ fn cases(root: &Path, tables: &Tables, limit: usize) -> Vec<Case> {
             continue;
         }
         let rel = file1.replace('\\', "/");
-        let Ok(bytes) = std::fs::read(root.join("data/global/tiles").join(&rel)) else {
+        let Some(bytes) = read_game_file(root, &format!("data/global/tiles/{rel}")) else {
             continue;
         };
         let Ok(ds1) = Ds1::parse(&bytes) else {

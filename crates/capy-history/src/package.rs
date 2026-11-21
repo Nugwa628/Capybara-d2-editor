@@ -279,11 +279,12 @@ pub fn import_package(
 fn find_loose(folder: &Path, want: &GamePath) -> Option<std::path::PathBuf> {
     // 1. the game path below the folder (`<folder>\data\global\tiles\...`),
     // 2. the path without `data\`, 3. the file name anywhere below the folder.
+    // Names match ignoring case, as in the game.
     let rel = want.as_str();
     let direct = [Some(rel), rel.strip_prefix("data\\")]
         .into_iter()
         .flatten()
-        .map(|r| folder.join(r.replace('\\', std::path::MAIN_SEPARATOR_STR)))
+        .filter_map(|r| GamePath::new(r).find_native(folder))
         .find(|p| p.is_file());
     if direct.is_some() {
         return direct;

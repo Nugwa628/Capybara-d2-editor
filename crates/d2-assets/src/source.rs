@@ -131,12 +131,17 @@ impl FolderSource {
     }
 
     /// Native path for `path`, refusing anything that could leave the root.
+    /// Names are matched ignoring case, as the game does on Windows
+    /// ([`GamePath::find_native`]); a missing file gives its lowercase path.
     fn native(&self, path: &GamePath) -> Option<PathBuf> {
         let escapes = path
             .as_str()
             .split('\\')
             .any(|part| part == "." || part == ".." || part.contains(':'));
-        (!escapes && !path.as_str().is_empty()).then(|| path.to_native(&self.root))
+        (!escapes && !path.as_str().is_empty()).then(|| {
+            path.find_native(&self.root)
+                .unwrap_or_else(|| path.to_native(&self.root))
+        })
     }
 
     /// Every file under the root as `(game path, size, mtime)`.
@@ -305,5 +310,31 @@ mod tests {
         let fp = src.fingerprint().expect("fp");
         assert_eq!((fp.size, fp.entries), (5, 1));
         assert!(fp.modified_unix_ms > 0);
+    }
+
+    /// A mod folder made on Windows keeps its mixed-case names; on a
+    /// case-sensitive file system every listed file must still be readable.
+    #[test]
+    fn folder_finds_mixed_case_names() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let excel = dir.path().join("Data").join("Global").join("Excel");
+        fs::create_dir_all(&excel).expect("mkdir");
+        fs::write(excel.join("LvlPrest.txt"), b"rows").expect("write");
+        let src = FolderSource::new(dir.path(), "mod");
+        let listed = src.list().expect("list");
+        assert_eq!(
+            listed,
+            vec![GamePath::new("data\\global\\excel\\lvlprest.txt")]
+        );
+        for p in &listed {
+            assert!(src.contains(p));
+            assert_eq!(src.read(p).expect("read"), Some(b"rows".to_vec()));
+        }
+        assert!(!src.contains(&GamePath::new("data\\global\\excel\\levels.txt")));
+        assert_eq!(
+            src.read(&GamePath::new("data\\global\\excel"))
+                .expect("dir"),
+            None
+        );
     }
 }

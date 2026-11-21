@@ -110,6 +110,22 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
         .is_some_and(|rest| rest.iter().all(|&c| c == '*'))
 }
 
+/// `path`, or the file in its folder whose name differs only in ASCII case
+/// (`D2DATA.MPQ` for `d2data.mpq`): Windows ignores case, and Linux copies of
+/// an install keep whatever case the installer used. The exact name wins, so
+/// a folder holding both `patch_d2.mpq` and `Patch_D2.mpq` (Median XL next to
+/// vanilla's patch) opens the one the profile names.
+fn archive_path(path: &Path) -> PathBuf {
+    if path.exists() {
+        return path.to_path_buf();
+    }
+    let found = path
+        .parent()
+        .zip(path.file_name().and_then(|n| n.to_str()))
+        .and_then(|(dir, name)| crate::path::find_entry_ci(dir, name));
+    found.unwrap_or_else(|| path.to_path_buf())
+}
+
 impl Profile {
     pub fn from_toml(text: &str) -> Result<Profile> {
         let profile: Profile = toml::from_str(text).map_err(|e| profile_err("?", e.message()))?;
@@ -195,10 +211,11 @@ impl Profile {
                     path.display().to_string(),
                 ))),
                 LayerSpec::Mpq { path, optional } => {
+                    let path = archive_path(path);
                     if *optional && !path.exists() {
                         continue;
                     }
-                    layers.push(Box::new(MpqSource::open(path)?));
+                    layers.push(Box::new(MpqSource::open(&path)?));
                 }
                 LayerSpec::MpqGlob { dir, pattern } => {
                     for path in self.glob(dir, pattern)? {
@@ -371,6 +388,19 @@ pattern = "x-*.mpq"
         assert!(Profile::from_toml(bad_id).is_err());
         let bad_ver = "id = \"a\"\nname = \"x\"\ngame_version = \"2.0\"\nlayer = []\n";
         assert!(Profile::from_toml(bad_ver).is_err());
+    }
+
+    /// Case-sensitive file systems only: on Windows both spellings are one file.
+    #[cfg(not(windows))]
+    #[test]
+    fn archive_names_ignore_case_but_prefer_the_exact_one() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let d = tmp.path();
+        std::fs::write(d.join("D2DATA.MPQ"), b"x").expect("write");
+        assert_eq!(archive_path(&d.join("d2data.mpq")), d.join("D2DATA.MPQ"));
+        assert_eq!(archive_path(&d.join("gone.mpq")), d.join("gone.mpq"));
+        std::fs::write(d.join("d2data.mpq"), b"y").expect("write");
+        assert_eq!(archive_path(&d.join("d2data.mpq")), d.join("d2data.mpq"));
     }
 
     #[test]

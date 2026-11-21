@@ -83,6 +83,44 @@ impl GamePath {
         }
         out
     }
+
+    /// The existing file or folder for this path under `root`, matching each
+    /// component ASCII-case-insensitively as the game does on Windows, so a
+    /// loose `Data/Global/Excel/LvlPrest.txt` is found on a case-sensitive
+    /// file system too. The exact (lowercase) path is tried first; an exact
+    /// name also wins over other spellings in the same folder, and among those
+    /// the first in byte order is taken. `None` when nothing matches.
+    pub fn find_native(&self, root: &Path) -> Option<PathBuf> {
+        let exact = self.to_native(root);
+        if exact.symlink_metadata().is_ok() {
+            return Some(exact);
+        }
+        // Windows file systems already ignore case: a miss is a miss.
+        if cfg!(windows) {
+            return None;
+        }
+        let mut out = root.to_path_buf();
+        for part in self.0.split('\\').filter(|p| !p.is_empty()) {
+            out = find_entry_ci(&out, part)?;
+        }
+        Some(out)
+    }
+}
+
+/// `dir/name` when it exists, else the entry of `dir` whose name equals
+/// `name` ignoring ASCII case (the first in byte order).
+pub fn find_entry_ci(dir: &Path, name: &str) -> Option<PathBuf> {
+    let exact = dir.join(name);
+    if exact.symlink_metadata().is_ok() {
+        return Some(exact);
+    }
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name())
+        .filter(|n| n.to_str().is_some_and(|n| n.eq_ignore_ascii_case(name)))
+        .min()
+        .map(|n| dir.join(n))
 }
 
 impl fmt::Display for GamePath {
@@ -148,6 +186,55 @@ mod tests {
                 .join("global")
                 .join("excel")
                 .join("levels.bin")
+        );
+    }
+
+    /// The found spelling is only observable on a case-sensitive file system.
+    #[cfg(not(windows))]
+    #[test]
+    fn find_native_ignores_case_like_the_game() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("Data").join("Global").join("Excel");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("LvlPrest.txt"), b"x").expect("write");
+        let p = GamePath::new("data\\global\\excel\\lvlprest.txt");
+        assert_eq!(p.find_native(tmp.path()), Some(dir.join("LvlPrest.txt")));
+        assert_eq!(
+            GamePath::new("data\\global").find_native(tmp.path()),
+            Some(tmp.path().join("Data").join("Global"))
+        );
+        assert_eq!(
+            GamePath::new("data\\nope.txt").find_native(tmp.path()),
+            None
+        );
+        assert_eq!(
+            find_entry_ci(tmp.path(), "DATA"),
+            Some(tmp.path().join("Data"))
+        );
+        assert_eq!(find_entry_ci(&tmp.path().join("missing"), "x"), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn find_native_prefers_the_exact_spelling() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        for n in ["Patch_D2.mpq", "patch_d2.mpq", "PATCH_D2.MPQ"] {
+            std::fs::write(tmp.path().join(n), n).expect("write");
+        }
+        let p = GamePath::new("patch_d2.mpq");
+        assert_eq!(
+            p.find_native(tmp.path()),
+            Some(tmp.path().join("patch_d2.mpq"))
+        );
+        assert_eq!(
+            find_entry_ci(tmp.path(), "Patch_D2.mpq"),
+            Some(tmp.path().join("Patch_D2.mpq"))
+        );
+        std::fs::remove_file(tmp.path().join("patch_d2.mpq")).expect("rm");
+        assert_eq!(
+            p.find_native(tmp.path()),
+            Some(tmp.path().join("PATCH_D2.MPQ")),
+            "the first in byte order"
         );
     }
 }
