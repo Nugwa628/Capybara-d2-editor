@@ -327,3 +327,77 @@ fn rebuild_oracle() {
     assert!(pct(all.blocks_same, all.tiles) >= 99.9, "blocks floor");
     assert!(pct(all.tile_same, all.tiles) >= 99.0, "tiles floor");
 }
+
+/// Where shipped walls stand in anchor space, per orientation: for columns
+/// x = 4, 20, ..., 156 the median of the lowest and of the highest opaque
+/// row (tiles with an opaque pixel in that column), so a template can be
+/// checked against them. Report only (`CAPY_FULL_CORPUS=1` for every file).
+#[test]
+fn measure_wall_planes() {
+    let files = dt1s();
+    if files.is_empty() {
+        println!("skipped: corpus missing");
+        return;
+    }
+    let cols: Vec<i32> = (0..10).map(|i| 4 + 16 * i).collect();
+    let mut low: BTreeMap<i32, Vec<Vec<i32>>> = BTreeMap::new();
+    let mut high: BTreeMap<i32, Vec<Vec<i32>>> = BTreeMap::new();
+    let mut count: BTreeMap<i32, usize> = BTreeMap::new();
+    for (_, _, dt1) in &files {
+        for t in &dt1.tiles {
+            if t.orientation == 0 || t.orientation == 15 || t.blocks.is_empty() {
+                continue;
+            }
+            let Ok(img) = t.render() else { continue };
+            *count.entry(t.orientation).or_default() += 1;
+            let lo = low
+                .entry(t.orientation)
+                .or_insert_with(|| vec![Vec::new(); cols.len()]);
+            let hi = high
+                .entry(t.orientation)
+                .or_insert_with(|| vec![Vec::new(); cols.len()]);
+            for (ci, &x) in cols.iter().enumerate() {
+                let col = x - img.offset_x;
+                if col < 0 || col >= img.width as i32 {
+                    continue;
+                }
+                let rows: Vec<i32> = (0..img.height as i32)
+                    .filter(|&r| img.alpha[(r * img.width as i32 + col) as usize] != 0)
+                    .collect();
+                if let (Some(&a), Some(&b)) = (rows.first(), rows.last()) {
+                    hi[ci].push(a + img.offset_y);
+                    lo[ci].push(b + img.offset_y);
+                }
+            }
+        }
+    }
+    let med = |v: &Vec<i32>| {
+        if v.is_empty() {
+            return "    -".to_string();
+        }
+        let mut s = v.clone();
+        s.sort_unstable();
+        format!("{:5}", s[s.len() / 2])
+    };
+    println!(
+        "columns x: {}",
+        cols.iter().map(|c| format!("{c:5}")).collect::<String>()
+    );
+    for (o, n) in &count {
+        println!(
+            "o{o:2} ({n:5} tiles) lowest: {}",
+            low[o].iter().map(med).collect::<String>()
+        );
+        println!(
+            "o{o:2}               highest:{}",
+            high[o].iter().map(med).collect::<String>()
+        );
+        println!(
+            "o{o:2}               n:      {}",
+            low[o]
+                .iter()
+                .map(|v| format!("{:5}", v.len()))
+                .collect::<String>()
+        );
+    }
+}
