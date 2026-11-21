@@ -3,7 +3,7 @@
 //! and the crash-log reader.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bevy_egui::egui::{self, Color32, Ui};
 use capy_history::SavesDir;
@@ -181,6 +181,14 @@ pub fn scan_unused(state: &AppState) -> Result<UnusedReport, String> {
     Ok(unused_report(&graph))
 }
 
+/// `base` joined with each component of a `/`- or `\`-separated relative
+/// path. Joining the string whole would make `a\b` one file name off Windows.
+fn join_rel(base: &Path, rel: &str) -> PathBuf {
+    rel.split(['/', '\\'])
+        .filter(|c| !c.is_empty())
+        .fold(base.to_path_buf(), |p, c| p.join(c))
+}
+
 /// Archives `paths` (saved files, `/` form) under `capybara\archive\`.
 pub fn archive(state: &mut AppState, paths: &[String]) -> Result<String, String> {
     let profile = state
@@ -194,8 +202,8 @@ pub fn archive(state: &mut AppState, paths: &[String]) -> Result<String, String>
     let dir = root.join(&stamp);
     let mut moved = Vec::new();
     for m in &plan.moves {
-        let from = saves.root().join(m.from.replace('/', "\\"));
-        let to = dir.join(m.from.replace('/', "\\"));
+        let from = join_rel(saves.root(), &m.from);
+        let to = join_rel(&dir, &m.from);
         if let Some(parent) = to.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
@@ -258,8 +266,8 @@ pub fn restore_archive(state: &mut AppState, stamp: &str) -> Result<String, Stri
     let prefix = format!("{ARCHIVE_DIR}/{}/", manifest.stamp);
     let native = |p: &str| -> PathBuf {
         match p.strip_prefix(&prefix) {
-            Some(rest) => dir.join(rest.replace('/', "\\")),
-            None => saves_root.join(p.replace('/', "\\")),
+            Some(rest) => join_rel(&dir, rest),
+            None => join_rel(&saves_root, p),
         }
     };
     let exists = |p: &str| native(p).exists();
