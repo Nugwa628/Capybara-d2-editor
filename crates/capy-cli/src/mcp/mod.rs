@@ -13,7 +13,7 @@ use session::{Content, Session};
 
 const SUPPORTED: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
-const INSTRUCTIONS: &str = "Capybara's D2 Editor edits Diablo II map presets (.ds1). Open a map with open_map (list_maps finds one) or new_map, look with get_cells / render_map, change it with paint, set_cell, copy_area, find_replace, reroll, resize_map, set_cell_flags, add_object, edit_objects, check it with check_map, and write it with save_map (into capybara\\saves\\<profile>; the game folder is never written). Edits can be undone with undo until the map is replaced. Cells are numbered from 0 at the map's top corner; x runs down-right, y down-left. Objects use sub-tiles: 5 per cell.";
+const INSTRUCTIONS: &str = "Capybara's D2 Editor edits Diablo II map presets (.ds1). Open a map with open_map (list_maps finds one) or new_map, look with get_cells / render_map, change it with paint, set_cell, copy_area, find_replace, reroll, resize_map, set_cell_flags, add_object, edit_objects, check it with check_map, and write it with save_map (into capybara\\saves\\<profile>; the game folder is never written). Edits can be undone with undo until the map is replaced. Cells are numbered from 0 at the map's top corner; x runs down-right, y down-left. Objects use sub-tiles: 5 per cell. New DT1 tiles: tile_template shows a shape's drawable area, create_tile (palette-indexed pixels) or import_tile_image (a picture) builds one into the open map's own DT1 (registered so the map loads it) or an own DT1 from new_dt1; list_own_tiles, inspect_tile and reshape_tile look at and change them.";
 
 /// Handles one line; the reply line, or `None` for notifications.
 pub(crate) fn handle_line(

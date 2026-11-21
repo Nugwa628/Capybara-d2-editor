@@ -53,6 +53,7 @@ pub(crate) struct Session {
 }
 
 mod extra;
+mod tiles;
 
 const LAYER_NAMES: [&str; 7] = [
     "floor1", "floor2", "wall1", "wall2", "wall3", "wall4", "shadow",
@@ -200,6 +201,51 @@ pub(crate) fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// Standard base64 (`+/`, padding optional, ASCII whitespace ignored).
+pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    let mut vals = Vec::with_capacity(s.len());
+    let mut pad = 0usize;
+    for (i, b) in s.bytes().enumerate() {
+        if b.is_ascii_whitespace() {
+            continue;
+        }
+        if b == b'=' {
+            pad += 1;
+            continue;
+        }
+        if pad > 0 {
+            return Err(format!("'=' inside the data (character {i})"));
+        }
+        let v = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return Err(format!("character {i} is not base64")),
+        };
+        vals.push(u32::from(v));
+    }
+    if vals.len() % 4 == 1 || pad > 2 {
+        return Err("the data has a wrong length for base64".into());
+    }
+    let mut out = Vec::with_capacity(vals.len() / 4 * 3 + 2);
+    for c in vals.chunks(4) {
+        let n = c
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, v)| n | (v << (18 - 6 * i as u32)));
+        out.push((n >> 16) as u8);
+        if c.len() > 2 {
+            out.push((n >> 8) as u8);
+        }
+        if c.len() > 3 {
+            out.push(n as u8);
+        }
+    }
+    Ok(out)
+}
+
 // ------------------------------------------------------------------ session
 
 impl Session {
@@ -309,6 +355,13 @@ impl Session {
             "check_map" => self.check_map(),
             "render_map" => self.render_map(args),
             "save_map" => self.save_map(args),
+            "tile_template" => self.tile_template(args),
+            "create_tile" => self.create_tile(args),
+            "import_tile_image" => self.import_tile_image(args),
+            "reshape_tile" => self.reshape_tile(args),
+            "new_dt1" => self.new_dt1(args),
+            "list_own_tiles" => self.list_own_tiles(args),
+            "inspect_tile" => self.inspect_tile(args),
             other => Err(format!("Unknown tool {other:?}.")),
         }
     }
@@ -1244,6 +1297,14 @@ fn fail_text(f: crate::Fail) -> String {
 }
 
 pub(crate) fn tools_json() -> Value {
+    let mut all = base_tools_json();
+    if let (Some(a), Value::Array(more)) = (all.as_array_mut(), tiles::tools_json()) {
+        a.extend(more);
+    }
+    all
+}
+
+fn base_tools_json() -> Value {
     let rect = json!({"type":"object","description":"Cell rectangle, inclusive corners (x0,y0)-(x1,y1), numbered from 0 at the map's top corner.",
         "properties":{"x0":{"type":"integer"},"y0":{"type":"integer"},"x1":{"type":"integer"},"y1":{"type":"integer"}},"required":["x0","y0","x1","y1"]});
     let tile = json!({"type":"object","description":"A DT1 tile by number: main (0-63), sub (0-255) and, on wall layers, orientation (1-19).",

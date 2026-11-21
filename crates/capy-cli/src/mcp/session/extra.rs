@@ -15,7 +15,7 @@ use serde_json::Value;
 use super::{Session, ToolResult, err_text, opt_int, parse_cells, parse_rect, text};
 
 /// DT1 orientation names (DS1Edit's list).
-fn orientation_name(o: u32) -> &'static str {
+pub(super) fn orientation_name(o: u32) -> &'static str {
     match o {
         0 => "floor",
         1 => "left wall",

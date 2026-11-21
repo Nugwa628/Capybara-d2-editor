@@ -103,6 +103,13 @@ fn protocol_lists_the_tools() {
         "add_layer",
         "clear",
         "history",
+        "tile_template",
+        "create_tile",
+        "import_tile_image",
+        "reshape_tile",
+        "new_dt1",
+        "list_own_tiles",
+        "inspect_tile",
     ] {
         assert!(names.contains(&n), "{n}");
     }
@@ -380,4 +387,525 @@ fn spawn_tile_layer_clear_and_history_tools_in_a_scripted_session() {
     assert!(t(11).contains("(undone)"), "{}", t(11));
     assert_eq!(r[12]["result"]["isError"], true, "too many floor layers");
     assert_eq!(r[13]["result"]["isError"], true, "no cells given");
+}
+
+// ------------------------------------------------------------------ tile creation
+
+fn b64(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in bytes.chunks(3) {
+        let n = (u32::from(c[0]) << 16)
+            | (u32::from(*c.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*c.get(2).unwrap_or(&0));
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if c.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+fn png(w: u32, h: u32, rgba: [u8; 4]) -> Vec<u8> {
+    capy_render::RgbaImage {
+        width: w,
+        height: h,
+        pixels: rgba.repeat((w * h) as usize),
+    }
+    .to_png()
+    .unwrap()
+}
+
+/// The `(orientation, main, sub)` of each "Tile oO mM sS:" line.
+fn tile_numbers(t: &str) -> Vec<(u32, u32, u32)> {
+    t.lines()
+        .filter_map(|l| {
+            let rest = l.strip_prefix("Tile o")?;
+            let key = rest.split(':').next()?;
+            let mut it = key.split(' ');
+            let o = it.next()?.parse().ok()?;
+            let m = it.next()?.strip_prefix('m')?.parse().ok()?;
+            let s = it.next()?.strip_prefix('s')?.parse().ok()?;
+            Some((o, m, s))
+        })
+        .collect()
+}
+
+fn files_named(dir: &std::path::Path, suffix: &str, out: &mut Vec<PathBuf>) {
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            files_named(&p, suffix, out);
+        } else if p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.to_ascii_lowercase().ends_with(suffix))
+        {
+            out.push(p);
+        }
+    }
+}
+
+fn ok(r: &[Value], i: usize) -> String {
+    assert!(
+        r[i]["result"]["isError"].is_null(),
+        "call {}: {}",
+        i + 1,
+        text_of(&r[i])
+    );
+    text_of(&r[i])
+}
+
+fn err(r: &[Value], i: usize, needle: &str) {
+    assert_eq!(
+        r[i]["result"]["isError"],
+        true,
+        "call {} should fail: {}",
+        i + 1,
+        text_of(&r[i])
+    );
+    assert!(
+        text_of(&r[i]).contains(needle),
+        "call {}: {:?} not in {}",
+        i + 1,
+        needle,
+        text_of(&r[i])
+    );
+}
+
+#[test]
+fn tile_creation_tools_create_place_and_save() {
+    let Some(root) = corpus() else {
+        eprintln!("skipped: corpus not found");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let profile = Profile {
+        id: "t".into(),
+        name: "t".into(),
+        game_version: GameVersion::V113c,
+        layers: vec![LayerSpec::Saves, LayerSpec::Folder { path: root.clone() }],
+    };
+    // An upper wall 96 high: index 40, its top row index 0 drawn opaque
+    // (transparent_index 255), one pixel of 255 (empty).
+    let mut wall = vec![40u8; 160 * 96];
+    wall[..160].fill(0);
+    wall[500] = 255;
+    let r = run(
+        tmp.path(),
+        &profile,
+        &[
+            call(1, "open_map", json!({"path": MAP})),
+            call(2, "tile_template", json!({"orientation":0,"mask":"base64"})),
+            call(
+                3,
+                "tile_template",
+                json!({"orientation":3,"height":64,"corner_pair":true,"mask":"png"}),
+            ),
+            call(4, "create_tile", json!({"orientation":0,"fill":30})),
+            call(
+                5,
+                "create_tile",
+                json!({"orientation":1,"height":96,"transparent_index":255,"pixels":{"data":b64(&wall),"width":160,"height":96},"rarity":2}),
+            ),
+            call(
+                6,
+                "create_tile",
+                json!({"orientation":3,"height":64,"corner_pair":true,"fill":50}),
+            ),
+            call(
+                7,
+                "create_tile",
+                json!({"orientation":16,"height":32,"fill":60}),
+            ),
+            call(
+                8,
+                "import_tile_image",
+                json!({"orientation":0,"data":b64(&png(40, 20, [200, 40, 30, 255])),"placement":"fit"}),
+            ),
+            call(9, "list_own_tiles", json!({})),
+            call(10, "list_tiles", json!({"kind":"floor","dt1":"_custom"})),
+            call(11, "save_map", json!({})),
+        ],
+    );
+    let t2 = ok(&r, 1);
+    assert!(
+        t2.contains("160x79") && t2.contains("Mask (160x79 bytes"),
+        "{t2}"
+    );
+    ok(&r, 2);
+    assert_eq!(r[2]["result"]["content"][1]["type"], "image");
+    let floor = ok(&r, 3);
+    let wall_t = ok(&r, 4);
+    let corner = ok(&r, 5);
+    let lower = ok(&r, 6);
+    let imported = ok(&r, 7);
+    assert!(
+        floor.contains("LvlTypes") || floor.contains("appended"),
+        "{floor}"
+    );
+    assert!(
+        floor.contains("Files written") && floor.contains("_custom.dt1"),
+        "{floor}"
+    );
+    assert!(
+        wall_t.contains("palette index 0") && wall_t.contains("Warnings"),
+        "{wall_t}"
+    );
+    assert!(imported.contains("Imported a 40x20 picture"), "{imported}");
+    let (f, w, c, l, im) = (
+        tile_numbers(&floor),
+        tile_numbers(&wall_t),
+        tile_numbers(&corner),
+        tile_numbers(&lower),
+        tile_numbers(&imported),
+    );
+    assert_eq!(
+        (f.len(), w.len(), c.len(), l.len(), im.len()),
+        (1, 1, 2, 1, 1)
+    );
+    assert_eq!((f[0].0, w[0].0, l[0].0), (0, 1, 16));
+    let corner_o: Vec<u32> = c.iter().map(|k| k.0).collect();
+    assert!(corner_o.contains(&3) && corner_o.contains(&4), "{corner}");
+    assert_eq!(
+        (c[0].1, c[0].2),
+        (c[1].1, c[1].2),
+        "corner halves share a number"
+    );
+    assert_ne!(
+        (f[0].1, f[0].2),
+        (im[0].1, im[0].2),
+        "two floors, two numbers"
+    );
+    let own = ok(&r, 8);
+    assert!(
+        own.contains(": 6 tile(s)") && own.contains("the open map loads it"),
+        "{own}"
+    );
+    let lt = ok(&r, 9);
+    assert!(lt.contains(&format!("{}/{} ", f[0].1, f[0].2)), "{lt}");
+    ok(&r, 10);
+
+    // The own DT1 parses and writes back byte for byte; it is registered.
+    let saves = tmp.path().join("saves").join("t");
+    let mut own_files = Vec::new();
+    files_named(&saves, "_custom.dt1", &mut own_files);
+    assert_eq!(own_files.len(), 1, "{own_files:?}");
+    let bytes = std::fs::read(&own_files[0]).unwrap();
+    let dt1 = d2_formats::dt1::Dt1::parse(&bytes).unwrap();
+    assert_eq!(dt1.tiles.len(), 6);
+    assert_eq!(dt1.to_bytes().unwrap(), bytes, "byte-identical write-back");
+    let changed = std::fs::read_to_string(saves.join("CHANGED.txt")).unwrap();
+    for n in ["_custom.dt1", "lvltypes.bin", "lvlprest.bin", "cott6.ds1"] {
+        assert!(changed.contains(n), "{n} not in CHANGED.txt: {changed}");
+    }
+    let rel = own_files[0]
+        .strip_prefix(&saves)
+        .unwrap()
+        .to_string_lossy()
+        .replace('/', "\\");
+    let own_game = GamePath::new(&rel);
+    let overlay = profile.open(&tmp.path().join("saves")).unwrap();
+    let (catalog, _) =
+        d2_assets::MapCatalog::build(&overlay, GameVersion::V113c, &[GamePath::new(MAP)]).unwrap();
+    let info = catalog.best(&GamePath::new(MAP)).unwrap();
+    assert!(
+        info.dt1_files.contains(&own_game),
+        "LvlTypes/LvlPrest register {own_game}: {:?}",
+        info.dt1_files
+    );
+    let saved_map = Ds1::parse(&std::fs::read(saves.join(MAP)).unwrap()).unwrap();
+    let tg1 = own_game.as_str().replace(".dt1", ".tg1");
+    assert!(
+        saved_map.files.iter().any(|f| String::from_utf8_lossy(f)
+            .to_ascii_lowercase()
+            .ends_with(&tg1)),
+        "the DS1 lists the own DT1"
+    );
+
+    // A new session places the tiles, saves, inspects, reshapes, and makes a library.
+    let (fm, fs) = (f[0].1, f[0].2);
+    let (wm, ws) = (w[0].1, w[0].2);
+    let r = run(
+        tmp.path(),
+        &profile,
+        &[
+            call(1, "open_map", json!({"path": MAP})),
+            call(
+                2,
+                "list_tiles",
+                json!({"kind":"wall","orientation":1,"dt1":"_custom"}),
+            ),
+            call(
+                3,
+                "paint",
+                json!({"layer":"floor1","tiles":[{"main":fm,"sub":fs}],"cells":[[1,1]]}),
+            ),
+            call(
+                4,
+                "paint",
+                json!({"layer":"wall1","tiles":[{"main":wm,"sub":ws,"orientation":1}],"cells":[[2,2]]}),
+            ),
+            call(
+                5,
+                "render_map",
+                json!({"rect":{"x0":0,"y0":0,"x1":3,"y1":3}}),
+            ),
+            call(6, "save_map", json!({})),
+            call(
+                7,
+                "inspect_tile",
+                json!({"orientation":0,"main":fm,"sub":fs}),
+            ),
+            call(
+                8,
+                "inspect_tile",
+                json!({"orientation":1,"main":wm,"sub":ws,"render":"file","name":"wall_test"}),
+            ),
+            call(
+                9,
+                "reshape_tile",
+                json!({"orientation":1,"main":wm,"sub":ws,"new_height":160}),
+            ),
+            call(
+                10,
+                "new_dt1",
+                json!({"name":"mylib","folder":"act1/outdoors","register":true}),
+            ),
+            call(
+                11,
+                "create_tile",
+                json!({"orientation":0,"fill":12,"dt1":"act1/outdoors/mylib.dt1"}),
+            ),
+            call(12, "list_tiles", json!({"kind":"floor","dt1":"mylib"})),
+            call(
+                13,
+                "list_own_tiles",
+                json!({"dt1":"act1/outdoors/mylib.dt1"}),
+            ),
+            call(14, "check_map", json!({})),
+        ],
+    );
+    let lt = ok(&r, 1);
+    assert!(lt.contains(&format!("{wm}/{ws} orientation 1")), "{lt}");
+    ok(&r, 2);
+    ok(&r, 3);
+    ok(&r, 4);
+    ok(&r, 5);
+    let ins = ok(&r, 6);
+    assert!(
+        ins.contains("Sub-tile flags") && ins.contains("Picture: 160x79"),
+        "{ins}"
+    );
+    assert_eq!(r[6]["result"]["content"][1]["type"], "image");
+    let ins = ok(&r, 7);
+    assert!(ins.contains("Wrote"), "{ins}");
+    assert!(tmp.path().join("renders").join("wall_test.png").is_file());
+    let re = ok(&r, 8);
+    assert!(
+        re.contains("Reshaped") && re.contains("160 px tall"),
+        "{re}"
+    );
+    let nd = ok(&r, 9);
+    assert!(nd.contains("mylib.dt1") && nd.contains("Dt1Mask"), "{nd}");
+    let lib = ok(&r, 10);
+    let n = tile_numbers(&lib);
+    assert_eq!(n.len(), 1, "{lib}");
+    let lt = ok(&r, 11);
+    assert!(
+        lt.contains("mylib.dt1"),
+        "the registered library loads: {lt}"
+    );
+    assert!(
+        !lt.contains("variants"),
+        "a tile added to a loaded library avoids the map's other numbers: {lt}"
+    );
+    let own = ok(&r, 12);
+    assert!(
+        own.contains(": 1 tile(s)") && own.contains("writable"),
+        "{own}"
+    );
+    ok(&r, 13);
+
+    let saved_map = Ds1::parse(&std::fs::read(saves.join(MAP)).unwrap()).unwrap();
+    let c = saved_map.floors[0].get(1, 1).unwrap();
+    assert_eq!(
+        (u32::from(c.main_index()), u32::from(c.sub_index())),
+        (fm, fs),
+        "the new floor is placed and saved"
+    );
+    let dt1 = d2_formats::dt1::Dt1::parse(&std::fs::read(&own_files[0]).unwrap()).unwrap();
+    let reshaped = dt1
+        .tiles
+        .iter()
+        .find(|t| t.orientation == 1 && t.main_index == wm as i32)
+        .unwrap();
+    assert_eq!(
+        reshaped.height,
+        -(160 + 32),
+        "stored height of a 160 px wall"
+    );
+    let mut libs = Vec::new();
+    files_named(&saves, "mylib.dt1", &mut libs);
+    let lb = std::fs::read(&libs[0]).unwrap();
+    assert_eq!(
+        d2_formats::dt1::Dt1::parse(&lb)
+            .unwrap()
+            .to_bytes()
+            .unwrap(),
+        lb
+    );
+}
+
+#[test]
+fn tile_creation_errors() {
+    let Some(root) = corpus() else {
+        eprintln!("skipped: corpus not found");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let profile = Profile {
+        id: "t".into(),
+        name: "t".into(),
+        game_version: GameVersion::V113c,
+        layers: vec![LayerSpec::Saves, LayerSpec::Folder { path: root.clone() }],
+    };
+    let big = png(5000, 2, [255, 255, 255, 255]);
+    let r = run(
+        tmp.path(),
+        &profile,
+        &[
+            call(1, "create_tile", json!({"orientation":0,"fill":3})),
+            call(2, "open_map", json!({"path": MAP})),
+            call(3, "create_tile", json!({"orientation":25})),
+            call(4, "create_tile", json!({"orientation":1})),
+            call(5, "create_tile", json!({"orientation":1,"height":5000})),
+            call(
+                6,
+                "create_tile",
+                json!({"orientation":1,"height":32,"corner_pair":true}),
+            ),
+            call(
+                7,
+                "create_tile",
+                json!({"orientation":0,"pixels":{"data":"not base64!","width":2,"height":2}}),
+            ),
+            call(
+                8,
+                "create_tile",
+                json!({"orientation":0,"pixels":{"data":b64(&[1, 2, 3]),"width":2,"height":2}}),
+            ),
+            call(
+                9,
+                "create_tile",
+                json!({"orientation":0,"pixels":{"data":"AAAA","width":5000,"height":1}}),
+            ),
+            call(
+                10,
+                "import_tile_image",
+                json!({"orientation":0,"data":b64(&big)}),
+            ),
+            call(
+                11,
+                "import_tile_image",
+                json!({"orientation":0,"data":b64(b"hello there"),"format":"png"}),
+            ),
+            call(
+                12,
+                "new_dt1",
+                json!({"name":"../evil","folder":"act1/outdoors"}),
+            ),
+            call(
+                13,
+                "new_dt1",
+                json!({"name":"con","folder":"act1/outdoors"}),
+            ),
+            call(14, "new_dt1", json!({"name":"ok","folder":"../../windows"})),
+            call(
+                15,
+                "create_tile",
+                json!({"orientation":0,"fill":3,"dt1":"../../x.dt1"}),
+            ),
+            call(
+                16,
+                "create_tile",
+                json!({"orientation":0,"fill":3,"dt1":"c:/windows/x.dt1"}),
+            ),
+            call(
+                17,
+                "create_tile",
+                json!({"orientation":0,"fill":3,"dt1":"act1/outdoors/blank.dt1"}),
+            ),
+            call(
+                18,
+                "reshape_tile",
+                json!({"dt1":"act1/outdoors/blank.dt1","index":0,"new_orientation":15}),
+            ),
+            call(
+                19,
+                "inspect_tile",
+                json!({"dt1":"act1/outdoors/blank.dt1","index":0,"render":"file","name":"../x"}),
+            ),
+            call(
+                20,
+                "import_tile_image",
+                json!({"orientation":0,"path":"/etc/passwd"}),
+            ),
+            call(
+                21,
+                "new_dt1",
+                json!({"name":"blank","folder":"act1/outdoors"}),
+            ),
+            call(22, "create_tile", json!({"orientation":0,"main":64})),
+            call(
+                23,
+                "import_tile_image",
+                json!({"orientation":0,"data":b64(b"hello there")}),
+            ),
+        ],
+    );
+    err(&r, 0, "No map is open");
+    err(&r, 2, "orientation must be");
+    err(&r, 3, "height is required");
+    err(&r, 4, "height must be");
+    err(&r, 5, "corner_pair needs orientation 3 or 4");
+    err(&r, 6, "not valid base64");
+    err(&r, 7, "holds 3 bytes");
+    err(&r, 8, "pixels.width must be");
+    err(&r, 9, "at most 4096");
+    err(&r, 10, "cannot be read");
+    err(&r, 11, "name");
+    err(&r, 12, "reserves");
+    err(&r, 13, "folder");
+    err(&r, 14, "not a safe DT1 path");
+    err(&r, 15, "not a safe DT1 path");
+    err(&r, 16, "not one of this profile's own DT1s");
+    err(&r, 17, "not one of this profile's own DT1s");
+    err(&r, 18, "use only letters");
+    err(&r, 19, "only .png");
+    err(&r, 20, "already exists");
+    err(&r, 21, "main must be");
+    err(&r, 22, "not PNG, BMP, GIF or PCX");
+    // Nothing was written outside the saves.
+    assert!(!tmp.path().join("x.dt1").exists());
+    assert!(
+        !tmp.path()
+            .join("saves")
+            .join("t")
+            .join("data")
+            .join("global")
+            .join("tiles")
+            .join("act1")
+            .join("outdoors")
+            .join("blank.dt1")
+            .exists()
+    );
 }
