@@ -1315,3 +1315,57 @@ fn new_normalises_input() {
     );
     assert_eq!(i.pixels, [0, 5, 0], "transparent pixels carry index 0");
 }
+
+// ---- relocking a fixed-structure frame ----
+
+#[test]
+fn relock_frame_swaps_picture_mask_and_tag_and_undoes() {
+    let mut s = blank(4, 2);
+    let mut free = Mask::none(4, 2);
+    free.bits[0] = true;
+    s.lock_structure(vec![free]);
+    assert_eq!(s.lock_tag(0), 0);
+    let rev0 = s.lock_revision();
+
+    // a taller frame at another offset, every pixel editable
+    let mut img = IndexedImage::new(2, 3, -1, -3);
+    img.pixels[0] = 7;
+    img.alpha[0] = 255;
+    let mut all = Mask::none(2, 3);
+    all.bits.fill(true);
+    s.relock_frame(F0, img, all, 42).unwrap();
+    let f = s.frame(F0).unwrap();
+    assert_eq!((f.width, f.height, f.offset_x, f.offset_y), (2, 3, -1, -3));
+    assert_eq!(s.lock_tag(0), 42);
+    assert!(s.lock_revision() > rev0);
+    assert!(s.is_dirty());
+    // the new mask holds: (1, 2) is now paintable
+    s.pencil(F0, &[(1, 2)], sq(1), p(9), None).unwrap();
+
+    s.undo();
+    s.undo();
+    let f = s.frame(F0).unwrap();
+    assert_eq!((f.width, f.height, f.offset_x, f.offset_y), (4, 2, 0, 0));
+    assert_eq!(s.lock_tag(0), 0);
+    assert_eq!(s.editable(0).unwrap().count(), 1);
+    assert!(!s.is_dirty());
+    // the old mask is back: (3, 1) is locked again
+    assert!(s.pencil(F0, &[(3, 1)], sq(1), p(9), None).is_err());
+
+    s.redo();
+    assert_eq!(s.lock_tag(0), 42);
+    assert_eq!(s.frame(F0).unwrap().height, 3);
+}
+
+#[test]
+fn relock_frame_needs_a_locked_session_and_a_matching_mask() {
+    let mut s = blank(2, 2);
+    let img = IndexedImage::new(2, 2, 0, 0);
+    assert!(
+        s.relock_frame(F0, img.clone(), Mask::none(2, 2), 1)
+            .is_err()
+    );
+    s.lock_structure(vec![Mask::none(2, 2)]);
+    assert!(s.relock_frame(F0, img, Mask::none(3, 2), 1).is_err());
+    assert!(!s.can_undo());
+}

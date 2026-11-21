@@ -96,6 +96,21 @@ pub(crate) enum Edit {
         before: Vec<IndexedImage>,
         after: Vec<IndexedImage>,
     },
+    /// A fixed-structure frame replaced together with its editable mask and
+    /// tag ([`PaintSession::relock_frame`]).
+    Relock {
+        f: FrameRef,
+        before: Box<Locked>,
+        after: Box<Locked>,
+    },
+}
+
+/// One frame of a fixed-structure document with its lock state.
+#[derive(Clone, Debug)]
+pub(crate) struct Locked {
+    image: IndexedImage,
+    editable: Mask,
+    tag: u64,
 }
 
 type Frames = Vec<Vec<IndexedImage>>;
@@ -159,6 +174,12 @@ impl Edit {
                     *slot = src.clone();
                 }
             }
+            Edit::Relock { f, before, after } => {
+                let src = if forward { after } else { before };
+                if let Some(slot) = frames.get_mut(f.dir).and_then(|d| d.get_mut(f.frame)) {
+                    *slot = src.image.clone();
+                }
+            }
         }
     }
 }
@@ -211,6 +232,11 @@ pub struct PaintSession {
     /// Per-frame-index editable pixels of a fixed-structure document (a tile
     /// set); see [`PaintSession::lock_structure`].
     locks: Option<Vec<Mask>>,
+    /// Per-frame-index tags set by [`PaintSession::relock_frame`] (0 until
+    /// set).
+    lock_tags: Vec<u64>,
+    /// Bumped whenever an editable mask changes.
+    lock_revision: u64,
 }
 
 /// Enforce the palette-lock invariants on one image in place.
@@ -266,6 +292,8 @@ impl PaintSession {
             saved_id: 0,
             palette_dirty: false,
             locks: None,
+            lock_tags: Vec::new(),
+            lock_revision: 0,
         })
     }
 
@@ -276,6 +304,95 @@ impl PaintSession {
     /// with one of another size) is fully locked.
     pub fn lock_structure(&mut self, editable: Vec<Mask>) {
         self.locks = Some(editable);
+        self.lock_revision += 1;
+    }
+
+    /// Replaces frame `f` of a fixed-structure document by `image` (any size
+    /// and offset) with `editable` as its new editable pixels and `tag` as
+    /// its tag, as one undo step (undo restores the old frame, mask and tag).
+    /// A tile set uses it to change a tile's shape. Refuses a session whose
+    /// structure is not locked, a missing frame and a mask of another size.
+    pub fn relock_frame(
+        &mut self,
+        f: FrameRef,
+        mut image: IndexedImage,
+        editable: Mask,
+        tag: u64,
+    ) -> Result<()> {
+        if self.locks.is_none() {
+            return invalid("only a fixed-structure document (tile set) relocks frames");
+        }
+        if editable.width != image.width || editable.height != image.height {
+            return invalid("the editable mask does not match the frame's size");
+        }
+        let len = (image.width as usize).saturating_mul(image.height as usize);
+        if image.pixels.len() != len || image.alpha.len() != len {
+            return invalid("pixel buffers do not match the frame's size");
+        }
+        if image.width > MAX_SIDE || image.height > MAX_SIDE {
+            return invalid(format!("the frame is larger than {MAX_SIDE} pixels"));
+        }
+        canonicalize(&mut image);
+        let cur = self.img(f)?.clone();
+        let before = Locked {
+            editable: self
+                .locks
+                .as_ref()
+                .and_then(|l| l.get(f.frame))
+                .cloned()
+                .unwrap_or_else(|| Mask::none(cur.width, cur.height)),
+            image: cur,
+            tag: self.lock_tag(f.frame),
+        };
+        let after = Locked {
+            image,
+            editable,
+            tag,
+        };
+        self.step("Change the tile's shape", |s| {
+            s.push(Edit::Relock {
+                f,
+                before: Box::new(before),
+                after: Box::new(after),
+            });
+            Ok(())
+        })
+    }
+
+    /// Sets every frame's tag without recording history (a document's
+    /// starting state, right after [`PaintSession::lock_structure`]).
+    pub fn set_lock_tags(&mut self, tags: Vec<u64>) {
+        self.lock_tags = tags;
+    }
+
+    /// The tag of frame index `frame` ([`PaintSession::relock_frame`]); 0
+    /// until one is set.
+    pub fn lock_tag(&self, frame: usize) -> u64 {
+        self.lock_tags.get(frame).copied().unwrap_or(0)
+    }
+
+    /// Increases whenever an editable mask changes (lock, relock, and the
+    /// undo or redo of a relock); use it to invalidate overlays of the mask.
+    pub fn lock_revision(&self) -> u64 {
+        self.lock_revision
+    }
+
+    /// Applies `edit` to the frames and, for a relock, to the lock state.
+    fn apply_edit(&mut self, edit: &Edit, forward: bool) {
+        edit.apply(&mut self.frames, forward);
+        if let Edit::Relock { f, before, after } = edit {
+            let src = if forward { after } else { before };
+            if let Some(slot) = self.locks.as_mut().and_then(|l| l.get_mut(f.frame)) {
+                *slot = src.editable.clone();
+            }
+            if self.lock_tags.len() <= f.frame {
+                self.lock_tags.resize(f.frame + 1, 0);
+            }
+            if let Some(t) = self.lock_tags.get_mut(f.frame) {
+                *t = src.tag;
+            }
+            self.lock_revision += 1;
+        }
     }
 
     /// True after [`PaintSession::lock_structure`].
@@ -348,7 +465,7 @@ impl PaintSession {
             return false;
         };
         for edit in step.edits.iter().rev() {
-            edit.apply(&mut self.frames, false);
+            self.apply_edit(edit, false);
         }
         self.redo.push(step);
         self.revision += 1;
@@ -361,7 +478,7 @@ impl PaintSession {
             return false;
         };
         for edit in &step.edits {
-            edit.apply(&mut self.frames, true);
+            self.apply_edit(edit, true);
         }
         self.undo.push(step);
         self.revision += 1;
@@ -471,7 +588,7 @@ impl PaintSession {
 
     /// Apply and record an edit.
     fn push(&mut self, edit: Edit) {
-        edit.apply(&mut self.frames, true);
+        self.apply_edit(&edit, true);
         self.revision += 1;
         if let Some(g) = &mut self.group {
             g.step.edits.push(edit);
