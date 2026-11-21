@@ -161,6 +161,42 @@ fn picture_template(s: &ShapeArg) -> Result<TileTemplate, String> {
     tc::template(shape).map_err(err_text)
 }
 
+/// Where the cell's floor diamond and the foot of shipped walls of the shape
+/// lie in a wall picture whose top-left is `rect`'s (picture pixels).
+fn cell_guide(s: &ShapeArg, rect: tc::PixelRect) -> Vec<String> {
+    let at = |(x, y): (i32, i32)| format!("({}, {})", x - rect.x, y - rect.y);
+    let [top, right, bottom, left] = tc::WALL_CELL_DIAMOND;
+    let what = if s.shape.class() == Some(TileClass::LowerWall) {
+        "The game draws floors over lower walls: they show only in cells without a floor (a level whose LvlPrest FillBlanks is 1 fills empty floor cells)."
+    } else {
+        "Anchor (0, 0) is the cell's bottom corner, not the foot of a wall: a picture filling the whole box covers the whole cell down to that corner."
+    };
+    let mut lines = vec![format!(
+        "The cell's floor diamond in this picture: top corner {}, right {}, bottom corner {}, left {}. {what}",
+        at(top),
+        at(right),
+        at(bottom),
+        at(left)
+    )];
+    let o = i32::from(s.shape.orientation);
+    let mut feet = tc::wall_foot(o);
+    if s.pair {
+        feet = tc::wall_foot(4);
+        feet.extend(tc::wall_foot(3));
+    }
+    if !feet.is_empty() {
+        let edges: Vec<String> = feet
+            .iter()
+            .map(|[a, b]| format!("{} to {}", at(*a), at(*b)))
+            .collect();
+        lines.push(format!(
+            "Shipped walls of this orientation stand on the cell's edge: their foot runs along {} (about one sub-tile inside it). Draw the wall face above that line, slanted like it; pixels below it are drawn over the cell's floor.",
+            edges.join(" and ")
+        ));
+    }
+    lines
+}
+
 fn parse_placement(v: Option<&Value>) -> Result<Placement, String> {
     match v.and_then(Value::as_str).unwrap_or("as_is") {
         "as_is" => Ok(Placement::AsIs),
@@ -978,8 +1014,11 @@ impl Session {
             _ if o == 3 => "Drawable: x 80-159 of the box only (the left half is orientation 4); 32x32 sub-blocks.".into(),
             _ if o == 4 => "Drawable: x 0-79 of the box only (the right half is orientation 3); 32x32 sub-blocks.".into(),
             Some(TileClass::LowerWall) => "Drawable: the whole box; the anchor is 96 pixels below its top (32x32 sub-blocks).".into(),
-            _ => "Drawable: the whole box; its bottom edge is the wall's base (32x32 sub-blocks).".into(),
+            _ => "Drawable: the whole box (32x32 sub-blocks).".into(),
         });
+        if !s.shape.class().is_some_and(TileClass::is_diamond) {
+            lines.extend(cell_guide(&s, r));
+        }
         lines.push(format!("Sub-blocks when full: {blocks}."));
         lines.push(format!(
             "Default sub-tile flags (rows y0-y4, x0-x4): {}.",

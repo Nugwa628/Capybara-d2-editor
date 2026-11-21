@@ -14,7 +14,7 @@
 //! | class | orientations | drawable area | sub-blocks |
 //! |---|---|---|---|
 //! | floor, roof | 0, 15 | the 160x79 diamond at (0,0) | 5x5 diamonds of 32x15 at `(64 + 16(gx - gy), 8(gx + gy))`; a full cell is isometric (format 1), a partial one RLE `0x2005` (15 rows), an empty one is left out |
-//! | upper wall, shadow, special | 1-14 | x 0..160, y `-height..0` (the anchor is the wall's base) | 32x32 RLE `0x1001` cells (32 rows), grid 0/0, empty cells left out |
+//! | upper wall, shadow, special | 1-14 | x 0..160, y `-height..0` (the anchor is the cell's bottom corner; walls stand on a cell edge, [`wall_foot`]) | 32x32 RLE `0x1001` cells (32 rows), grid 0/0, empty cells left out |
 //! | lower wall | 16-19 | x 0..160, y `-96..height - 96` | as upper walls |
 //!
 //! The north corner halves share one picture: orientation 4 holds x 0..80,
@@ -267,6 +267,30 @@ pub fn corner_partner(orientation: i32) -> Option<i32> {
         3 => Some(4),
         4 => Some(3),
         _ => None,
+    }
+}
+
+/// The cell's floor diamond in the anchor space of a wall, shadow, special
+/// or lower wall tile (all hang off the cell's bottom corner): top, right,
+/// bottom and left corner. The bottom of an upper wall's picture is the
+/// cell's bottom corner, 40 to 80 pixels below the edge a wall stands on.
+pub const WALL_CELL_DIAMOND: [(i32, i32); 4] = [(80, -80), (160, -40), (80, 0), (0, -40)];
+
+/// The cell edges shipped walls of `orientation` stand on, as anchor-space
+/// segments `[from, to]` (see [`WALL_CELL_DIAMOND`]): the north-west edge
+/// for left walls (1, 5, 8 and the left half 4), the north-east edge for
+/// right walls (2, 6, 9 and the right half 3). Measured over both corpora
+/// (`measure_wall_planes` in `tests/tiles_create_corpus.rs`): the lowest
+/// pixels of those walls run along that edge, about one sub-tile inside it,
+/// and they block the sub-tiles along it by default ([`default_flags`]).
+/// Empty for every other orientation (corners, pillars, trees, shadows,
+/// floors, lower walls), which have no single edge.
+pub fn wall_foot(orientation: i32) -> Vec<[(i32, i32); 2]> {
+    let [top, right, _, left] = WALL_CELL_DIAMOND;
+    match orientation {
+        1 | 4 | 5 | 8 => vec![[left, top]],
+        2 | 3 | 6 | 9 => vec![[top, right]],
+        _ => Vec::new(),
     }
 }
 

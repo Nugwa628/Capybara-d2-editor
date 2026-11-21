@@ -757,3 +757,40 @@ fn created_tiles_go_through_add_to_map() {
     // nothing to add
     assert!(add_new_tiles_to_map(&target, &[]).is_err());
 }
+
+#[test]
+fn wall_feet_are_the_edges_the_default_flags_block() {
+    let [top, right, bottom, left] = WALL_CELL_DIAMOND;
+    // the box's bottom row is the cell's bottom corner, the sides 40 up
+    assert_eq!(
+        (bottom, left, right, top),
+        ((80, 0), (0, -40), (160, -40), (80, -80))
+    );
+    let column0 = |f: &[u8; 25]| (0..5).all(|y| f[y * 5] != 0);
+    let row0 = |f: &[u8; 25]| (0..5).all(|x| f[x] != 0);
+    for o in [1, 5] {
+        assert_eq!(wall_foot(o), vec![[left, top]], "o{o}");
+        assert!(
+            column0(&default_flags(o)),
+            "o{o} blocks its north-west edge"
+        );
+    }
+    for o in [2, 6] {
+        assert_eq!(wall_foot(o), vec![[top, right]], "o{o}");
+        assert!(row0(&default_flags(o)), "o{o} blocks its north-east edge");
+    }
+    // doors stand on the same edges; the corner halves on their own half
+    assert_eq!(wall_foot(8), wall_foot(1));
+    assert_eq!(wall_foot(9), wall_foot(2));
+    assert_eq!(wall_foot(4), wall_foot(1));
+    assert_eq!(wall_foot(3), wall_foot(2));
+    for (o, (x0, x1)) in [(4, (0, 80)), (3, (80, 160))] {
+        let t = template(TileShape::wall(o as u8, 96)).unwrap();
+        for [a, b] in wall_foot(o) {
+            assert!(a.0 >= x0 && b.0 <= x1 && t.contains(a.0.min(x1 - 1), a.1));
+        }
+    }
+    for o in [0, 7, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] {
+        assert!(wall_foot(o).is_empty(), "o{o}");
+    }
+}

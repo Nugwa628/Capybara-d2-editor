@@ -541,8 +541,16 @@ fn tile_creation_tools_create_place_and_save() {
         t2.contains("160x79") && t2.contains("Mask (160x79 bytes"),
         "{t2}"
     );
-    ok(&r, 2);
+    let pair_t = ok(&r, 2);
     assert_eq!(r[2]["result"]["content"][1]["type"], "image");
+    // where the cell is in the 160x64 picture, and the edges the halves
+    // stand on (the cell's top corner lies 16 pixels above a 64-pixel wall)
+    assert!(
+        pair_t.contains(
+            "top corner (80, -16), right (160, 24), bottom corner (80, 64), left (0, 24)"
+        ) && pair_t.contains("foot runs along (0, 24) to (80, -16) and (80, -16) to (160, 24)"),
+        "{pair_t}"
+    );
     let floor = ok(&r, 3);
     let wall_t = ok(&r, 4);
     let corner = ok(&r, 5);

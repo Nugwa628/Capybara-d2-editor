@@ -27,6 +27,7 @@ use capy_mod::tiles_create::{
     BuildOptions, BuiltTile, DEFAULT_ROOF_HEIGHT, ImportOptions, MAX_WALL_HEIGHT, MapTarget,
     Placement, TileClass, TileShape, WALL_BLOCK, add_new_tiles_to_map, build_corner_pair,
     build_tile, default_flags, free_tile_number, import_tile_image, number_orientations, template,
+    wall_foot,
 };
 use capy_mod::tiles_flags::FlagOp;
 use capy_mod::tiles_review::TileId;
@@ -88,13 +89,13 @@ impl Kind {
                 "Orientation 13: drawn on the shadow layer, standing on the cell like a wall."
             }
             Kind::UpperWall => {
-                "Orientations 1-9, 12 and 14: a picture 160 wide standing on the cell (its base is the cell's floor)."
+                "Orientations 1-9, 12 and 14: a picture 160 wide whose bottom row is the cell's bottom corner. Walls stand on a cell edge (orange in the preview): draw the wall face above that line, slanted like it."
             }
             Kind::CornerPair => {
                 "Orientations 4 (left half, x 0-80) and 3 (right half, x 80-160) cut from one picture; the game draws both when a cell holds orientation 3."
             }
             Kind::LowerWall => {
-                "Orientations 16-19: drawn under the floor (cliff faces, pits), from 96 pixels above the cell's base downwards."
+                "Orientations 16-19: drawn under the floor (cliff faces, pits), hanging from the cell's top edges downwards; they show only where the cell has no floor."
             }
         }
     }
@@ -1214,6 +1215,19 @@ fn preview_panel(ui: &mut Ui, state: &AppState, d: &mut NewTileUi) {
         diamond,
         egui::Stroke::new(1.0, Color32::from_rgb(240, 220, 120)),
     ));
+    // the edge shipped walls of the orientation stand on
+    for s in &built.shapes {
+        let a = anchor_in_cell(*s);
+        for [p, q] in wall_foot(i32::from(s.orientation)) {
+            painter.line_segment(
+                [
+                    at((p.0 + a.0) as f32, (p.1 + a.1) as f32),
+                    at((q.0 + a.0) as f32, (q.1 + a.1) as f32),
+                ],
+                egui::Stroke::new(2.0, Color32::from_rgb(240, 150, 40)),
+            );
+        }
+    }
     // the template's box
     for s in &built.shapes {
         if let Ok(t) = template(*s) {
@@ -1233,7 +1247,9 @@ fn preview_panel(ui: &mut Ui, state: &AppState, d: &mut NewTileUi) {
             );
         }
     }
-    ui.weak("Blue: where pixels can go. Yellow: the cell. Red: picture pixels left out.");
+    ui.weak(
+        "Blue: where pixels can go. Yellow: the cell. Orange: the edge walls of this orientation stand on. Red: picture pixels left out.",
+    );
     for (b, s) in built.tiles.iter().zip(&built.shapes) {
         let opaque = b
             .tile
@@ -1541,6 +1557,14 @@ mod tests {
         assert_eq!(anchor_in_cell(TileShape::wall(1, 96)), (0, 80));
         assert_eq!(anchor_in_cell(TileShape::roof(80)), (0, -80));
         assert_eq!(anchor_in_cell(TileShape::floor()), (0, 0));
+        // the orange foot of a left wall is the cell's north-west edge, from
+        // its left corner (0, 40) to its top corner (80, 0)
+        let a = anchor_in_cell(TileShape::wall(1, 96));
+        let foot: Vec<_> = wall_foot(1)
+            .iter()
+            .map(|[p, q]| [(p.0 + a.0, p.1 + a.1), (q.0 + a.0, q.1 + a.1)])
+            .collect();
+        assert_eq!(foot, vec![[(0, 40), (80, 0)]]);
         assert_eq!(orientation_name(1), "Left wall (1)");
         assert_eq!(orientation_name(16), "Lower wall, left (16)");
     }
