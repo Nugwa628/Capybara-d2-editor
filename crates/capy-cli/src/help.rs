@@ -6,7 +6,7 @@ use crate::{CmdResult, Ctx, Fail};
 const OVERVIEW: &str = "\
 Capybara's D2 Editor command line
 
-usage: CapybarasD2Editor.exe <verb> [options]
+usage: {exe} <verb> [options]
 
 verbs:
   render    render a DS1 map to a PNG without opening the editor
@@ -101,6 +101,18 @@ fn text_for(verb: &str) -> Option<&'static str> {
     }
 }
 
+/// The program's file name on this platform.
+const EXE: &str = if cfg!(windows) {
+    "CapybarasD2Editor.exe"
+} else {
+    "CapybarasD2Editor"
+};
+
+/// [`OVERVIEW`] with the program name of this platform.
+fn overview() -> String {
+    OVERVIEW.replace("{exe}", EXE)
+}
+
 /// Reminder printed after a usage error.
 pub fn usage_line(verb: Option<&str>) -> String {
     match verb.and_then(text_for) {
@@ -112,7 +124,7 @@ pub fn usage_line(verb: Option<&str>) -> String {
 pub fn print(ctx: &mut Ctx<'_>, verb: Option<&str>) -> CmdResult {
     match verb {
         None => {
-            ctx.say(OVERVIEW);
+            ctx.say(overview());
             Ok(())
         }
         Some(v) => match text_for(v) {
