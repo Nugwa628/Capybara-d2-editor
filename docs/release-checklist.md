@@ -1,10 +1,15 @@
 # Release checklist
 
-Steps to build and check a release of `CapybarasD2Editor.exe` before it is
-zipped and shared. Each step says what to run and what to expect. The
-results of the last dry run are at the end, together with open issues.
+Steps to build and check a release before it is packed and shared. Each step
+says what to run and what to expect. A release has two archives:
 
-All commands run in PowerShell from the repository root unless noted.
+- `CapybarasD2Editor-<version>-win64.zip`: sections 1-7 (Windows, built on
+  Windows with MSVC), or [Windows exe from Linux](#windows-exe-from-linux).
+- `CapybarasD2Editor-<version>-linux-x86_64.tar.gz`: [Linux](#linux).
+
+The results of the last runs are at the end, together with open issues.
+
+Sections 1-7 run in PowerShell from the repository root unless noted.
 `$S` is any empty scratch folder outside the repository.
 
 ## 1. Build
@@ -259,6 +264,220 @@ three, 8,060 `C:\Users\<name>\.cargo` paths); the old bin name in the release
 folder (picked up and renamed); a stale `THIRD-PARTY-LICENSES.md` (fails at
 step 1).
 
+## Linux
+
+Built and checked on Linux (Linux Mint 22, glibc 2.39, rustc 1.100) from
+the repository root in bash. `$S` is any empty scratch folder.
+
+### L1. Build and package (`scripts/build-release.sh`)
+
+```
+scripts/build-release.sh                 # build, check, pack the Linux archive
+scripts/build-release.sh --smoke         # ... and run it headless (L4)
+scripts/build-release.sh --platform both # ... and the Windows zip (see below)
+scripts/build-release.sh --skip-build    # check + pack the last build
+scripts/build-release.sh --dry-run       # plan + read-only checks only
+```
+
+Needs `python3`, `binutils` (`readelf`, `objdump`), `tar`, `gzip` and
+coreutils; `--smoke` also needs `xvfb` and `mesa-vulkan-drivers`
+(`sudo apt install xvfb mesa-vulkan-drivers`). What it does, in order (any
+failed check stops it with exit code 1 and a list of the failures):
+
+1. `python3 -I scripts/third_party_licenses.py --check`. The notice covers
+   the union of the Windows and Linux packages (the Linux binary adds x11rb,
+   x11-dl, xkbcommon-dl, wayland-client and others).
+2. Checks that the documents, `assets/branding/capybara-256.png` and
+   `packaging/linux/*` exist.
+3. Builds with remapped paths into the same separate target folder as the
+   Windows script:
+   ```
+   RUSTFLAGS = --remap-path-prefix=<repo>=.
+               --remap-path-prefix=<CARGO_HOME>=cargo
+               --remap-path-prefix=<RUSTUP_HOME>=rustup
+   cargo build --release -p capy-app --locked --target x86_64-unknown-linux-gnu --target-dir target/release-dist
+   ```
+   Without the remap the binary holds about 1,500 copies of
+   `/home/<name>/.cargo/registry/src/...` (panic locations). No static CRT
+   flag: glibc must stay dynamic (it is what the X11/Vulkan libraries opened
+   at run time use).
+4. Checks the binary:
+   - ELF64 x86-64, stripped (no `.symtab`);
+   - `NEEDED` is only `libc.so.6`, `libm.so.6`, `libgcc_s.so.1` and the
+     loader. Everything else is opened with `dlopen` when used:
+     `libvulkan.so.1` (wgpu), `libX11*`, `libXcursor`, `libXi`,
+     `libxkbcommon*` (winit, X11 only: Bevy's `wayland` feature is off, so a
+     Wayland session uses XWayland), `libdbus-1.so.3` (file dialogs through
+     the XDG desktop portal), `libwayland-client` (rfd, portal window
+     handle). No ALSA, no libudev (no audio or gamepad features);
+   - the glibc floor: the highest non-weak `GLIBC_x.y` version in
+     `readelf -V` must not exceed `--max-glibc` (default 2.35). Today it is
+     **2.35** (`hypot`/`hypotf` from libm; `pidfd_spawnp` and
+     `pidfd_getpid` need 2.39 but are weak, so std falls back on older
+     glibc). 2.35 means Ubuntu 22.04, Linux Mint 21, Debian 12 (2.36),
+     Fedora 36 and later; older distributions fail at start with
+     ``version `GLIBC_2.35' not found``;
+   - no occurrence of `$HOME`, the repository, `CARGO_HOME` or `RUSTUP_HOME`
+     (UTF-8 and UTF-16, any case);
+   - `--help` runs (no display needed) and exits 0.
+5. Writes `dist/CapybarasD2Editor-<version>-linux-x86_64.tar.gz` with one top
+   folder holding `CapybarasD2Editor` (0755), `README.md`, `LICENSE*`,
+   `NOTICE`, `THIRD-PARTY-LICENSES.md`, `docs/user-guide.md`, `docs/cli.md`,
+   `capybara.png` (256x256, from the `.ico`), `capybaras-d2-editor.desktop`
+   and `install-desktop-entry.sh` (0755). The tar is reproducible: names
+   sorted, owner 0:0, every time set to the last commit's
+   (`SOURCE_DATE_EPOCH` overrides), `gzip -n`. Two runs give the same
+   SHA-256. It is re-read to count the files and its SHA-256 is printed.
+6. With `--smoke`, L4 below on the unpacked archive.
+
+### L2. Embedded assets
+
+Section 3 applies unchanged: the same `include_bytes!`/`embedded_asset!`
+set, nothing is read from `assets/`. The Linux archive's `capybara.png` is
+only for the desktop entry; the window icon comes from the embedded `.ico`.
+On Linux the UI font is egui's (the log says `Segoe UI not found`).
+
+### L3. Desktop entry
+
+`install-desktop-entry.sh` (no root) writes
+`${XDG_DATA_HOME:-~/.local/share}/applications/capybaras-d2-editor.desktop`
+from the template, with `Exec` set to the quoted absolute path of the
+binary next to it, `Icon` to its `capybara.png` and `Path` to its folder;
+`--remove` deletes it. `StartupWMClass=CapybarasD2Editor` matches the X11
+`WM_CLASS` winit sets (the binary name), so the taskbar groups the window
+under the entry. Check with `desktop-file-validate` (from
+`desktop-file-utils`): no errors. Paths with spaces, `&` and `|` work;
+paths with `"`, `` ` ``, `$`, `\` or a newline are refused.
+
+### L4. Clean-folder run, headless
+
+**Never start the GUI on your own display (`:0`) for these checks, and never
+drive it with xdotool/wmctrl there.** Use a virtual X server and Mesa's
+software Vulkan driver (lavapipe):
+
+```
+mkdir -p $S && tar -xzf dist/CapybarasD2Editor-*-linux-x86_64.tar.gz -C $S
+cd $S/CapybarasD2Editor-*-linux-x86_64
+unset CAPY_HOME
+./CapybarasD2Editor --help                   # exit 0
+./CapybarasD2Editor profiles list            # seeds vanilla/mxl from Wine prefixes, exit 0
+./CapybarasD2Editor render data/global/tiles/act1/town/towne1.ds1 --profile vanilla --zoom 1:4 --out t.png
+env -u DISPLAY -u WAYLAND_DISPLAY \
+  CAPY_SCREENSHOT=$S/gui.png CAPY_PROFILE=vanilla \
+  CAPY_OPEN_MAP='data\global\tiles\act1\town\towne1.ds1' \
+  WGPU_BACKEND=vulkan VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+  xvfb-run -a -s "-screen 0 1920x1080x24" ./CapybarasD2Editor
+```
+
+Expect exit 0 each time, `capybara/` next to the binary with the same
+contents as section 4b, and a screenshot of towne1 textured with the Maps
+list filled. `--smoke` runs `profiles list` and the GUI step.
+
+### L5. Not-writable folder and errors
+
+```
+mkdir $S/ro && cp CapybarasD2Editor $S/ro/ && chmod a-w $S/ro
+env -u DISPLAY -u WAYLAND_DISPLAY CAPY_NO_CRASH_DIALOG=1 $S/ro/CapybarasD2Editor
+chmod u+w $S/ro
+```
+
+Expect `Cannot create folder ".../ro/capybara": Permission denied (os error
+13)` on stderr, exit 1, nothing created. Without `CAPY_NO_CRASH_DIALOG` the
+error box is a `zenity --error` window (rfd has no other message box on
+Linux), so check that only under `xvfb-run`. Without zenity there is no box,
+only stderr. File pickers use the XDG desktop portal over D-Bus and fall
+back to zenity.
+
+### L6. Data home in an unpacked folder
+
+The default-home rule is unchanged (an open owner decision): `capybara/`
+next to the executable, or `CAPY_HOME`. On Linux `current_exe()` reads
+`/proc/self/exe`, so:
+
+- unpacked under `$HOME` (for example `~/Apps/...`): works; the data lives in
+  the versioned folder, so a new version unpacked next to it starts empty
+  until `capybara/` is moved over or `CAPY_HOME` is set (same as the Windows
+  zip, whose top folder is versioned too);
+- a symbolic link (for example `~/.local/bin/CapybarasD2Editor`) uses the
+  folder next to the real file;
+- a copy in `/opt` or `/usr/local/bin` (root-owned) stops with the L5
+  error; set `CAPY_HOME` or keep it in a user folder. The XDG way
+  (`~/.local/share/...`) would avoid this but is not the current design.
+
+### L7. AppImage: not made
+
+An AppImage adds nothing the tar does not already give: the binary links
+only glibc and libgcc, and the libraries it opens at run time (Vulkan loader
+and driver, X11, D-Bus) must come from the host anyway, so there is nothing
+to bundle. It would cost: `appimagetool` downloaded from the web, a FUSE 2
+dependency that Ubuntu 22.04+/Mint 21+ no longer install by default
+(`libfuse2`), and a read-only squashfs mount as the executable's folder, so
+`capybara/` next to the exe cannot be created and every user would need
+`CAPY_HOME` (it would force the open default-home decision). Revisit if the
+data home moves to XDG folders.
+
+## Windows exe from Linux
+
+Sections 1-7 build the exe on Windows with MSVC. It can also be cross-built
+on Linux, so one PC makes both archives:
+
+```
+rustup target add x86_64-pc-windows-gnu
+scripts/build-release.sh --platform both [--windows-linker mingw|zig]
+```
+
+The script builds `x86_64-pc-windows-gnu` into `target/release-dist`, checks
+the exe with binutils' `objdump -p` (PE32+ x86-64, subsystem 2, imports, no
+`vcruntime*`, `msvcp*`, `libgcc*`, `libwinpthread*` or other non-system
+DLLs; `.rsrc` with the UTF-16 version strings; no builder paths) and writes
+`dist/CapybarasD2Editor-<version>-win64.zip` with the same layout as
+`build-release.ps1` (forward-slash entry names, fixed times, reproducible).
+
+The only C code is SQLite (`libsqlite3-sys`, `bundled`; `blake3` uses
+`pure`, `wayland-backend` is Linux-only and compiles nothing without `log`),
+so a cross C compiler is needed, plus a resource compiler for the icon and
+version information. `build.rs` picks, on a non-Windows host: `CAPY_RC` (an
+rc.exe-style command such as `zig rc` or `llvm-rc`, whose `.res` lld links),
+then `WINDRES`/`x86_64-w64-mingw32-windres` for `-gnu`, then `llvm-rc` for
+`-msvc`; without one the exe has no icon and the script fails its `.rsrc`
+check.
+
+Toolchains compared (2026-11-21):
+
+| | mingw-w64 (gnu) | zig + cargo-zigbuild (gnu) | cargo-xwin (msvc) |
+|---|---|---|---|
+| Root needed | yes, `sudo apt install gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64` | no: `pip install --user ziglang` (or a zig on `PATH`), `cargo install --locked cargo-zigbuild` | yes, `sudo apt install clang lld llvm` (clang-cl, lld-link, llvm-rc) |
+| Downloads | distro packages only | zig from PyPI | the MSVC CRT and Windows SDK from Microsoft at build time |
+| License | GPL toolchain, runtime under permissive mingw-w64 terms (exception for linked code) | MIT; mingw-w64 libs as left | Microsoft's Visual Studio / Build Tools license must be accepted by the builder; `xwin` asks for it, using it on Linux is the builder's responsibility |
+| CRT | `msvcrt.dll` (every Windows) | UCRT (`api-ms-win-crt-*`, Windows 10+) | static CRT, same as today's release |
+| Same as current releases | no (gnu ABI) | no (gnu ABI) | yes (`x86_64-pc-windows-msvc`, `+crt-static`) |
+| Tested here | no (no root) | **yes** | no (no root, license) |
+
+Result with zig (zig 0.17.1 via `ziglang`, cargo-zigbuild 0.24.1): cold
+build 3 min 51 s; `CapybarasD2Editor.exe` 58,385,408 bytes, PE32+ x86-64,
+GUI subsystem, imports only system DLLs and the UCRT api sets (which
+Windows 10/11 ship; no VC++ redistributable), icon and version resource
+(all six `.ico` images present as `RT_ICON`), no builder paths. Under Wine
+9.0 in a scratch prefix inside `xvfb-run` (Vulkan through lavapipe):
+`--help`, `profiles list` and `render towne1 --zoom 1:4` exit 0 with the
+same output as on Windows; the GUI renders towne1 textured and exits 0 with
+a Wine virtual desktop (`HKCU\Software\Wine\Explorer` `Desktop=Default`,
+`Explorer\Desktops` `Default=1600x900`). Without the virtual desktop winit
+panics in `monitor.rs` (`has_flag(mode.dmFields, REQUIRED_FIELDS)`) because
+Wine reports Xvfb's display modes without all fields: a Wine/Xvfb quirk,
+not a defect of the exe. Use a scratch `WINEPREFIX`, never your game prefix,
+and write profiles with `Z:\...` paths to reach the game files.
+
+Recommendation: release the Windows zip from Linux with the **gnu target**,
+built with **mingw-w64 from apt** once installed (distro-maintained, no
+license to accept, `msvcrt.dll` works on every Windows); zig is the no-root
+fallback and is what was verified here. Before the first such release, run
+sections 4-6 once on a real Windows 10/11 PC (Explorer icon and Details tab,
+DirectX 12 and Vulkan start, file dialogs, crash box), since Wine only
+approximates them. Keep `build-release.ps1` (MSVC) for releases made on
+Windows. cargo-xwin is the choice only if the exe must stay byte-for-byte
+MSVC; it needs the owner to accept Microsoft's license.
+
 ---
 
 ## Results of the dry run (2026-10-19, main at 20a108d)
@@ -290,6 +509,31 @@ step 1).
 | Zip | `dist\CapybarasD2Editor-0.1.0-win64.zip`, 21,409,439 bytes, 7 entries |
 | CLI from the unzipped folder, no `capybara\` yet | `profiles list` seeds vanilla and mxl, exit 0; `render towne1 --zoom 1:4` 1960x980, 0 missing tiles, 42 objects drawn, exit 0 |
 | GUI from the unzipped folder | loading screen frame renders (door, capybara, gold title); towne1 opens with 84 object sprites, catalog ready in 2.1 s |
+
+## Results of the Linux release build (2026-11-21, main at cf00ab9 + this branch)
+
+`PATH=<zig venv>:$PATH scripts/build-release.sh --platform both --smoke` on
+Linux Mint 22 (32 threads, `CARGO_BUILD_JOBS=16`):
+
+| Check | Result |
+|---|---|
+| License notice | up to date, 409 packages (374 Windows-only before) |
+| Linux build | 3 min 18 s (warm registry), no warnings |
+| Linux binary | 65,019,336 bytes (62.0 MiB), ELF64 x86-64, stripped |
+| NEEDED | `libc.so.6`, `libm.so.6`, `libgcc_s.so.1`, `ld-linux-x86-64.so.2` |
+| glibc floor | 2.35 (weak 2.39 symbols only) |
+| Builder paths | none after the remap (1,572 x `/home/<name>/.cargo/registry/src` without it) |
+| Archive | `CapybarasD2Editor-1.2.3-linux-x86_64.tar.gz`, 24,066,811 bytes, 10 files, identical SHA-256 on a second run |
+| Smoke (xvfb + lavapipe) | `profiles list` seeds vanilla and mxl from Wine prefixes; GUI exit 0, catalog 3.2 s, towne1 2724 tiles and 84 object sprites, 0 missing; CLI `render` 1960x980, 0 missing tiles, 42 objects (same `tanuhth.cof` warning as Windows) |
+| Not-writable folder | stderr message, exit 1, nothing created; zenity box under xvfb |
+| Windows build (zig) | 3 min 51 s; 58,385,408 bytes; GUI subsystem; system DLLs + UCRT api sets; icon and version resource; no builder paths |
+| Windows zip | `CapybarasD2Editor-1.2.3-win64.zip`, 22,751,283 bytes, 7 files, reproducible |
+| Windows exe under Wine 9.0 (xvfb) | CLI `--help`, `profiles list`, `render` exit 0; GUI exit 0 with a virtual desktop, towne1 textured |
+
+Seen on Linux, not release blockers: `--help` prints the usage line as
+`CapybarasD2Editor.exe <verb>` (capy-cli); the README Quick start says
+**File > Add game install...** and two user-guide tables **Add game
+install...**, while the button is **Home > Add game...** (UI docs lane).
 
 ## Open issues
 

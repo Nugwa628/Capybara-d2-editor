@@ -5,6 +5,23 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **Linux build.** A release archive
+  `CapybarasD2Editor-<version>-linux-x86_64.tar.gz` next to the Windows zip:
+  the `CapybarasD2Editor` binary (x86-64, glibc 2.35 or newer, links only
+  glibc and libgcc; X11, Vulkan and D-Bus are opened at run time), the
+  documents, the capybara icon as PNG, a desktop entry and
+  `install-desktop-entry.sh`, which adds the editor to the application menu
+  for the current user. Data stays in `capybara/` next to the program, or in
+  `CAPY_HOME`. `scripts/build-release.sh` builds, checks and packs it, and can
+  cross-build the Windows exe from Linux (`--platform both`, target
+  `x86_64-pc-windows-gnu` with mingw-w64 or zig); `build.rs` embeds the icon
+  and version information in a cross-built exe too.
+- **Diablo II in Wine prefixes.** Off Windows the first run reads Diablo II's
+  install path from the registry files of the Wine prefixes it finds
+  (`$WINEPREFIX`, `~/.wine`, Lutris' `~/Games/*`, Bottles, the Median XL
+  launcher's prefix) and maps it to a Linux folder. The default folders are
+  `~/.wine`'s Diablo II folder and `~/.d2launcher/bin/diablo2`, also in
+  **Add game...**.
 - **Tile creation core** (`capy_mod::tiles_create`, library only). Build
   brand-new DT1 tiles from a picture: floors, roofs, shadows, upper and lower
   walls of every orientation (north corner halves from one picture), special
@@ -49,6 +66,20 @@ All notable changes to this project are documented here.
 - **New empty DT1** and **New tile into this DT1...** in Tile libraries: a
   library with no tiles under a checked name, saved to the profile and
   optionally registered for the open map's level type.
+
+### Changed
+- `THIRD-PARTY-LICENSES.md` covers the Linux binary as well as the Windows
+  exe (409 packages, from 374).
+
+### Fixed
+- Linux: loose files and archives are found ignoring case, as the game and
+  Windows do. A mod folder with `Data/Global/Excel/LvlPrest.txt` was listed
+  but unreadable, and `D2DATA.MPQ` did not match a profile's `d2data.mpq`.
+  The exact spelling still wins when both exist.
+- Linux: archiving unused saves and restoring them failed, because the game
+  path was joined as one file name (`a\b\c.dt1`) instead of per folder.
+- Linux: saved presets never showed up in the preset library, so placing one
+  failed with "no preset named ...".
 
 ## [1.2.3] - 2026-10-21
 

@@ -25,10 +25,13 @@ been opened, because it writes the default profiles itself.
 
 ### System requirements
 
-- Windows 10 or 11, 64-bit.
-- A graphics card whose driver supports Vulkan or DirectX 12 (any card and
-  driver from the last several years). Without one the editor cannot open its
-  window; it says so in a message box and in `capybara\crash.log`.
+- Windows 10 or 11, 64-bit, or Linux x86-64 with glibc 2.35 or newer
+  (Ubuntu 22.04, Linux Mint 21, Debian 12, Fedora 36 and later; see
+  [Installing on Linux](#installing-on-linux)).
+- A graphics card whose driver supports Vulkan or DirectX 12 (on Linux:
+  Vulkan; any card and driver from the last several years). Without one the
+  editor cannot open its window; it says so in a message box and in
+  `capybara\crash.log`.
 - A Diablo II install (classic 1.13c/1.14d, or a mod such as Median XL). The
   editor only reads it.
 
@@ -56,6 +59,39 @@ capybara\
 
 The folder must be writable. If the editor can't create or write to it, it
 shows an error message and stops (see [Troubleshooting](#troubleshooting)).
+
+### Installing on Linux
+
+The Linux release is `CapybarasD2Editor-<version>-linux-x86_64.tar.gz`. Unpack
+it into a folder you own and start the program in it:
+
+```
+mkdir -p ~/Apps && tar -xzf CapybarasD2Editor-*-linux-x86_64.tar.gz -C ~/Apps
+~/Apps/CapybarasD2Editor-*-linux-x86_64/CapybarasD2Editor
+```
+
+- `./install-desktop-entry.sh` in that folder adds the editor, with the
+  capybara icon, to your application menu for your user only
+  (`~/.local/share/applications`). `--remove` takes the entry out. Run it
+  again after moving the folder.
+- The program is `CapybarasD2Editor` (no `.exe`); the command line works the
+  same way, for example `./CapybarasD2Editor profiles list`.
+- `capybara/` is created next to the program, as on Windows, so keep the
+  folder somewhere writable (not `/opt` or `/usr/local`). A symbolic link to
+  the program (for example in `~/.local/bin`) still uses the folder next to
+  the real file. `CAPY_HOME` moves it anywhere else.
+- When you unpack a newer version into a new folder, move `capybara/` from
+  the old folder into the new one (or keep `CAPY_HOME` pointing at it).
+- Paths in this guide are written the Windows way (`capybara\saves\`); on
+  Linux they use `/`.
+
+It needs, from a normal desktop install: a Vulkan driver (Mesa's
+`mesa-vulkan-drivers` for AMD and Intel, or NVIDIA's driver) and the Vulkan
+loader `libvulkan1`; the X11 libraries `libx11-6`, `libx11-xcb1`,
+`libxcursor1`, `libxi6`, `libxkbcommon0` and `libxkbcommon-x11-0` (on a
+Wayland desktop the editor runs through XWayland); `zenity` for error
+messages; and `xdg-desktop-portal` with your desktop's back-end, or
+`zenity`, for the file and folder pickers.
 
 ### The loading screen
 
@@ -87,6 +123,17 @@ The registry is only read, never written. It is checked under
 `HKEY_CURRENT_USER\Software\Blizzard Entertainment\Diablo II` (value
 `InstallPath`); a registry path is used only if it holds `d2data.mpq` and
 `d2exp.mpq`.
+
+On Linux, Diablo II normally runs under Wine, and the editor reads the same
+registry value from the `system.reg` and `user.reg` text files of each Wine
+prefix it finds: `$WINEPREFIX`, `~/.wine`, every folder in `~/Games` (where
+Lutris puts its prefixes), every Bottles bottle
+(`~/.local/share/bottles/bottles`) and the Median XL launcher's
+`~/.d2launcher/wineprefix`. The Windows path is turned into a Linux folder
+through the prefix's `dosdevices`. The default folders are the Diablo II
+folder of `~/.wine` and the launcher's Median XL folder
+`~/.d2launcher/bin/diablo2`. Archive and file names are matched ignoring
+case, as the game does, so `D2DATA.MPQ` or `Data/Global/Excel` are found.
 
 It only does this when `config.toml` doesn't exist yet or `capybara\profiles\`
 holds no `.toml` files. It never overwrites a profile file.
@@ -2011,10 +2058,11 @@ From the command line, `index status` and `index build` do the same (see
 ### "Capybara's D2 Editor cannot use its data folder"
 
 The editor couldn't create or write to `capybara\` next to the exe. The
-message names the folder and the Windows error. Nothing was written anywhere
+message names the folder and the system's error. Nothing was written anywhere
 else. Fix it in one of two ways:
 
-- move the exe to a folder you can write to (not `C:\Program Files\`), or
+- move the exe to a folder you can write to (not `C:\Program Files\`; on
+  Linux not `/opt` or `/usr/local`), or
 - set the environment variable `CAPY_HOME` to a writable folder, which is
   then used instead of `capybara\`.
 
@@ -2027,7 +2075,13 @@ that file when you report the problem.
 
 **"Unable to find a GPU"** means no graphics driver with Vulkan or DirectX 12
 support was found: install the latest driver for your graphics card. Remote
-desktop sessions and some virtual machines have no such driver.
+desktop sessions and some virtual machines have no such driver. On Linux,
+`vulkaninfo --summary` (package `vulkan-tools`) lists the Vulkan drivers;
+install `mesa-vulkan-drivers` (AMD, Intel) or the NVIDIA driver.
+
+On Linux the message boxes are shown with `zenity`. Without it there is no
+box, but the error is still printed on the terminal (start the editor from
+one to see it), and a crash is still written to `crash.log`.
 
 ### No profiles, or a profile won't open
 

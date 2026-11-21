@@ -1,8 +1,9 @@
 # Capybara's D2 Editor
 
-A portable, single-exe Windows editor for Diablo II `.ds1` maps and DC6/DCC
-sprites. It reads the game's MPQs read-only, never writes to the game folder,
-and keeps everything it writes in a `capybara\` folder next to the exe.
+A portable, single-file editor for Diablo II `.ds1` maps and DC6/DCC sprites,
+for Windows and Linux. It reads the game's MPQs read-only, never writes to the
+game folder, and keeps everything it writes in a `capybara\` folder next to
+the program.
 
 The map editor's interface, layout and many of its map-editing features follow
 [**DS1 Studio**](https://github.com/RoofooEvazan/ds1-studio) by RoofooEvazan
@@ -13,8 +14,11 @@ credit for that design goes to its author; go check it out.
 
 ## System requirements
 
-- Windows 10 or 11, 64-bit.
-- A graphics driver with Vulkan or DirectX 12 support.
+- Windows 10 or 11, 64-bit, with a graphics driver that supports Vulkan or
+  DirectX 12.
+- Or Linux, x86-64, with glibc 2.35 or newer (Ubuntu 22.04, Linux Mint 21,
+  Debian 12, Fedora 36 and later), an X11 or Wayland desktop (Wayland runs
+  through XWayland) and a Vulkan driver. See [Linux](#linux).
 - A Diablo II install (classic 1.13c/1.14d, or Median XL). It is only read.
 
 ## Features
@@ -114,17 +118,65 @@ If the editor ever stops with an error message, the details are in
 
 The full manual is [docs/user-guide.md](docs/user-guide.md).
 
+## Linux
+
+Download `CapybarasD2Editor-<version>-linux-x86_64.tar.gz` and unpack it in a
+folder you own, for example `~/Apps`:
+
+```
+mkdir -p ~/Apps && tar -xzf CapybarasD2Editor-*-linux-x86_64.tar.gz -C ~/Apps
+~/Apps/CapybarasD2Editor-*-linux-x86_64/CapybarasD2Editor
+```
+
+The folder holds the program `CapybarasD2Editor`, the documents, the
+capybara icon and `install-desktop-entry.sh`. Run that script once to add the
+editor to your application menu (for your user only; `--remove` takes it out
+again, and run it again if you move the folder).
+
+What it needs from the system (present on any desktop install; the names are
+Ubuntu/Mint/Debian packages):
+
+- a Vulkan driver: `mesa-vulkan-drivers` for AMD and Intel, or the NVIDIA
+  driver, plus the loader `libvulkan1`;
+- X11 libraries `libx11-6`, `libx11-xcb1`, `libxcursor1`, `libxi6`,
+  `libxkbcommon0` and `libxkbcommon-x11-0` (a Wayland session runs the
+  editor through XWayland);
+- `zenity` for error messages, and `xdg-desktop-portal` with a desktop
+  back-end (or `zenity`) for the file and folder pickers;
+- glibc 2.35 or newer. Nothing else is linked.
+
+Like the Windows exe, it keeps everything it writes in `capybara/` next to
+the program, so the unpacked folder must be writable (your home folder is;
+`/opt` or `/usr/local` are not). A symbolic link to the program, for example
+in `~/.local/bin`, still uses the `capybara/` next to the real file. To keep
+the data somewhere else, set `CAPY_HOME` to that folder. When you unpack a
+newer version into a new folder, move the old `capybara/` folder into it (or
+point `CAPY_HOME` at it) to keep your settings, saves and history.
+
+The game itself usually lives in a Wine prefix. On the first run the editor
+reads the Diablo II install path from the registry files of the prefixes it
+finds (`$WINEPREFIX`, `~/.wine`, the folders in `~/Games` that Lutris
+creates, Bottles' bottles and the Median XL launcher's `~/.d2launcher`) and
+writes the `vanilla` and `mxl` profiles from them. File names are matched
+ignoring case, as the game does, so `D2DATA.MPQ` and `Data/Global/...` work.
+Anywhere else, use **Home > Add game...** and pick the folder that holds
+`d2data.mpq`.
+
 ## Building from source
 
-You need Rust 1.99 or newer (stable, `x86_64-pc-windows-msvc`) and the MSVC
-build tools with the Windows SDK.
+On Windows you need Rust 1.99 or newer (stable, `x86_64-pc-windows-msvc`) and
+the MSVC build tools with the Windows SDK. On Linux, Rust 1.99 or newer and a
+C compiler (`build-essential`) are enough.
 
 ```
 cargo build --release -p capy-app
 ```
 
-The exe is `target\release\CapybarasD2Editor.exe`; `scripts\build-release.ps1`
-builds, checks and zips a release. The build embeds the icon and version
+The exe is `target\release\CapybarasD2Editor.exe` (on Linux
+`target/release/CapybarasD2Editor`); `scripts\build-release.ps1` builds,
+checks and zips a Windows release, `scripts/build-release.sh` the Linux
+archive (and, cross-built, the Windows zip; see
+[docs/release-checklist.md](docs/release-checklist.md)). The build embeds the icon and version
 information with `rc.exe` from the Windows SDK; without it the build still
 succeeds and prints a warning. For development, use the faster-linking dev
 feature (never for release builds):
@@ -149,4 +201,5 @@ are read from your own game files.
 
 MIT. See [LICENSE](LICENSE).
 
-Third-party licenses for everything bundled in the exe: [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+Third-party licenses for everything bundled in the Windows exe and the Linux
+binary: [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
