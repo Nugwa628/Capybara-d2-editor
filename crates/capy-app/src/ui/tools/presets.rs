@@ -48,7 +48,9 @@ pub struct PresetsUi {
 }
 
 fn saves_dir(state: &AppState) -> Option<std::path::PathBuf> {
-    Some(io::saves_root(state)?.join(LIB_DIR))
+    // Per component: the whole `data\\ds1studio\\presets` string is one
+    // folder name off Windows.
+    Some(GamePath::new(LIB_DIR).to_native(&io::saves_root(state)?))
 }
 
 /// Reads the library from the profile's saves.
