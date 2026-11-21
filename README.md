@@ -50,7 +50,8 @@ credit for that design goes to its author; go check it out.
 - **New tiles.** Make floors, roofs, shadows and walls of any orientation
   and height, blank or from a picture, with a live preview on the map's cell,
   and add them to the map's own DT1 in one step; change an existing tile's
-  shape (taller wall, other orientation, floor <-> roof).
+  shape (taller wall, other orientation, floor <-> roof). AI assistants can
+  do the same through the MCP tools (`create_tile`, `import_tile_image`, ...).
 - **Tile browser and search.** A background index of every tile and sprite in
   the profile, a Tiles browser with thumbnails, favorites, recents and saved
   searches, and Ctrl+K search with filters such as `type:floor color:green`.
@@ -66,6 +67,21 @@ credit for that design goes to its author; go check it out.
 - **Loading screen.** Diablo II's door-opening animation with a capybara in
   the door while the game data loads. Click or Esc skips it, and Settings can
   turn it off.
+
+## Planned
+
+Not built yet; planned for a later version.
+
+- **Animated GIF import.** Every frame of a GIF comes in, not only the first:
+  GIF to an animated DC6/DCC in the Converter, and animated floor tiles (water,
+  lava and the like) from a GIF.
+- **New monster from GIFs.** Build a monster's graphics from one GIF or frame
+  folder per animation (stand, walk, attack, get hit, death, ...) and per
+  direction. A monster can face one way only (fine for ghosts, blobs and
+  other shapeless creatures), or have its east-facing views mirrored from the
+  west-facing ones. The tool writes the DCC files, the COF files,
+  `animdata.d2` and the `monstats`/`monstats2` rows, based on an existing
+  monster, with a preview of it turning before anything is saved.
 
 ## Portable layout
 
