@@ -20,9 +20,10 @@ pub mod preset_package;
 mod txt_util;
 pub mod type_package;
 
-// Tile tools (P11): DT1 collision flags, DT1 manager, tile settings, act-safe,
+// Tile tools (P11): DT1 collision flags, DT1 manager, tile creation, tile settings, act-safe,
 // reviews and the unused-asset report.
 pub mod tiles_actsafe;
+pub mod tiles_create;
 pub mod tiles_dt1;
 pub mod tiles_flags;
 pub mod tiles_register;

@@ -1788,6 +1788,7 @@ dependencies = [
  "capy-edit",
  "capy-paint",
  "capy-render",
+ "capy-sprite",
  "d2-assets",
  "d2-formats",
  "proptest",

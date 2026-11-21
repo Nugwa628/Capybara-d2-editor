@@ -329,10 +329,11 @@ pub fn add_tiles_to_map(inp: &AddTilesInput<'_>) -> Result<AddTilesOutcome> {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn types(files: usize) -> TxtDoc {
+    /// Level type 0 ("Town") listing `a/f1.dt1`..`a/f<files>.dt1`.
+    pub(crate) fn types(files: usize) -> TxtDoc {
         let mut h = vec!["Name".to_owned(), "Id".to_owned()];
         h.extend((1..=32).map(|i| format!("File {i}")));
         let mut row = vec!["Town".to_owned(), "0".to_owned()];
@@ -347,7 +348,8 @@ mod tests {
         TxtDoc::parse(text.as_bytes())
     }
 
-    fn prest() -> TxtDoc {
+    /// One LvlPrest row (Def 0, Dt1Mask 3) for `act1/town/x.ds1`.
+    pub(crate) fn prest() -> TxtDoc {
         TxtDoc::parse(b"Name\tDef\tLevelId\tDt1Mask\tFile1\r\nTown\t0\t1\t3\tact1/town/x.ds1\r\n")
     }
 

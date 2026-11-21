@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+- **Tile creation core** (`capy_mod::tiles_create`, library only). Build
+  brand-new DT1 tiles from a picture: floors, roofs, shadows, upper and lower
+  walls of every orientation (north corner halves from one picture), special
+  tiles, with a wall height in whole 32-pixel blocks. Tiles are split into
+  sub-blocks exactly as shipped tiles are (measured over the whole corpus and
+  written down in `docs/specs/dt1.md` section 14): rebuilding every shipped
+  tile from its own render gives identical pixels and byte-identical
+  sub-blocks. Also: the drawable area of a shape as a guide, image import
+  (PNG/BMP/GIF/PCX, quantized to a palette, placed as-is, centred or scaled to
+  fit), re-shaping an existing tile (taller, shorter, another orientation,
+  floor <-> roof), an empty DT1, free tile numbers, and adding created tiles
+  to a map's own DT1 through the "Add to this map" flow. Pixels a tile cannot
+  hold are reported, not lost silently.
+
 ## [1.2.3] - 2026-10-21
 
 ### Added

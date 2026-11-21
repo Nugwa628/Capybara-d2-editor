@@ -234,6 +234,36 @@ pub fn add_tiles_to_map(&AddTilesInput) -> Result<AddTilesOutcome>;
 //          existing_own (+ path). Output: own_path, dt1 (appended), plan, remap (old -> new TileId), placed, types, prest, ds1 (file list), registration, changes, warnings.
 //   Walls keep orientation; animation frames / corner-wall halves stay together (plan_custom_dt1). Callers save the DT1 and the three edited files.
 
+// tiles_create: brand-new tiles (conventions: docs/specs/dt1.md section 14)
+pub enum TileClass { Floor, Roof, Shadow, UpperWall, Special, LowerWall }  // ::of_orientation(i32), .is_diamond()
+pub struct TileShape { orientation: u8, height: u32 /* art height, walls */, roof_height: i16 /* roofs */ }
+//   ::floor(), ::roof(roof_height), ::wall(orientation, height), .class(), .stored_height(),
+//   .normalized() -> Result<TileShape>   // height rounded up to 32; refuses orientation > 19, height 0 or > MAX_WALL_HEIGHT (2016)
+//   ::of_tile(&Tile) -> Option<TileShape> // smallest shape holding every block of the tile
+pub fn direction_of(orientation: i32) -> i32;  pub fn default_flags(orientation: i32) -> [u8; 25];
+pub fn corner_partner(orientation: i32) -> Option<i32>;   // 3 <-> 4
+pub struct PixelRect { x, y, width, height }               // anchor space; .contains(x, y)
+pub struct TemplateCell { x, y, grid_x, grid_y, diamond }  // a sub-block slot, in written order
+pub struct TileTemplate { shape, rect: PixelRect, cells: Vec<TemplateCell> }
+//   .contains(x, y), .mask() -> IndexedImage (index 255 where drawable),
+//   .to_anchor(&plain) -> IndexedImage (pixel 0,0 on rect's top-left), .to_plain(&anchored) -> IndexedImage (exactly rect)
+pub fn template(TileShape) -> Result<TileTemplate>;
+pub struct BuildOptions { flags: Option<[u8; 25]> /* None: default_flags */, rarity: i32, sound: u8, animated: u8 }
+pub struct BuiltTile { tile: Tile, dropped: usize, dropped_bounds: Option<PixelRect>, transparent_zero: usize } // .warning()
+pub fn build_tile(&IndexedImage /* anchor space */, TileShape, main: i32, sub: i32, &BuildOptions) -> Result<BuiltTile>;
+pub fn build_corner_pair(&IndexedImage, height: u32, main, sub, &BuildOptions) -> Result<(BuiltTile /* o3 */, BuiltTile /* o4 */)>;
+pub fn reshape_tile(&Tile, TileShape) -> Result<BuiltTile>;   // re-split: taller/shorter, orientation, floor <-> roof
+pub enum Placement { AsIs /* default */, Center, Fit }
+pub struct ImportOptions { quantize: capy_sprite::quantize::QuantizeOptions, placement: Placement }
+pub fn place_rgba(&RgbaFrame, &TileTemplate, Placement) -> RgbaFrame;
+pub fn place_indexed(&IndexedImage, &TileTemplate, Placement) -> IndexedImage;
+pub fn import_tile_image(bytes: &[u8], ImageKind, &Palette, TileShape, &ImportOptions) -> Result<IndexedImage>;
+pub fn new_dt1() -> Dt1;                                    // version (7, 6), no tiles
+pub fn number_orientations(orientation: i32) -> Vec<i32>;   // [3, 4] for a corner half, else [o]
+pub fn free_tile_number(taken: &BTreeSet<TileId>, orientations: &[i32], prefer_main: Option<i32>) -> Option<(main, sub)>;
+pub struct MapTarget<'a> { /* AddTilesInput without picks/sources */ }
+pub fn add_new_tiles_to_map(&MapTarget, tiles: &[Tile]) -> Result<AddTilesOutcome>; // via add_tiles_to_map, source "new tiles"
+
 // tiles_usage: unused assets and archive plan
 pub fn build_dt1_graph(&[MapRefs], &BTreeMap<String, Vec<TileId>>, protected) -> Vec<Dt1Asset>;
 pub fn unused_report(&ReferenceGraph) -> UnusedReport;   // blocked (empty lists) when the scan had errors
@@ -253,6 +283,28 @@ Behaviour:
 - **Settings .ini**: 5 `floor_flag` rows are sub-tile rows `y = 0..5`; hex for
   direction/orientation/indices/frame/unknown, decimal for roof_y/sound/animated.
   Importing an unchanged `.ini` changes nothing.
+- **Tile creation** (`tiles_create`). Pictures are in the tile's anchor space
+  (`Tile::render`'s space). `build_tile` splits a picture exactly as shipped
+  tiles of the kind are split: floors and roofs into the 5x5 diamond grid
+  (full cell isometric, partial cell RLE `0x2005` with 15 rows, empty cell no
+  block, last cell first), walls, shadows and specials into 32x32 RLE `0x1001`
+  cells (32 rows, top row first, right to left; lower walls bottom row
+  first). It sets height, width, direction, default flags (0x07 where a wall
+  stands; none for floors, roofs, shadows, lower walls, 12 and 14) and rarity
+  0. Every shipped tile rebuilt from its render with `TileShape::of_tile`
+  comes back with identical pixels and byte-identical blocks (corpus test
+  `tiles_create_corpus`). Pixels outside the area and opaque index-0 pixels
+  are counted in `BuiltTile`, never silently lost. The north corner is one
+  picture split at x = 80 (orientation 4 left, 3 right). `reshape_tile` keeps
+  pixels in place in anchor space: walls are anchored at their base, lower
+  walls 96 pixels below their top. `import_tile_image` decodes with
+  `capy_sprite::image_io`, places on RGBA (`Fit` scales nearest-neighbour,
+  aspect kept, centred), then quantizes with `capy_sprite::quantize` (so
+  `capy-mod` depends on `capy-sprite`, which depends only on `d2-formats`).
+  `add_new_tiles_to_map` feeds the tiles to `add_tiles_to_map` as an
+  in-memory source DT1, so numbering, corner/animation grouping and
+  LvlTypes/LvlPrest/DS1 registration are the copy flow's; special tiles
+  (10/11) are skipped with a warning there.
 - **Unused report** is conservative: errors block it, protected assets are listed
   apart. Archive paths are `capybara/archive/<stamp>/<original path>`; paths that
   escape or are already inside `capybara/` are refused; restore skips originals

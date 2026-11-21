@@ -11,6 +11,7 @@ d2-formats.workspace = true
 capy-paint.workspace = true
 capy-render.workspace = true
 capy-edit.workspace = true
+capy-sprite.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
