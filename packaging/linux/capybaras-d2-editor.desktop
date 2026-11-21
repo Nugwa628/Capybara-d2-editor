@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Capybara's D2 Editor
+GenericName=Diablo II map and sprite editor
+Comment=Edit Diablo II .ds1 maps and DC6/DCC sprites
+Exec=CapybarasD2Editor
+Icon=capybaras-d2-editor
+Terminal=false
+Categories=Graphics;2DGraphics;
+Keywords=Diablo;D2;DS1;DT1;DC6;DCC;map;sprite;mod;
+StartupWMClass=CapybarasD2Editor
+StartupNotify=true
