@@ -19,7 +19,6 @@ version = "1.2.3"
 edition = "2024"
 license = "MIT"
 rust-version = "1.99"
-repository = ""
 publish = false
 
 [workspace.lints.rust]
@@ -74,12 +73,12 @@ winit = { version = "0.30", default-features = false }
 winresource = { version = "=0.1.31", default-features = false }
 
 # UI stack, pinned together: bevy_egui 0.43.1 and egui_dock 0.21.1 both
-# require egui 0.36.2. `cargo tree -d` showed a single egui with this set.
-# Only capy-app may use these.
+# require egui 0.36 (Cargo.lock holds 0.36.2). `cargo tree -d` showed a single
+# egui with this set. egui itself is used through `bevy_egui::egui`, so it is
+# not listed here. Only capy-app may use these.
 bevy = { version = "=0.20.0", default-features = false }
 bevy_egui = { version = "=0.43.1", default-features = false, features = ["render", "default_fonts", "manage_clipboard", "open_url"] }
 egui_dock = "=0.21.1"
-egui = "=0.36.2"
 
 [profile.dev.package."*"]
 opt-level = 2

@@ -271,8 +271,8 @@ fn body(
     });
     if dlg.settings.dirs == DirChoice::Ticked {
         ui.horizontal_wrapped(|ui| {
-            for d in 0..dirs {
-                ui.checkbox(&mut dlg.settings.ticked[d], d.to_string());
+            for (d, ticked) in dlg.settings.ticked.iter_mut().enumerate().take(dirs) {
+                ui.checkbox(ticked, d.to_string());
             }
         });
     }

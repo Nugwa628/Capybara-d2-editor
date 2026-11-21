@@ -324,11 +324,10 @@ fn nearest_index(
     let ok = |i: usize| allowed.is_none_or(|a| a[i]);
     let mut best = (1..256).find(|&i| ok(i)).unwrap_or(1);
     let mut best_d = f32::INFINITY;
-    for i in 1..256usize {
+    for (i, c) in pal.colors.iter().enumerate().skip(1) {
         if !ok(i) {
             continue;
         }
-        let c = pal.colors[i];
         let (pr, pg, pb) = (f32::from(c[0]), f32::from(c[1]), f32::from(c[2]));
         let (dr, dg, db) = (pr - rgb[0], pg - rgb[1], pb - rgb[2]);
         let d = if rgb_metric {
