@@ -245,8 +245,11 @@ pub struct EditorState {
     pub canvas_size: (u32, u32),
     /// The tile set when this is a DT1 (tiles are the frames, fixed).
     pub dt1: Option<Dt1Doc>,
-    /// Dimmed-pixel overlay of the locked area: (frame, texture).
-    pub lock_tex: Option<(usize, egui::TextureHandle)>,
+    /// Dimmed-pixel overlay of the locked area: ((frame, lock revision),
+    /// texture).
+    pub lock_tex: Option<((usize, u64), egui::TextureHandle)>,
+    /// The "Shape..." window of a tile set: the shape being picked.
+    pub shape_dialog: Option<crate::ui::tools::newtile::ShapeDialog>,
 }
 
 fn first_opaque(palette: &Palette, prefer: [u8; 3]) -> u8 {
@@ -334,6 +337,7 @@ impl EditorState {
             canvas_size: (0, 0),
             dt1: None,
             lock_tex: None,
+            shape_dialog: None,
         })
     }
 
@@ -349,8 +353,64 @@ impl EditorState {
         };
         let mut e = EditorState::new(sprite, SpriteFormat::Dc6, source, palette)?;
         e.session.lock_structure(doc.editable());
+        e.session.set_lock_tags(doc.tags());
         e.dt1 = Some(doc);
         Ok(e)
+    }
+
+    /// Each tile's lock tag (its shape in the document).
+    pub fn dt1_tags(&self) -> Vec<u64> {
+        (0..self.frames())
+            .map(|i| self.session.lock_tag(i))
+            .collect()
+    }
+
+    /// The shape tile `frame` is edited in, when this is a DT1.
+    pub fn dt1_shape(&self, frame: usize) -> Option<capy_mod::tiles_create::TileShape> {
+        self.dt1
+            .as_ref()?
+            .shape_of(frame, self.session.lock_tag(frame))
+    }
+
+    /// Opaque pixels of tile `frame` that `shape` cannot hold.
+    pub fn dt1_reshape_loss(
+        &mut self,
+        frame: usize,
+        shape: capy_mod::tiles_create::TileShape,
+    ) -> Result<usize, String> {
+        let picture = self
+            .session
+            .frame(FrameRef { dir: 0, frame })
+            .cloned()
+            .ok_or("no such tile")?;
+        let doc = self.dt1.as_mut().ok_or("this document is not a DT1")?;
+        Ok(doc.reshape_frame(&picture, shape)?.3)
+    }
+
+    /// Changes tile `frame` to `shape` (one undo step): the picture stays in
+    /// place, what the new template cannot hold is dropped, and the
+    /// editable area becomes the new template. Returns the dropped count.
+    pub fn dt1_reshape(
+        &mut self,
+        frame: usize,
+        shape: capy_mod::tiles_create::TileShape,
+    ) -> Result<usize, String> {
+        let f = FrameRef { dir: 0, frame };
+        let picture = self.session.frame(f).cloned().ok_or("no such tile")?;
+        let doc = self.dt1.as_mut().ok_or("this document is not a DT1")?;
+        let (img, mask, tag, dropped) = doc.reshape_frame(&picture, shape)?;
+        self.selection = None;
+        self.session
+            .relock_frame(f, img, mask, tag)
+            .map_err(|e| e.to_string())?;
+        Ok(dropped)
+    }
+
+    /// The tiles as they would be saved (each re-split into its blocks).
+    pub fn dt1_tiles(&self) -> Result<(Vec<d2_formats::dt1::Tile>, Vec<String>), String> {
+        let doc = self.dt1.as_ref().ok_or("this document is not a DT1")?;
+        let (tiles, _, warnings) = doc.tiles(self.session.frames(), &self.dt1_tags())?;
+        Ok((tiles, warnings))
     }
 
     pub fn is_dt1(&self) -> bool {
@@ -359,12 +419,12 @@ impl EditorState {
 
     /// The DT1 file with the edited tiles written back, and the number of
     /// tiles that changed.
-    pub fn dt1_bytes(&mut self) -> Result<(Vec<u8>, usize), String> {
-        let frames = self.session.frames().to_vec();
+    pub fn dt1_bytes(&mut self) -> Result<super::dt1edit::Dt1Saved, String> {
+        let tags = self.dt1_tags();
         self.dt1
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| "this document is not a DT1".to_owned())?
-            .save(&frames)
+            .save(self.session.frames(), &tags)
     }
 
     // ───────── colours ─────────

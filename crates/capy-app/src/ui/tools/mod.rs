@@ -21,6 +21,7 @@ pub mod diag;
 pub mod dt1;
 pub mod game;
 pub mod io;
+pub mod newtile;
 pub mod package;
 pub mod presets;
 pub mod review;
@@ -49,6 +50,12 @@ pub const WINDOWS: &[Spec] = &[
         id: "tiles.dt1Manager",
         title: "DT1 libraries",
         size: [760.0, 620.0],
+        needs: Needs::Profile,
+    },
+    Spec {
+        id: "tiles.newTile",
+        title: "New tile",
+        size: [860.0, 700.0],
         needs: Needs::Profile,
     },
     Spec {
@@ -201,6 +208,7 @@ pub struct ToolsState {
     pub open: BTreeSet<&'static str>,
     pub addmap: addmap::AddMapUi,
     pub dt1: dt1::Dt1Ui,
+    pub newtile: newtile::NewTileUi,
     pub review: review::ReviewUi,
     pub diag: diag::DiagUi,
     pub presets: presets::PresetsUi,
@@ -246,6 +254,7 @@ fn opened(state: &mut AppState, id: &str) {
     match id {
         "tiles.dt1Manager" | "tiles.settings" | "tiles.collision" | "tiles.paint"
         | "tiles.actSafe" => dt1::on_open(state),
+        "tiles.newTile" => newtile::on_open(state),
         "game.addToGame" | "game.changeType" | "game.entryText" => game::on_open(state, id),
         "game.automap" => automap_ed::on_open(state),
         "file.exportPackage" => package::on_open(state),
@@ -279,6 +288,7 @@ pub fn windows(ctx: &egui::Context, state: &mut AppState) {
 fn show(ui: &mut egui::Ui, state: &mut AppState, id: &str) {
     match id {
         "tiles.dt1Manager" => dt1::manager(ui, state),
+        "tiles.newTile" => newtile::window(ui, state),
         "tiles.settings" => dt1::settings(ui, state),
         "tiles.collision" => dt1::collision(ui, state),
         "tiles.paint" => dt1::paint(ui, state),

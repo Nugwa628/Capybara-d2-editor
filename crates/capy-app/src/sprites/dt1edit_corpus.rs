@@ -52,8 +52,10 @@ fn real_tile_sets_round_trip_and_take_one_edit() {
         let Ok(view) = Dt1View::load(&bytes) else {
             continue; // an undocumented version
         };
-        let mut d = Dt1Doc::from_view(&view);
-        let (out, changed) = d.save(&d.frames()).unwrap();
+        let d = Dt1Doc::from_view(&view);
+        let tags = d.tags();
+        let saved = d.save(&d.frames(), &tags).unwrap();
+        let (out, changed) = (saved.bytes, saved.changed);
         assert!(changed == 0 && out == bytes, "{}", path.display());
         // Paint the first editable pixel of the first tile that has one.
         let masks = d.editable();
@@ -70,7 +72,8 @@ fn real_tile_sets_round_trip_and_take_one_edit() {
         img.pixels[i] = if was == 200 { 201 } else { 200 };
         img.alpha[i] = 255;
         let painted = img.pixels[i];
-        let (out, changed) = d.save(&frames).unwrap();
+        let saved = d.save(&frames, &tags).unwrap();
+        let (out, changed) = (saved.bytes, saved.changed);
         assert_eq!(changed, 1, "{}", path.display());
         let (before, after) = (Dt1::parse(&bytes).unwrap(), Dt1::parse(&out).unwrap());
         for (n, (a, b)) in before.tiles.iter().zip(&after.tiles).enumerate() {

@@ -18,6 +18,7 @@ use capy_mod::tiles_register::{
 use capy_mod::tiles_review::TilePick;
 use d2_assets::GamePath;
 use d2_formats::dt1::Dt1;
+use d2_formats::txt::TxtDoc;
 
 use super::io;
 use crate::browser::brush::{TileId as KeyId, parse_tile_key, tile_key};
@@ -39,7 +40,8 @@ pub struct Plan {
 }
 
 pub struct Dialog {
-    keys: Vec<String>,
+    /// "3 tile(s) picked.", or what was created.
+    what: String,
     plan: Result<Plan, String>,
 }
 
@@ -53,10 +55,33 @@ pub struct AddMapUi {
 /// Opens the preview for `keys` (tile keys of the Tiles browser).
 pub fn open(state: &mut AppState, keys: Vec<String>) {
     let plan = compute(state, &keys);
-    state.tools.addmap.dialog = Some(Dialog { keys, plan });
+    let what = format!("{} tile(s) picked.", keys.len());
+    state.tools.addmap.dialog = Some(Dialog { what, plan });
 }
 
-fn compute(state: &AppState, keys: &[String]) -> Result<Plan, String> {
+/// What adding tiles to the open map works from: its level type, the
+/// tables, every DT1 of the type and the type's own-tiles DT1.
+pub struct MapContext {
+    pub type_id: u32,
+    pub def: Option<u32>,
+    pub map_path: String,
+    pub types: TxtDoc,
+    pub prest: TxtDoc,
+    pub compiled: bool,
+    pub type_libs: Vec<(String, Dt1)>,
+    pub own_rel: String,
+    pub own_game: GamePath,
+    pub existing: Option<Dt1>,
+}
+
+impl MapContext {
+    pub fn type_dt1s(&self) -> Vec<(String, &Dt1)> {
+        self.type_libs.iter().map(|(p, d)| (p.clone(), d)).collect()
+    }
+}
+
+/// The open map's [`MapContext`].
+pub fn map_context(state: &AppState) -> Result<MapContext, String> {
     let doc = state.active_doc().ok_or("Open a map first")?;
     let info = doc
         .info
@@ -66,7 +91,100 @@ fn compute(state: &AppState, keys: &[String]) -> Result<Plan, String> {
         .lvl_type
         .ok_or("This map has no level type, so there is nowhere to register the tiles")?;
     let map_path = doc.path.as_str().to_owned();
-    let (types_doc, prest_doc, compiled) = io::tables_for_tiles(state)?;
+    let (types, prest, compiled) = io::tables_for_tiles(state)?;
+    // every DT1 of the level type, and the type's own-tiles DT1 if it exists
+    let mut type_libs: Vec<(String, Dt1)> = Vec::new();
+    for rel in type_files(&types, type_id) {
+        if let Some(b) = io::read_game(state, &io::tiles_game(&rel))?
+            && let Ok(d) = Dt1::parse(&b)
+        {
+            type_libs.push((rel, d));
+        }
+    }
+    let own_rel = own_path_for(&types, type_id, &map_path);
+    let own_game = io::tiles_game(&own_rel);
+    let existing = match io::read_game(state, &own_game)? {
+        Some(b) => Some(Dt1::parse(&b).map_err(|e| format!("{own_game}: {e}"))?),
+        None => None,
+    };
+    Ok(MapContext {
+        type_id,
+        def: info.lvlprest_def,
+        map_path,
+        types,
+        prest,
+        compiled,
+        type_libs,
+        own_rel,
+        own_game,
+        existing,
+    })
+}
+
+impl Plan {
+    /// A plan from an outcome computed on `ctx`; the brush becomes the tile
+    /// picked as `first` (source, index) at its new number.
+    pub fn new(out: AddTilesOutcome, ctx: MapContext, first: Option<(usize, usize)>) -> Plan {
+        let own_game = ctx.own_game;
+        let brush_key = first.and_then(|(s, i)| {
+            let at = out
+                .plan
+                .tiles
+                .iter()
+                .position(|p| p.from.source == s && p.from.index == i)?;
+            let me = &out.plan.tiles[at];
+            let to =
+                capy_mod::tiles_review::TileId::new(me.id.orientation, me.new_main, me.new_sub);
+            // index among the tiles with this number in the library: the
+            // earlier frames of the same number (the library had none before)
+            let n = out.plan.tiles[..at]
+                .iter()
+                .filter(|p| {
+                    p.new_main == to.main
+                        && p.new_sub == to.sub
+                        && p.id.orientation == to.orientation
+                })
+                .count();
+            Some(tile_key(
+                own_game.as_str(),
+                KeyId {
+                    orientation: u8::try_from(to.orientation).ok()?,
+                    main: u8::try_from(to.main).ok()?,
+                    sub: u8::try_from(to.sub).ok()?,
+                    n: n as u32,
+                },
+            ))
+        });
+        Plan {
+            out,
+            own_game,
+            brush_key,
+            compiled: ctx.compiled,
+            type_id: ctx.type_id,
+            def: ctx.def,
+            map_path: ctx.map_path,
+        }
+    }
+
+    /// Where the tiles went: (orientation, main, sub) of each added tile.
+    pub fn placed(&self) -> Vec<(i32, i32, i32)> {
+        self.out
+            .plan
+            .tiles
+            .iter()
+            .map(|p| (p.id.orientation, p.new_main, p.new_sub))
+            .collect()
+    }
+}
+
+/// Opens the preview on a plan made elsewhere (created tiles).
+pub fn open_plan(state: &mut AppState, what: String, plan: Result<Plan, String>) {
+    state.tools.addmap.dialog = Some(Dialog { what, plan });
+}
+
+fn compute(state: &AppState, keys: &[String]) -> Result<Plan, String> {
+    let ctx = map_context(state)?;
+    let doc = state.active_doc().ok_or("Open a map first")?;
 
     // the picked tiles' source libraries
     let mut src_paths: Vec<String> = Vec::new();
@@ -105,78 +223,31 @@ fn compute(state: &AppState, keys: &[String]) -> Result<Plan, String> {
         return Err("No tile is picked".into());
     }
     let sources: Vec<(String, &Dt1)> = src_paths.iter().cloned().zip(src_dt1.iter()).collect();
-
-    // every DT1 of the level type, and the type's own-tiles DT1 if it exists
-    let mut type_libs: Vec<(String, Dt1)> = Vec::new();
-    for rel in type_files(&types_doc, type_id) {
-        if let Some(b) = io::read_game(state, &io::tiles_game(&rel))?
-            && let Ok(d) = Dt1::parse(&b)
-        {
-            type_libs.push((rel, d));
-        }
-    }
-    let type_dt1s: Vec<(String, &Dt1)> = type_libs.iter().map(|(p, d)| (p.clone(), d)).collect();
-    let own_rel = own_path_for(&types_doc, type_id, &map_path);
-    let own_game = io::tiles_game(&own_rel);
-    let existing = match io::read_game(state, &own_game)? {
-        Some(b) => Some(Dt1::parse(&b).map_err(|e| format!("{own_game}: {e}"))?),
-        None => None,
-    };
+    let type_dt1s = ctx.type_dt1s();
     let out = add_tiles_to_map(&AddTilesInput {
-        map_path: &map_path,
+        map_path: &ctx.map_path,
         ds1: doc.edit.ds1(),
-        types: &types_doc,
-        prest: &prest_doc,
-        type_id,
-        prest_def: info.lvlprest_def,
+        types: &ctx.types,
+        prest: &ctx.prest,
+        type_id: ctx.type_id,
+        prest_def: ctx.def,
         picks: &picks,
         sources: &sources,
         type_dt1s: &type_dt1s,
-        existing_own: existing.as_ref(),
-        existing_own_path: Some(&own_rel),
+        existing_own: ctx.existing.as_ref(),
+        existing_own_path: Some(&ctx.own_rel),
     })
     .map_err(|e| e.to_string())?;
-
-    // the brush: the first picked tile at its new number
-    let brush_key = first.and_then(|(s, i)| {
-        let at = out
-            .plan
-            .tiles
-            .iter()
-            .position(|p| p.from.source == s && p.from.index == i)?;
-        let me = &out.plan.tiles[at];
-        let to = capy_mod::tiles_review::TileId::new(me.id.orientation, me.new_main, me.new_sub);
-        // index among the tiles with this number in the library: the earlier
-        // frames of the same number (the library had none before)
-        let n = out.plan.tiles[..at]
-            .iter()
-            .filter(|p| {
-                p.new_main == to.main && p.new_sub == to.sub && p.id.orientation == to.orientation
-            })
-            .count();
-        Some(tile_key(
-            own_game.as_str(),
-            KeyId {
-                orientation: u8::try_from(to.orientation).ok()?,
-                main: u8::try_from(to.main).ok()?,
-                sub: u8::try_from(to.sub).ok()?,
-                n: n as u32,
-            },
-        ))
-    });
-    Ok(Plan {
-        out,
-        own_game,
-        brush_key,
-        compiled,
-        type_id,
-        def: info.lvlprest_def,
-        map_path,
-    })
+    Ok(Plan::new(out, ctx, first))
 }
 
 /// Saves what the preview showed and applies it to the open map.
-fn apply(state: &mut AppState, plan: Plan) -> Result<String, String> {
+pub fn apply(state: &mut AppState, plan: Plan) -> Result<String, String> {
+    let placed: Vec<String> = plan
+        .placed()
+        .iter()
+        .map(|(o, m, s)| format!("{o}:{m}/{s}"))
+        .collect();
     let Plan {
         out,
         own_game,
@@ -214,9 +285,10 @@ fn apply(state: &mut AppState, plan: Plan) -> Result<String, String> {
     }
     state.tools.addmap.picked.clear();
     let msg = format!(
-        "Added {} tile(s) to {} ({} renumbered)",
+        "Added {} tile(s) to {} as {} ({} renumbered)",
         out.added,
         io::tiles_rel(own_game.as_str()),
+        placed.join(", "),
         out.remap.len()
     );
     for w in &out.warnings {
@@ -257,7 +329,7 @@ pub fn window(ctx: &egui::Context, state: &mut AppState) {
         .open(&mut open)
         .default_width(520.0)
         .show(ctx, |ui| {
-            ui.label(format!("{} tile(s) picked.", d.keys.len()));
+            ui.label(&d.what);
             match &d.plan {
                 Err(e) => {
                     ui.colored_label(ERROR, e);

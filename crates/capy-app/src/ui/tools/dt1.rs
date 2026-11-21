@@ -8,9 +8,10 @@ use std::collections::{BTreeSet, HashMap};
 
 use bevy_egui::egui::{self, Color32, ColorImage, TextureHandle, TextureOptions, Ui};
 use capy_mod::tiles_actsafe::{ActSafeOptions, Safe, count_unsafe_pixels, make_act_safe};
+use capy_mod::tiles_create::{TileShape, new_dt1, reshape_tile};
 use capy_mod::tiles_dt1::{
-    HueOptions, TileChange, duplicate_dt1, hue_remap, plan_rename, recolor_tiles,
-    rename_references, set_block_pixels,
+    HueOptions, TileChange, custom_name_problem, duplicate_dt1, hue_remap, max_custom_name_length,
+    plan_rename, recolor_tiles, rename_references, set_block_pixels,
 };
 use capy_mod::tiles_flags::{
     COLLISION_FLAGS, FlagOp, WALKABLE_MASK, collision_hex, describe_collision, edit_subtile_flags,
@@ -25,6 +26,7 @@ use d2_formats::dt1::{BlockFormat, Dt1};
 use d2_formats::palette::{Palette, act_palette_path};
 
 use super::io;
+use super::newtile::{ShapeDialog, reshape_warning, shape_picker};
 use crate::state::AppState;
 
 const MAX_UNDO: usize = 12;
@@ -209,6 +211,12 @@ pub struct Dt1Ui {
     pub distance: usize,
     pub report: String,
     paint: PixelPaint,
+    // new empty DT1
+    pub new_name: String,
+    pub new_folder: String,
+    pub new_register: bool,
+    // Shape of the selected tile: (tile, dialog, lib revision of its loss)
+    pub shape: Option<(usize, ShapeDialog)>,
 }
 
 impl Default for Dt1Ui {
@@ -236,6 +244,10 @@ impl Default for Dt1Ui {
             distance: 0,
             report: String::new(),
             paint: PixelPaint::default(),
+            new_name: String::new(),
+            new_folder: String::new(),
+            new_register: true,
+            shape: None,
         }
     }
 }
@@ -435,6 +447,249 @@ pub fn rename(state: &mut AppState, stem: &str) -> Result<usize, String> {
 /// A tile-library window opened: refresh the list of libraries.
 pub fn on_open(state: &mut AppState) {
     state.tools.dt1.candidates = None;
+    if state.tools.dt1.new_folder.is_empty()
+        && let Some(f) = map_tile_folder(state)
+    {
+        state.tools.dt1.new_folder = f;
+    }
+}
+
+/// The folder (relative to data/global/tiles) of the open map's own-tiles
+/// DT1: where its level type keeps most of its libraries.
+pub fn map_tile_folder(state: &AppState) -> Option<String> {
+    let ctx = super::addmap::map_context(state).ok()?;
+    Some(match ctx.own_rel.rfind('/') {
+        Some(i) => ctx.own_rel[..i].to_owned(),
+        None => String::new(),
+    })
+}
+
+/// "New empty DT1": `name`.dt1 in `folder` (relative to data/global/tiles)
+/// with no tiles, saved to the profile's saves and opened here. With
+/// `register`, the open map's level type loads it the way Add to this map
+/// registers a DT1 (LvlTypes File slot, LvlPrest Dt1Mask, the DS1's file
+/// list).
+pub fn create_empty(
+    state: &mut AppState,
+    folder: &str,
+    name: &str,
+    register: bool,
+) -> Result<String, String> {
+    let folder = folder.trim().replace('\\', "/");
+    let folder = folder.trim_matches('/');
+    if !folder
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'/')
+        || folder.contains("//")
+    {
+        return Err("The folder may hold only letters, digits, _ and /".into());
+    }
+    if let Some(p) = custom_name_problem(name, folder) {
+        return Err(p);
+    }
+    let name = name.trim();
+    let rel = if folder.is_empty() {
+        format!("{name}.dt1")
+    } else {
+        format!("{folder}/{name}.dt1")
+    };
+    let game = io::tiles_game(&rel);
+    if io::read_game(state, &game)?.is_some() {
+        return Err(format!("{game} already exists; open it instead"));
+    }
+    if register {
+        // checked before anything is written
+        state
+            .active_doc()
+            .ok_or("Open a map to register the DT1 for")?;
+    }
+    let bytes = new_dt1()
+        .to_bytes()
+        .map_err(|e| format!("cannot write the DT1: {e}"))?;
+    io::save_game(state, &game, &bytes)?;
+    let mut msg = format!("Created {game} (no tiles yet)");
+    if register {
+        let reg = io::register_for_open_map(state, &rel)?;
+        for c in &reg.changes {
+            msg.push_str(&format!("; {c}"));
+        }
+        for w in &reg.warnings {
+            state.warn(w.clone());
+        }
+        let mut ds1 = state
+            .active_doc()
+            .ok_or("Open a map first")?
+            .edit
+            .ds1()
+            .clone();
+        let add = capy_mod::compat::Edit::AddDt1s {
+            paths: vec![rel.clone()],
+        };
+        if add.apply_ds1(&mut ds1) {
+            super::game::replace_map(state, "List the new DT1", ds1)?;
+        }
+        if let Some(i) = state.active {
+            crate::ui::studio::libs::attach_to_info(state, i, &game);
+        }
+        state.rebuild_catalog();
+    }
+    open_lib(state, game.as_str())?;
+    state.tools.dt1.candidates = None;
+    state.tools.dt1.status = msg.clone();
+    state.info(msg.clone());
+    Ok(msg)
+}
+
+/// "Shape...": re-splits the open library's selected tile into `shape`
+/// (one undo step). Returns the pixels left out.
+pub fn reshape_selected(state: &mut AppState, shape: TileShape) -> Result<usize, String> {
+    let lib = state.tools.dt1.lib.as_mut().ok_or("No library is open")?;
+    let i = lib.tile;
+    let dropped = lib.edit(|d| {
+        let t = d.tiles.get(i).ok_or_else(|| format!("no tile {i}"))?;
+        let built = reshape_tile(t, shape).map_err(|e| e.to_string())?;
+        d.tiles[i] = built.tile;
+        Ok(built.dropped)
+    })?;
+    state.tools.dt1.status = format!(
+        "Tile {i} has a new shape{}",
+        if dropped > 0 {
+            format!(" ({dropped} pixel(s) left out)")
+        } else {
+            String::new()
+        }
+    );
+    Ok(dropped)
+}
+
+fn new_dt1_section(ui: &mut Ui, state: &mut AppState, d: &mut Dt1Ui) {
+    ui.collapsing("New empty DT1", |ui| {
+        let has_map = state.active_doc().is_some();
+        egui::Grid::new("dt1_new").num_columns(2).show(ui, |ui| {
+            ui.label("Folder");
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut d.new_folder)
+                        .hint_text("act1/town")
+                        .desired_width(200.0),
+                );
+                if has_map
+                    && ui
+                        .small_button("The map's")
+                        .on_hover_text("The folder of the map's level type (where its own-tiles DT1 goes)")
+                        .clicked()
+                    && let Some(f) = map_tile_folder(state)
+                {
+                    d.new_folder = f;
+                }
+            });
+            ui.end_row();
+            ui.label("Name");
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut d.new_name)
+                        .hint_text("mytiles")
+                        .desired_width(200.0),
+                );
+                ui.weak(format!(
+                    ".dt1 (at most {})",
+                    max_custom_name_length(d.new_folder.trim())
+                ));
+            });
+            ui.end_row();
+        });
+        ui.add_enabled_ui(has_map, |ui| {
+            ui.checkbox(
+                &mut d.new_register,
+                "Register it for the open map's level type (LvlTypes, LvlPrest Dt1Mask, the map's file list)",
+            );
+        });
+        let problem = custom_name_problem(&d.new_name, d.new_folder.trim());
+        if let Some(p) = &problem
+            && !d.new_name.is_empty()
+        {
+            ui.colored_label(Color32::from_rgb(235, 150, 40), p);
+        }
+        if ui
+            .add_enabled(problem.is_none(), egui::Button::new("Create"))
+            .clicked()
+        {
+            let (folder, name, reg) = (d.new_folder.clone(), d.new_name.clone(), d.new_register && has_map);
+            state.tools.dt1 = std::mem::take(d);
+            let r = create_empty(state, &folder, &name, reg);
+            *d = std::mem::take(&mut state.tools.dt1);
+            if let Err(e) = r {
+                d.status = format!("Cannot create the DT1: {e}");
+            }
+        }
+    });
+}
+
+fn shape_section(ui: &mut Ui, state: &mut AppState, d: &mut Dt1Ui) {
+    let Some(lib) = d.lib.as_ref() else { return };
+    let i = lib.tile;
+    let Some(cur) = lib.dt1.tiles.get(i).and_then(TileShape::of_tile) else {
+        return;
+    };
+    let rev = lib.rev;
+    ui.collapsing("Shape of the selected tile", |ui| {
+        if d.shape.as_ref().map(|s| s.0) != Some(i) {
+            d.shape = Some((i, ShapeDialog::new(cur)));
+        }
+        let Some((_, dlg)) = d.shape.as_mut() else {
+            return;
+        };
+        ui.label(format!(
+            "Tile {i}, now {}",
+            super::newtile::describe_shape(cur)
+        ));
+        shape_picker(ui, "lib_shape", &mut dlg.choice, false);
+        let key = (dlg.choice, i, rev);
+        if dlg.loss.as_ref().map(|l| l.0) != Some(key) {
+            let loss = match (
+                dlg.choice.shape(),
+                d.lib.as_ref().and_then(|l| l.dt1.tiles.get(i)),
+            ) {
+                (Some(shape), Some(t)) => reshape_tile(t, shape)
+                    .map(|b| b.dropped)
+                    .map_err(|e| e.to_string()),
+                _ => Err("pick one tile's shape".to_owned()),
+            };
+            dlg.loss = Some((key, loss));
+        }
+        let ok = match dlg.loss.as_ref().map(|l| &l.1) {
+            Some(Ok(n)) => {
+                match reshape_warning(*n) {
+                    Some(w) => {
+                        ui.colored_label(Color32::from_rgb(235, 150, 40), w);
+                    }
+                    None => {
+                        ui.weak("Every pixel of the tile fits the new shape.");
+                    }
+                }
+                true
+            }
+            Some(Err(e)) => {
+                ui.colored_label(Color32::from_rgb(235, 90, 90), e);
+                false
+            }
+            None => false,
+        };
+        let same = dlg.choice.shape().and_then(|s| s.normalized().ok()) == cur.normalized().ok();
+        if ui
+            .add_enabled(ok && !same, egui::Button::new("Apply"))
+            .on_hover_text("Re-split the tile into the new shape (Undo above brings it back)")
+            .clicked()
+            && let Some(shape) = dlg.choice.shape()
+        {
+            state.tools.dt1 = std::mem::take(d);
+            let r = reshape_selected(state, shape);
+            *d = std::mem::take(&mut state.tools.dt1);
+            if let Err(e) = r {
+                d.status = format!("Cannot change the shape: {e}");
+            }
+        }
+    });
 }
 
 // ───────────────────────── windows ─────────────────────────
@@ -506,6 +761,7 @@ fn lib_header(ui: &mut Ui, state: &mut AppState, d: &mut Dt1Ui) {
         return;
     };
     let mut save = false;
+    let mut new_tile = false;
     ui.horizontal(|ui| {
         ui.strong(&lib.path);
         ui.label(format!(
@@ -530,11 +786,25 @@ fn lib_header(ui: &mut Ui, state: &mut AppState, d: &mut Dt1Ui) {
         save = ui
             .add_enabled(lib.dirty, egui::Button::new("Save to the saves folder"))
             .clicked();
+        if ui
+            .button("New tile into this DT1...")
+            .on_hover_text("Open New tile aimed at this library")
+            .clicked()
+        {
+            new_tile = true;
+        }
     });
     if save {
         let mut keep = std::mem::take(d);
         std::mem::swap(&mut state.tools.dt1, &mut keep);
         let _ = save_lib(state);
+        *d = std::mem::take(&mut state.tools.dt1);
+    }
+    if new_tile {
+        state.tools.dt1 = std::mem::take(d);
+        if let Err(e) = super::newtile::open_for_library(state) {
+            state.error(e);
+        }
         *d = std::mem::take(&mut state.tools.dt1);
     }
     ui.horizontal(|ui| {
@@ -622,11 +892,13 @@ fn tile_grid(ui: &mut Ui, d: &mut Dt1Ui, state: &AppState, height: f32) {
 pub fn manager(ui: &mut Ui, state: &mut AppState) {
     let mut d = std::mem::take(&mut state.tools.dt1);
     chooser(ui, state, &mut d);
+    new_dt1_section(ui, state, &mut d);
     status_line(ui, &d);
     ui.separator();
     lib_header(ui, state, &mut d);
     if d.lib.is_some() {
         ui.separator();
+        shape_section(ui, state, &mut d);
         ui.collapsing("Recolour", |ui| {
             egui::Grid::new("dt1_recolour")
                 .num_columns(2)
@@ -839,35 +1111,101 @@ fn diamond_poly(rect: egui::Rect, x: usize, y: usize) -> Vec<egui::Pos2> {
     ]
 }
 
+/// The collision brush: what a click does (Add, Remove, Set, Make walkable)
+/// and with which flag bits.
+pub fn flag_brush(ui: &mut Ui, op: &mut usize, bits: &mut u8) {
+    ui.horizontal(|ui| {
+        ui.label("Brush:");
+        for (i, name) in ["Add", "Remove", "Set", "Make walkable"].iter().enumerate() {
+            ui.selectable_value(op, i, *name);
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        for f in COLLISION_FLAGS {
+            let mut on = *bits & f.bit != 0;
+            if ui
+                .checkbox(&mut on, format!("{:02X} {}", f.bit, f.name))
+                .on_hover_text(f.help)
+                .changed()
+            {
+                *bits ^= f.bit;
+            }
+        }
+    });
+}
+
+/// The [`flag_brush`] choice as an operation.
+pub fn flag_op(op: usize, bits: u8) -> FlagOp {
+    match op {
+        0 => FlagOp::Add(bits),
+        1 => FlagOp::Remove(bits),
+        2 => FlagOp::Set(bits),
+        _ => FlagOp::MakeWalkable,
+    }
+}
+
+/// The 5x5 sub-tiles of `flags` as a diamond (hover tells what a cell's
+/// flags mean); returns the cells clicked or dragged over.
+pub fn flags_diamond(ui: &mut Ui, flags: &[u8; 25], size: egui::Vec2) -> Vec<usize> {
+    let mut out = Vec::new();
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+    for y in 0..5 {
+        for x in 0..5 {
+            let f = flags[y * 5 + x];
+            let fill = if f == 0 {
+                Color32::from_rgb(40, 90, 50)
+            } else if f & WALKABLE_MASK != 0 {
+                Color32::from_rgb(150, 60, 50)
+            } else {
+                Color32::from_rgb(150, 120, 40)
+            };
+            let poly = diamond_poly(rect, x, y);
+            let c = poly.iter().fold(egui::Vec2::ZERO, |a, p| a + p.to_vec2()) / 4.0;
+            painter.add(egui::Shape::convex_polygon(
+                poly,
+                fill,
+                egui::Stroke::new(1.0, Color32::from_gray(15)),
+            ));
+            painter.text(
+                c.to_pos2(),
+                egui::Align2::CENTER_CENTER,
+                collision_hex(f),
+                egui::FontId::monospace(10.0),
+                Color32::WHITE,
+            );
+        }
+    }
+    if (resp.clicked() || resp.dragged())
+        && let Some(p) = resp.interact_pointer_pos()
+        && let Some(cell) = diamond_cell(rect, p)
+    {
+        out.push(cell);
+    }
+    if let Some(p) = resp.hover_pos()
+        && let Some(cell) = diamond_cell(rect, p)
+    {
+        let f = flags[cell];
+        resp.on_hover_text(format!(
+            "({}, {}) {}",
+            cell % 5,
+            cell / 5,
+            describe_collision(f)
+        ));
+    }
+    out
+}
+
 pub fn collision(ui: &mut Ui, state: &mut AppState) {
     let mut d = std::mem::take(&mut state.tools.dt1);
     chooser(ui, state, &mut d);
     lib_header(ui, state, &mut d);
     status_line(ui, &d);
     let palette = d.palette(state);
-    let (op_i, bits) = (d.flag_op, d.flag_bits);
     if d.lib.is_some() {
         ui.separator();
-        ui.horizontal(|ui| {
-            ui.label("Brush:");
-            for (i, name) in ["Add", "Remove", "Set", "Make walkable"].iter().enumerate() {
-                ui.selectable_value(&mut d.flag_op, i, *name);
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
-            for f in COLLISION_FLAGS {
-                let mut on = d.flag_bits & f.bit != 0;
-                if ui
-                    .checkbox(&mut on, format!("{:02X} {}", f.bit, f.name))
-                    .on_hover_text(f.help)
-                    .changed()
-                {
-                    d.flag_bits ^= f.bit;
-                }
-            }
-        });
+        flag_brush(ui, &mut d.flag_op, &mut d.flag_bits);
     }
-    let _ = (op_i, bits);
     let (op_i, bits) = (d.flag_op, d.flag_bits);
     let mut paint_cells: Vec<usize> = Vec::new();
     let mut whole = false;
@@ -885,55 +1223,14 @@ pub fn collision(ui: &mut Ui, state: &mut AppState) {
                 ui.label(format!(
                     "Tile {tile}: click or drag across the 5x5 sub-tiles"
                 ));
-                let (rect, resp) =
-                    ui.allocate_exact_size(egui::vec2(300.0, 150.0), egui::Sense::click_and_drag());
-                if let Some(t) = lib.dt1.tiles.get(tile) {
-                    let painter = ui.painter_at(rect);
-                    for y in 0..5 {
-                        for x in 0..5 {
-                            let f = t.subtile_flags[y * 5 + x];
-                            let fill = if f == 0 {
-                                Color32::from_rgb(40, 90, 50)
-                            } else if f & WALKABLE_MASK != 0 {
-                                Color32::from_rgb(150, 60, 50)
-                            } else {
-                                Color32::from_rgb(150, 120, 40)
-                            };
-                            let poly = diamond_poly(rect, x, y);
-                            let c =
-                                poly.iter().fold(egui::Vec2::ZERO, |a, p| a + p.to_vec2()) / 4.0;
-                            painter.add(egui::Shape::convex_polygon(
-                                poly,
-                                fill,
-                                egui::Stroke::new(1.0, Color32::from_gray(15)),
-                            ));
-                            painter.text(
-                                c.to_pos2(),
-                                egui::Align2::CENTER_CENTER,
-                                collision_hex(f),
-                                egui::FontId::monospace(10.0),
-                                Color32::WHITE,
-                            );
-                        }
+                match lib.dt1.tiles.get(tile) {
+                    Some(t) => {
+                        let flags = t.subtile_flags;
+                        paint_cells = flags_diamond(ui, &flags, egui::vec2(300.0, 150.0));
                     }
-                }
-                if (resp.clicked() || resp.dragged())
-                    && let Some(p) = resp.interact_pointer_pos()
-                    && let Some(cell) = diamond_cell(rect, p)
-                {
-                    paint_cells.push(cell);
-                }
-                if let Some(p) = resp.hover_pos()
-                    && let Some(cell) = diamond_cell(rect, p)
-                    && let Some(t) = lib.dt1.tiles.get(tile)
-                {
-                    let f = t.subtile_flags[cell];
-                    resp.on_hover_text(format!(
-                        "({}, {}) {}",
-                        cell % 5,
-                        cell / 5,
-                        describe_collision(f)
-                    ));
+                    None => {
+                        ui.allocate_exact_size(egui::vec2(300.0, 150.0), egui::Sense::hover());
+                    }
                 }
                 ui.horizontal(|ui| {
                     if ui.button("Whole tile").clicked() {
@@ -949,12 +1246,7 @@ pub fn collision(ui: &mut Ui, state: &mut AppState) {
             } else {
                 paint_cells
             };
-            let op = match op_i {
-                0 => FlagOp::Add(bits),
-                1 => FlagOp::Remove(bits),
-                2 => FlagOp::Set(bits),
-                _ => FlagOp::MakeWalkable,
-            };
+            let op = flag_op(op_i, bits);
             let tiles = lib.targets();
             let r = lib
                 .edit(|dt| edit_subtile_flags(dt, &tiles, &cells, op).map_err(|e| e.to_string()));

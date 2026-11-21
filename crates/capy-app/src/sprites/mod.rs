@@ -1246,7 +1246,11 @@ impl AppState {
                 .map(|s| s.profile.id.clone())
                 .ok_or("no profile is open")?;
             let e = self.sprites.editor.as_mut().ok_or("nothing to save")?;
-            let (bytes, tiles) = e.dt1_bytes()?;
+            let saved = e.dt1_bytes()?;
+            let (bytes, tiles) = (saved.bytes, saved.changed);
+            for w in saved.warnings {
+                self.warn(w);
+            }
             // What the game will read must parse.
             d2_formats::dt1::Dt1::parse(&bytes)
                 .map_err(|err| format!("the written DT1 does not parse: {err}"))?;
@@ -1285,7 +1289,11 @@ impl AppState {
     /// "Export to..." a loose DT1 file.
     fn dt1_export(&mut self, file: &Path) -> Result<String, String> {
         let e = self.sprites.editor.as_mut().ok_or("nothing to export")?;
-        let (bytes, tiles) = e.dt1_bytes()?;
+        let saved = e.dt1_bytes()?;
+        let (bytes, tiles) = (saved.bytes, saved.changed);
+        for w in saved.warnings {
+            self.warn(w);
+        }
         let file = convert::with_extension(file, "dt1");
         if let Some(dir) = file.parent()
             && !dir.as_os_str().is_empty()

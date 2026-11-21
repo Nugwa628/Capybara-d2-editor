@@ -3,10 +3,18 @@
 //! block's footprint are locked, and saving cuts the edited frames back into
 //! their blocks. Only blocks whose pixels changed are re-encoded, so the rest
 //! of the file keeps its bytes.
+//!
+//! A tile can also be edited in a *shape* (`capy_mod::tiles_create`): a new
+//! tile from the New tile dialog, or an existing one after "Shape...". Its
+//! frame is then the template's box, every pixel of the template is
+//! editable (not only the existing blocks), and saving rebuilds the tile
+//! with `build_tile`. Which shape a frame has is the paint session's lock tag
+//! (`PaintSession::relock_frame`), so undo and redo carry it.
 
+use capy_mod::tiles_create::{BuildOptions, BuiltTile, TileShape, build_tile, template};
 use capy_paint::Mask;
 use d2_formats::IndexedImage;
-use d2_formats::dt1::{Block, BlockFormat, Dt1};
+use d2_formats::dt1::{Block, BlockFormat, Dt1, Tile};
 
 use super::dt1view::{Dt1View, TileInfo};
 
@@ -77,38 +85,139 @@ impl Footprint {
     }
 }
 
+/// What a new-tiles document (from the New tile dialog) goes into.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NewTilesTarget {
+    /// The open map's own DT1 ("Add to this map").
+    Map,
+    /// A library open in the Tile libraries window (its game path).
+    Library(String),
+}
+
+/// The DT1 a document saves, and what happened on the way.
+pub struct Dt1Saved {
+    pub bytes: Vec<u8>,
+    /// Tiles that differ from the file as opened.
+    pub changed: usize,
+    /// Pixels a tile's shape could not hold (from `build_tile`).
+    pub warnings: Vec<String>,
+}
+
 pub struct Dt1Doc {
+    /// The file as opened (or the created tiles): what a tile with tag 0 is
+    /// cut back into.
     dt1: Dt1,
-    /// Each tile's frame as last loaded or saved.
+    /// Each tile's frame when the document opened.
     base: Vec<IndexedImage>,
+    /// Each tile of `dt1` rendered (the frame of tag 0).
+    rendered: Vec<IndexedImage>,
     pub info: Vec<TileInfo>,
     footprints: Vec<Vec<Footprint>>,
+    /// Shapes tiles took in this document: lock tag `n > 0` is
+    /// `shapes[n - 1]`. A tile with a shape is edited inside its template
+    /// and saved through `build_tile`; tag 0 is the tile's own blocks.
+    shapes: Vec<TileShape>,
+    /// Each tile's lock tag when the document opened.
+    tags: Vec<u64>,
+    /// Set for tiles made in the New tile dialog.
+    pub new_tiles: Option<NewTilesTarget>,
 }
 
 impl Dt1Doc {
     pub fn from_view(view: &Dt1View) -> Dt1Doc {
-        let footprints = view
-            .dt1
+        Dt1Doc::build(view.dt1.clone(), view.images.clone(), view.tiles.clone())
+    }
+
+    fn build(dt1: Dt1, rendered: Vec<IndexedImage>, info: Vec<TileInfo>) -> Dt1Doc {
+        let footprints = dt1
             .tiles
             .iter()
             .map(|t| t.blocks.iter().map(Footprint::of).collect())
             .collect();
         Dt1Doc {
-            dt1: view.dt1.clone(),
-            base: view.images.clone(),
-            info: view.tiles.clone(),
+            tags: vec![0; rendered.len()],
+            base: rendered.clone(),
+            rendered,
+            dt1,
+            info,
             footprints,
+            shapes: Vec::new(),
+            new_tiles: None,
         }
     }
 
+    /// Created tiles as a document: each one is edited inside the template
+    /// of its shape (`shapes[i]` for `tiles[i]`), blank or not.
+    pub fn new_tiles(
+        tiles: Vec<Tile>,
+        shapes: &[TileShape],
+        target: NewTilesTarget,
+    ) -> Result<Dt1Doc, String> {
+        if tiles.is_empty() || tiles.len() != shapes.len() {
+            return Err("no tile to edit".to_owned());
+        }
+        let dt1 = Dt1 {
+            version: (7, 6),
+            tiles,
+        };
+        let bytes = dt1.to_bytes().map_err(|e| e.to_string())?;
+        let view = Dt1View::load(&bytes)?;
+        let mut doc = Dt1Doc::build(view.dt1, view.images, view.tiles);
+        for (i, shape) in shapes.iter().enumerate() {
+            let picture = doc.rendered[i].clone();
+            let (frame, _, _) = shaped_frame(&picture, *shape)?;
+            doc.base[i] = frame;
+            doc.tags[i] = doc.register_shape(*shape);
+        }
+        doc.new_tiles = Some(target);
+        Ok(doc)
+    }
+
+    /// The lock tag of `shape` (registered on first use).
+    pub fn register_shape(&mut self, shape: TileShape) -> u64 {
+        let shape = shape.normalized().unwrap_or(shape);
+        let i = match self.shapes.iter().position(|s| *s == shape) {
+            Some(i) => i,
+            None => {
+                self.shapes.push(shape);
+                self.shapes.len() - 1
+            }
+        };
+        i as u64 + 1
+    }
+
+    /// The shape a tile is edited in: its registered shape for a non-zero
+    /// tag, else the smallest shape holding its blocks.
+    pub fn shape_of(&self, i: usize, tag: u64) -> Option<TileShape> {
+        match tag {
+            0 => self.dt1.tiles.get(i).and_then(TileShape::of_tile),
+            n => self.shapes.get(n as usize - 1).copied(),
+        }
+    }
+
+    /// Each tile's lock tag when the document opened.
+    pub fn tags(&self) -> Vec<u64> {
+        self.tags.clone()
+    }
+
     /// "tile 12: orientation 0, main 3, sub 1 (#0, rarity 1)".
-    pub fn label(&self, i: usize) -> String {
-        match self.info.get(i) {
-            Some(t) => format!(
+    pub fn label(&self, i: usize, tag: u64) -> String {
+        let Some(t) = self.info.get(i) else {
+            return format!("tile {i}");
+        };
+        let shaped = (tag != 0)
+            .then(|| self.shape_of(i, tag))
+            .flatten()
+            .filter(|s| i32::from(s.orientation) != t.orientation || self.new_tiles.is_none());
+        match shaped {
+            Some(s) => format!(
+                "tile {i}: orientation {} (was {}), main {}, sub {} (#{}, rarity {}), new shape",
+                s.orientation, t.orientation, t.main, t.sub, t.n, t.rarity
+            ),
+            None => format!(
                 "tile {i}: orientation {}, main {}, sub {} (#{}, rarity {})",
                 t.orientation, t.main, t.sub, t.n, t.rarity
             ),
-            None => format!("tile {i}"),
         }
     }
 
@@ -117,73 +226,126 @@ impl Dt1Doc {
         vec![self.base.clone()]
     }
 
-    /// Per tile, the pixels some block can draw.
+    /// Per tile, the pixels it can hold: some block's footprint (tag 0) or
+    /// its shape's template.
     pub fn editable(&self) -> Vec<Mask> {
         self.base
             .iter()
-            .zip(&self.footprints)
-            .map(|(img, blocks)| {
-                let mut m = Mask::none(img.width, img.height);
-                for y in 0..img.height {
-                    for x in 0..img.width {
-                        let (bx, by) = (
-                            i64::from(img.offset_x) + i64::from(x),
-                            i64::from(img.offset_y) + i64::from(y),
-                        );
-                        if blocks.iter().any(|f| f.contains(bx, by)) {
-                            m.bits[y as usize * img.width as usize + x as usize] = true;
-                        }
-                    }
-                }
-                m
+            .enumerate()
+            .map(|(i, img)| match self.shape_of(i, self.tags[i]) {
+                Some(shape) if self.tags[i] != 0 => template_mask(img, shape),
+                _ => self.footprint_mask(i, img),
             })
             .collect()
     }
 
-    /// Writes the edited `frames` (one direction, one frame per tile) into
-    /// the tiles' blocks and returns the file, plus how many tiles changed.
-    /// Nothing changes in `self` unless the whole save works.
-    pub fn save(&mut self, frames: &[Vec<IndexedImage>]) -> Result<(Vec<u8>, usize), String> {
+    fn footprint_mask(&self, i: usize, img: &IndexedImage) -> Mask {
+        let blocks = self.footprints.get(i).map_or(&[][..], Vec::as_slice);
+        let mut m = Mask::none(img.width, img.height);
+        for y in 0..img.height {
+            for x in 0..img.width {
+                let (bx, by) = (
+                    i64::from(img.offset_x) + i64::from(x),
+                    i64::from(img.offset_y) + i64::from(y),
+                );
+                if blocks.iter().any(|f| f.contains(bx, by)) {
+                    m.bits[y as usize * img.width as usize + x as usize] = true;
+                }
+            }
+        }
+        m
+    }
+
+    /// Tile `i`'s current `picture` moved into `shape`: the frame (the
+    /// template's box, anchor space), its editable pixels, the lock tag and
+    /// how many opaque pixels the shape cannot hold.
+    pub fn reshape_frame(
+        &mut self,
+        picture: &IndexedImage,
+        shape: TileShape,
+    ) -> Result<(IndexedImage, Mask, u64, usize), String> {
+        let (frame, mask, dropped) = shaped_frame(picture, shape)?;
+        let tag = self.register_shape(shape);
+        Ok((frame, mask, tag, dropped))
+    }
+
+    /// The tiles with the edited `frames` (one direction, one frame per
+    /// tile) written in, each tile's lock tag from `tags`.
+    pub fn tiles(
+        &self,
+        frames: &[Vec<IndexedImage>],
+        tags: &[u64],
+    ) -> Result<(Vec<Tile>, usize, Vec<String>), String> {
         let frames = match frames {
-            [one] if one.len() == self.base.len() => one,
+            [one] if one.len() == self.rendered.len() => one,
             _ => return Err("the tile set no longer matches the file".to_owned()),
         };
-        let mut dt1 = self.dt1.clone();
+        let mut tiles = Vec::with_capacity(frames.len());
         let mut changed = 0;
-        for (t, (edited, old)) in frames.iter().zip(&self.base).enumerate() {
-            if edited == old {
-                continue;
+        let mut warnings = Vec::new();
+        for (t, edited) in frames.iter().enumerate() {
+            let orig = &self.dt1.tiles[t];
+            let tag = tags.get(t).copied().unwrap_or(0);
+            let tile = if tag == 0 {
+                let old = &self.rendered[t];
+                if edited == old {
+                    orig.clone()
+                } else {
+                    if (
+                        edited.width,
+                        edited.height,
+                        edited.offset_x,
+                        edited.offset_y,
+                    ) != (old.width, old.height, old.offset_x, old.offset_y)
+                    {
+                        return Err(format!("tile {t} changed size"));
+                    }
+                    let mut tile = orig.clone();
+                    self.write_tile(&mut tile, t, edited, old)?;
+                    tile
+                }
+            } else {
+                let shape = self
+                    .shape_of(t, tag)
+                    .ok_or_else(|| format!("tile {t}: its shape is unknown"))?;
+                let built = rebuild(orig, edited, shape)?;
+                if let Some(w) = built.warning() {
+                    warnings.push(format!("tile {t}: {w}"));
+                }
+                built.tile
+            };
+            if tile != *orig {
+                changed += 1;
             }
-            if (
-                edited.width,
-                edited.height,
-                edited.offset_x,
-                edited.offset_y,
-            ) != (old.width, old.height, old.offset_x, old.offset_y)
-            {
-                return Err(format!("tile {t} changed size"));
-            }
-            self.write_tile(&mut dt1, t, edited, old)?;
-            changed += 1;
+            tiles.push(tile);
         }
+        Ok((tiles, changed, warnings))
+    }
+
+    /// The DT1 file with the edited `frames` written back (see
+    /// [`Dt1Doc::tiles`]). Untouched tiles keep their bytes.
+    pub fn save(&self, frames: &[Vec<IndexedImage>], tags: &[u64]) -> Result<Dt1Saved, String> {
+        let (tiles, changed, warnings) = self.tiles(frames, tags)?;
+        let dt1 = Dt1 {
+            version: self.dt1.version,
+            tiles,
+        };
         let bytes = dt1.to_bytes().map_err(|e| e.to_string())?;
-        self.dt1 = dt1;
-        self.base = frames.clone();
-        Ok((bytes, changed))
+        Ok(Dt1Saved {
+            bytes,
+            changed,
+            warnings,
+        })
     }
 
     fn write_tile(
         &self,
-        dt1: &mut Dt1,
+        tile: &mut Tile,
         t: usize,
         edited: &IndexedImage,
         old: &IndexedImage,
     ) -> Result<(), String> {
         let foots = self.footprints.get(t).map_or(&[][..], Vec::as_slice);
-        let tile = dt1
-            .tiles
-            .get_mut(t)
-            .ok_or_else(|| format!("tile {t} is gone"))?;
         // One canvas per block that gets a changed pixel, seeded from its
         // current pixels.
         let mut canvases: Vec<Option<IndexedImage>> = vec![None; tile.blocks.len()];
@@ -236,6 +398,62 @@ impl Dt1Doc {
         }
         Ok(())
     }
+}
+
+/// `orig` rebuilt from `picture` in `shape` (`build_tile`): number, rarity,
+/// sound, animation and preserved bytes kept; flags too when the
+/// orientation stays.
+fn rebuild(orig: &Tile, picture: &IndexedImage, shape: TileShape) -> Result<BuiltTile, String> {
+    let same = i32::from(shape.orientation) == orig.orientation;
+    let opts = BuildOptions {
+        flags: same.then_some(orig.subtile_flags),
+        rarity: orig.rarity,
+        sound: orig.sound,
+        animated: orig.animated,
+    };
+    let mut built = build_tile(picture, shape, orig.main_index, orig.sub_index, &opts)
+        .map_err(|e| e.to_string())?;
+    built.tile.preserved = orig.preserved.clone();
+    Ok(built)
+}
+
+/// `picture` (anchor space) cut to `shape`'s template box: the frame, its
+/// editable pixels (the template) and the opaque pixels left out.
+pub fn shaped_frame(
+    picture: &IndexedImage,
+    shape: TileShape,
+) -> Result<(IndexedImage, Mask, usize), String> {
+    let t = template(shape).map_err(|e| e.to_string())?;
+    let mut frame = t.to_anchor(&t.to_plain(picture));
+    let mask = template_mask(&frame, shape);
+    for (i, free) in mask.bits.iter().enumerate() {
+        if !free {
+            frame.pixels[i] = 0;
+            frame.alpha[i] = 0;
+        }
+    }
+    let dropped = build_tile(picture, shape, 0, 0, &BuildOptions::default())
+        .map_err(|e| e.to_string())?
+        .dropped;
+    Ok((frame, mask, dropped))
+}
+
+/// The pixels of `frame` (anchor space) inside `shape`'s template.
+fn template_mask(frame: &IndexedImage, shape: TileShape) -> Mask {
+    let mut m = Mask::none(frame.width, frame.height);
+    let Ok(t) = template(shape) else { return m };
+    for y in 0..frame.height {
+        for x in 0..frame.width {
+            let (ax, ay) = (
+                frame.offset_x.saturating_add(x as i32),
+                frame.offset_y.saturating_add(y as i32),
+            );
+            if t.contains(ax, ay) {
+                m.bits[y as usize * frame.width as usize + x as usize] = true;
+            }
+        }
+    }
+    m
 }
 
 /// Copies `src`'s pixels into `dst` where they overlap (block space).
@@ -339,8 +557,9 @@ mod tests {
     #[test]
     fn untouched_save_is_byte_identical() {
         let bytes = sample();
-        let mut d = doc(&bytes);
-        let (out, changed) = d.save(&d.frames()).unwrap();
+        let d = doc(&bytes);
+        let saved = d.save(&d.frames(), &d.tags()).unwrap();
+        let (out, changed) = (saved.bytes, saved.changed);
         assert_eq!((out, changed), (bytes, 0));
     }
 
@@ -356,6 +575,10 @@ mod tests {
         assert!(m[1].get(0, 0) && m[1].count() == 24);
         // Tile 2: the gap between the diamond and the RLE block is locked.
         let img = &d.base[2];
+        assert_eq!(
+            d.label(2, 0),
+            "tile 2: orientation 0, main 1, sub 0 (#0, rarity 0)"
+        );
         assert!(m[2].count() < (img.width * img.height) as usize);
     }
 
@@ -363,13 +586,14 @@ mod tests {
     fn edits_land_in_their_block_and_nothing_else_changes() {
         let bytes = sample();
         let original = Dt1::parse(&bytes).unwrap();
-        let mut d = doc(&bytes);
+        let d = doc(&bytes);
         let mut frames = d.frames();
         set(&mut frames, 0, 15, 7, 77);
         set(&mut frames, 2, 15, 7, 78);
         // A transparent hole of the RLE tile (index 0 in the box) gets paint.
         set(&mut frames, 1, 0, 0, 90);
-        let (out, changed) = d.save(&frames).unwrap();
+        let saved = d.save(&frames, &d.tags()).unwrap();
+        let (out, changed) = (saved.bytes, saved.changed);
         assert_eq!(changed, 3);
         let back = Dt1::parse(&out).unwrap();
         let r = |dt: &Dt1, t: usize| dt.tiles[t].render().unwrap();
@@ -422,5 +646,126 @@ mod tests {
         assert!(s.delete_frame(0).is_err());
         assert!(s.resize_canvas(f, 40, 20, (0, 0)).is_err());
         assert!(s.set_offset(f, 5, 5).is_err());
+    }
+
+    fn blank_floor_doc() -> Dt1Doc {
+        let built = build_tile(
+            &IndexedImage::new(0, 0, 0, 0),
+            TileShape::floor(),
+            5,
+            2,
+            &BuildOptions::default(),
+        )
+        .unwrap();
+        Dt1Doc::new_tiles(vec![built.tile], &[TileShape::floor()], NewTilesTarget::Map).unwrap()
+    }
+
+    #[test]
+    fn a_blank_new_tile_is_editable_across_its_whole_template() {
+        let d = blank_floor_doc();
+        let tags = d.tags();
+        assert!(tags[0] != 0);
+        let frame = &d.frames()[0][0];
+        assert_eq!(
+            (frame.width, frame.height, frame.offset_x, frame.offset_y),
+            (160, 79, 0, 0)
+        );
+        // the whole diamond is free (no blocks yet), its corners are not
+        let m = &d.editable()[0];
+        let t = template(TileShape::floor()).unwrap();
+        let want = t.mask().alpha.iter().filter(|&&a| a != 0).count();
+        assert_eq!(m.count(), want);
+        assert!(!m.get(0, 0) && m.get(80, 39));
+        // painting the centre makes a block there; the number stays
+        let mut frames = d.frames();
+        let i = 39 * 160 + 80;
+        frames[0][0].pixels[i] = 120;
+        frames[0][0].alpha[i] = 255;
+        let saved = d.save(&frames, &tags).unwrap();
+        assert_eq!(saved.changed, 1);
+        assert!(saved.warnings.is_empty());
+        let back = Dt1::parse(&saved.bytes).unwrap();
+        let tile = &back.tiles[0];
+        assert_eq!(
+            (tile.orientation, tile.main_index, tile.sub_index),
+            (0, 5, 2)
+        );
+        assert_eq!(tile.blocks.len(), 1);
+        assert_eq!(
+            tile.render()
+                .unwrap()
+                .pixels
+                .iter()
+                .filter(|&&p| p == 120)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn reshaping_a_tile_in_the_session_saves_the_new_shape_and_undoes() {
+        // a 64-pixel left wall filled with colour 50
+        let shape = TileShape::wall(1, 64);
+        let t = template(shape).unwrap();
+        let mut art = t.mask();
+        art.pixels.fill(50);
+        let wall = build_tile(&art, shape, 1, 0, &BuildOptions::default())
+            .unwrap()
+            .tile;
+        let bytes = Dt1 {
+            version: (7, 6),
+            tiles: vec![wall],
+        }
+        .to_bytes()
+        .unwrap();
+        let mut d = doc(&bytes);
+        let mut s =
+            capy_paint::PaintSession::new(d.frames(), crate::sprites::palette::grey_palette())
+                .unwrap();
+        s.lock_structure(d.editable());
+        s.set_lock_tags(d.tags());
+        let f = capy_paint::FrameRef { dir: 0, frame: 0 };
+
+        // taller: 128 pixels, every old pixel kept
+        let picture = s.frame(f).unwrap().clone();
+        let (frame, mask, tag, dropped) =
+            d.reshape_frame(&picture, TileShape::wall(1, 100)).unwrap();
+        assert_eq!(dropped, 0);
+        assert_eq!((frame.height, frame.offset_y), (128, -128));
+        s.relock_frame(f, frame, mask, tag).unwrap();
+        // the new top rows are paintable
+        s.pencil(
+            f,
+            &[(10, 2)],
+            capy_paint::Brush {
+                size: 1,
+                shape: capy_paint::BrushShape::Square,
+            },
+            capy_paint::Paint::Index(9),
+            None,
+        )
+        .unwrap();
+        let tags: Vec<u64> = (0..1).map(|i| s.lock_tag(i)).collect();
+        let saved = d.save(s.frames(), &tags).unwrap();
+        let back = Dt1::parse(&saved.bytes).unwrap();
+        assert_eq!(back.tiles[0].height, -(128 + 32));
+        // the pixel painted in the new top rows is stored: (10, 2) of the
+        // frame is anchor (10, -126)
+        let r = back.tiles[0].render().unwrap();
+        let (cx, cy) = (10 - r.offset_x, -126 - r.offset_y);
+        assert!(cx >= 0 && cy >= 0);
+        assert_eq!(r.pixels[(cy * r.width as i32 + cx) as usize], 9);
+        assert!(d.label(0, tags[0]).contains("new shape"));
+
+        // a floor holds none of a wall's pixels: they are counted
+        let (_, _, _, dropped) = d.reshape_frame(&picture, TileShape::floor()).unwrap();
+        assert_eq!(dropped, 160 * 64);
+
+        // undo both steps: tag 0 again, and the file is as it was
+        s.undo();
+        s.undo();
+        assert_eq!(s.lock_tag(0), 0);
+        let saved = d.save(s.frames(), &[0]).unwrap();
+        assert_eq!((saved.bytes, saved.changed), (bytes, 0));
     }
 }

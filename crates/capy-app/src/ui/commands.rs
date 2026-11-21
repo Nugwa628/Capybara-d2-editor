@@ -735,6 +735,13 @@ pub const COMMANDS: &[Command] = &[
         "",
     ),
     cmd(
+        "tiles.newTile",
+        "New tile (floor, wall, roof, shadow) from a picture or blank...",
+        "Tile libraries",
+        icon::PLUS,
+        "",
+    ),
+    cmd(
         "tiles.settings",
         "Tile settings (.ini)...",
         "Tile libraries",

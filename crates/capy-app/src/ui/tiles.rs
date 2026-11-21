@@ -643,6 +643,16 @@ fn studio_bar(ui: &mut Ui, state: &mut AppState) {
     });
     let dt1s: Vec<String> = state.map_dt1s();
     if dt1s.is_empty() {
+        if state.session.is_some()
+            && ui
+                .small_button("New tile...")
+                .on_hover_text(
+                    "Make a new floor, wall, roof or shadow tile (blank or from a picture)",
+                )
+                .clicked()
+        {
+            super::tools::newtile::open(state, crate::sprites::dt1edit::NewTilesTarget::Map);
+        }
         return;
     }
     let current = state
@@ -655,7 +665,7 @@ fn studio_bar(ui: &mut Ui, state: &mut AppState) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("DT1").size(11.5).color(s.muted));
         egui::ComboBox::from_id_salt("tiles_dt1")
-            .width(ui.available_width() - 8.0)
+            .width(ui.available_width() - 92.0)
             .selected_text(
                 current
                     .clone()
@@ -681,6 +691,15 @@ fn studio_bar(ui: &mut Ui, state: &mut AppState) {
                     }
                 }
             });
+        if ui
+            .small_button("New tile...")
+            .on_hover_text(
+                "Make a new floor, wall, roof or shadow tile for this map (blank or from a picture)",
+            )
+            .clicked()
+        {
+            super::tools::newtile::open(state, crate::sprites::dt1edit::NewTilesTarget::Map);
+        }
     });
 }
 
@@ -1106,6 +1125,13 @@ fn tile_menu(ctx: &egui::Context, state: &mut AppState) {
             action = Some(MenuAction::AddToMap);
         }
         if ui
+            .add_enabled(state.session.is_some(), egui::Button::new("New tile..."))
+            .on_hover_text("Make a brand-new tile (floor, wall, roof, shadow) for this map")
+            .clicked()
+        {
+            action = Some(MenuAction::NewTile);
+        }
+        if ui
             .add_enabled(is_tile, egui::Button::new("Find similar"))
             .clicked()
         {
@@ -1172,6 +1198,9 @@ fn tile_menu(ctx: &egui::Context, state: &mut AppState) {
         MenuAction::Similar => state.find_similar(&key),
         MenuAction::UsedIn => state.browser.used_in_window = Some(key.clone()),
         MenuAction::ConvertPalette => state.convert_open_tile_key(&key),
+        MenuAction::NewTile => {
+            super::tools::newtile::open(state, crate::sprites::dt1edit::NewTilesTarget::Map);
+        }
         MenuAction::AddToMap => {
             let mut keys: Vec<String> = state.tools.addmap.picked.iter().cloned().collect();
             if !keys.contains(&key) {
@@ -1218,6 +1247,7 @@ enum MenuAction {
     Copy,
     ConvertPalette,
     AddToMap,
+    NewTile,
 }
 
 fn prompt(ctx: &egui::Context, state: &mut AppState) {

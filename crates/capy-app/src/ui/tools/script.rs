@@ -18,6 +18,20 @@
 //! tool addmap <tile key>...                     # open "Add to this map" for these Tiles keys
 //! tool addmap-confirm                           # press Add in that dialog
 //! tool addmap-assert-loaded <game path> true|false  # in the map's DT1 list (catalog)
+//! tool newtile <kind> [o=<n>] [h=<px>] [roof=<px>] [solid=<i>|image=<file>|blank]
+//!              [place=as-is|center|fit] [dither=fs|none] [act=1-5] [into=map|lib]
+//!                                               # kind: floor roof shadow wall corner lower
+//! tool newtile-flags add|remove|set|walkable <hex> <cell,cell|all>
+//! tool newtile-assert-warning <text...>|none    # the preview's warnings
+//! tool newtile-add                              # Add to this map (opens the preview) or to the library
+//! tool newtile-edit                             # Open in editor
+//! tool editor-add-new                           # the editor's Add for new tiles
+//! tool editor-shape <kind> [o=] [h=] [roof=]    # Shape... on the editor's current tile
+//! tool dt1-new <folder> <name> [register]       # New empty DT1 (opened)
+//! tool dt1-newtile                              # New tile into this DT1
+//! tool dt1-shape <tile> <kind> [o=] [h=] [roof=]  # Shape of the selected tile
+//! tool dt1-undo | dt1-redo
+//! tool dt1-assert-tiles <n>
 //! tool wait-catalog
 //! tool custom-object <row> <frames> <act> <png> <name...>
 //! tool preset-export <zip> [preset name]        # all presets without a name
@@ -35,7 +49,7 @@ use capy_history::SavesDir;
 use capy_mod::tiles_flags::{FlagOp, edit_subtile_flags};
 use d2_assets::GamePath;
 
-use super::{diag, dt1, game, package, presets, tables};
+use super::{diag, dt1, game, newtile, package, presets, tables};
 use crate::state::{AppState, CatalogState};
 
 /// Outcome of one script line: done, or call again next frame.
@@ -46,6 +60,34 @@ pub enum Outcome {
 
 fn bad(usage: &str) -> String {
     format!("expected {usage}")
+}
+
+/// `add|remove|set|walkable <hex>` of a flags command.
+fn flag_op_arg(args: &[&str]) -> Result<FlagOp, String> {
+    let op = args
+        .first()
+        .copied()
+        .ok_or_else(|| bad("add|remove|set|walkable <hex> <cells>"))?;
+    let bits = u8::from_str_radix(args.get(1).copied().unwrap_or("0"), 16)
+        .map_err(|_| "flag bits are hexadecimal".to_owned())?;
+    Ok(match op {
+        "add" => FlagOp::Add(bits),
+        "remove" => FlagOp::Remove(bits),
+        "set" => FlagOp::Set(bits),
+        "walkable" => FlagOp::MakeWalkable,
+        other => return Err(format!("unknown flag operation {other:?}")),
+    })
+}
+
+/// `all` or `3,4,5`.
+fn cells_arg(arg: Option<&str>) -> Result<Vec<usize>, String> {
+    match arg {
+        Some("all") | None => Ok((0..25).collect()),
+        Some(list) => list
+            .split(',')
+            .map(|c| c.parse().map_err(|_| format!("{c:?} is not a cell number")))
+            .collect(),
+    }
 }
 
 pub fn run(state: &mut AppState, line: &str) -> Result<Outcome, String> {
@@ -99,6 +141,128 @@ pub fn run(state: &mut AppState, line: &str) -> Result<Outcome, String> {
         "dt1-open" => {
             dt1::open_lib(state, rest)?;
             Ok(Outcome::Done)
+        }
+        "newtile" => {
+            newtile::script_set(state, &args)?;
+            Ok(Outcome::Done)
+        }
+        "newtile-flags" => {
+            let op = flag_op_arg(&args)?;
+            let cells = cells_arg(args.get(2).copied())?;
+            newtile::script_flags(state, op, &cells);
+            Ok(Outcome::Done)
+        }
+        "newtile-assert-warning" => {
+            let got = newtile::script_warnings(state)?;
+            let want = rest.trim();
+            let ok = if want == "none" {
+                got.is_empty()
+            } else {
+                got.iter().any(|w| w.contains(want))
+            };
+            if ok {
+                Ok(Outcome::Done)
+            } else {
+                Err(format!("the preview warns {got:?}, expected {want:?}"))
+            }
+        }
+        "newtile-add" => {
+            match state.tools.newtile.target {
+                crate::sprites::dt1edit::NewTilesTarget::Map => newtile::add_to_map(state)?,
+                crate::sprites::dt1edit::NewTilesTarget::Library(_) => {
+                    let msg = newtile::add_to_library(state)?;
+                    state.info(format!("newtile: {msg}"));
+                }
+            }
+            Ok(Outcome::Done)
+        }
+        "newtile-edit" => {
+            newtile::open_in_editor(state)?;
+            Ok(Outcome::Done)
+        }
+        "editor-add-new" => {
+            let msg = newtile::add_from_editor(state)?;
+            state.info(format!("editor-add-new: {msg}"));
+            Ok(Outcome::Done)
+        }
+        "editor-shape" => {
+            let (c, left) = newtile::parse_shape(&args)?;
+            if let Some(t) = left.first() {
+                return Err(format!("unknown shape option {t:?}"));
+            }
+            let shape = c.shape().ok_or("one tile's shape")?;
+            let e = state
+                .sprites
+                .editor
+                .as_mut()
+                .ok_or("nothing is open in the editor")?;
+            let frame = e.cur.frame;
+            let n = e.dt1_reshape(frame, shape)?;
+            state.info(format!("editor-shape: tile {frame}, {n} pixel(s) left out"));
+            Ok(Outcome::Done)
+        }
+        "dt1-new" => {
+            let (folder, name) = match args.as_slice() {
+                [f, n, ..] => (*f, *n),
+                _ => return Err(bad("<folder> <name> [register]")),
+            };
+            let folder = if folder == "-" { "" } else { folder };
+            let msg = dt1::create_empty(state, folder, name, args.get(2) == Some(&"register"))?;
+            state.info(format!("dt1-new: {msg}"));
+            Ok(Outcome::Done)
+        }
+        "dt1-newtile" => {
+            newtile::open_for_library(state)?;
+            Ok(Outcome::Done)
+        }
+        "dt1-shape" => {
+            let (tile, rest_args) = args
+                .split_first()
+                .ok_or_else(|| bad("<tile> <kind> [o=] [h=] [roof=]"))?;
+            let tile: usize = tile.parse().map_err(|_| "tile is a number".to_owned())?;
+            let (c, left) = newtile::parse_shape(rest_args)?;
+            if let Some(t) = left.first() {
+                return Err(format!("unknown shape option {t:?}"));
+            }
+            let shape = c.shape().ok_or("one tile's shape")?;
+            let lib = state.tools.dt1.lib.as_mut().ok_or("No library is open")?;
+            if tile >= lib.dt1.tiles.len() {
+                return Err(format!("the library has no tile {tile}"));
+            }
+            lib.tile = tile;
+            let n = dt1::reshape_selected(state, shape)?;
+            state.info(format!("dt1-shape: tile {tile}, {n} pixel(s) left out"));
+            Ok(Outcome::Done)
+        }
+        "dt1-undo" | "dt1-redo" => {
+            let lib = state.tools.dt1.lib.as_mut().ok_or("No library is open")?;
+            let done = if verb == "dt1-undo" {
+                lib.undo()
+            } else {
+                lib.redo()
+            };
+            if done {
+                Ok(Outcome::Done)
+            } else {
+                Err(format!("{verb}: nothing to do"))
+            }
+        }
+        "dt1-assert-tiles" => {
+            let want: usize = args
+                .first()
+                .and_then(|n| n.parse().ok())
+                .ok_or_else(|| bad("<n>"))?;
+            let got = state
+                .tools
+                .dt1
+                .lib
+                .as_ref()
+                .map_or(0, |l| l.dt1.tiles.len());
+            if got == want {
+                Ok(Outcome::Done)
+            } else {
+                Err(format!("the library has {got} tile(s), expected {want}"))
+            }
         }
         "dt1-recolor" => {
             let hue: f32 = args

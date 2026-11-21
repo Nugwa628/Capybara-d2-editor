@@ -77,7 +77,7 @@ fn target(ui: &mut Ui, state: &mut AppState) {
     });
 }
 
-fn matching(ui: &mut Ui, m: &mut MatchSettings, salt: &str) {
+pub(crate) fn matching(ui: &mut Ui, m: &mut MatchSettings, salt: &str) {
     ui.horizontal(|ui| {
         ui.label("Dither");
         egui::ComboBox::from_id_salt(("dither", salt))

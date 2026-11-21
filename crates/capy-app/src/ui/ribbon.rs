@@ -286,6 +286,7 @@ const TABS: &[Tab] = &[
                 label: "Tile libraries",
                 items: &[
                     Item::Cmd("tiles.dt1Manager", Size::Lg, "DT1 libraries"),
+                    Item::Cmd("tiles.newTile", Size::Sm, "New tile"),
                     Item::Cmd("tiles.settings", Size::Sm, "Tile settings"),
                     Item::Cmd("tiles.collision", Size::Sm, "Collision flags"),
                     Item::Cmd("tiles.paint", Size::Sm, "Paint pixels"),

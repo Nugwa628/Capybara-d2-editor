@@ -19,7 +19,7 @@
 
 mod browser;
 pub mod convert_palette;
-mod converter;
+pub(crate) mod converter;
 mod editor;
 pub mod gif_dialog;
 pub mod preview;

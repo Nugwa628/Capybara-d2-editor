@@ -77,6 +77,88 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         .default_size(96.0)
         .show(ui, |ui| frames_strip(ui, state));
     egui::CentralPanel::no_frame().show(ui, |ui| canvas(ui, state));
+    let ctx = ui.ctx().clone();
+    shape_window(&ctx, state);
+}
+
+/// "Shape...": change the current tile's shape (taller or shorter wall,
+/// another orientation, floor <-> roof), warning first about the pixels
+/// the new shape cannot hold. One undo step in the editor.
+fn shape_window(ctx: &egui::Context, state: &mut AppState) {
+    use crate::ui::tools::newtile::{reshape_warning, shape_picker};
+    let Some(e) = state.sprites.editor.as_mut() else {
+        return;
+    };
+    let Some(mut dlg) = e.shape_dialog.take() else {
+        return;
+    };
+    let frame = e.cur.frame;
+    let key = (dlg.choice, frame, e.session.revision());
+    if dlg.loss.as_ref().map(|l| l.0) != Some(key) {
+        let loss = match dlg.choice.shape() {
+            Some(shape) => e.dt1_reshape_loss(frame, shape),
+            None => Err("pick one tile's shape".to_owned()),
+        };
+        dlg.loss = Some((key, loss));
+    }
+    let now = e
+        .dt1_shape(frame)
+        .map(crate::ui::tools::newtile::describe_shape)
+        .unwrap_or_default();
+    let (mut open, mut apply, mut cancel) = (true, false, false);
+    egui::Window::new("Tile shape")
+        .id(egui::Id::new("editor_tile_shape"))
+        .open(&mut open)
+        .default_width(420.0)
+        .show(ctx, |ui| {
+            ui.label(format!("Tile {frame}, now {now}"));
+            shape_picker(ui, "editor_shape", &mut dlg.choice, false);
+            let ok = match dlg.loss.as_ref().map(|l| &l.1) {
+                Some(Ok(n)) => {
+                    match reshape_warning(*n) {
+                        Some(w) => {
+                            ui.colored_label(Color32::from_rgb(235, 150, 40), w);
+                        }
+                        None => {
+                            ui.weak("Every pixel of the tile fits the new shape.");
+                        }
+                    }
+                    true
+                }
+                Some(Err(err)) => {
+                    ui.colored_label(Color32::from_rgb(235, 90, 90), err);
+                    false
+                }
+                None => false,
+            };
+            ui.weak(
+                "The picture stays where it is on its cell; the editable area becomes the new shape's template. Saving re-splits the tile into its blocks.",
+            );
+            ui.horizontal(|ui| {
+                apply = ui.add_enabled(ok, egui::Button::new("Apply")).clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
+        });
+    if apply {
+        let r = dlg
+            .choice
+            .shape()
+            .ok_or_else(|| "pick one tile's shape".to_owned())
+            .and_then(|shape| e.dt1_reshape(frame, shape));
+        match r {
+            Ok(n) => state.info(format!(
+                "Tile {frame} has a new shape{}",
+                if n > 0 {
+                    format!(" ({n} pixel(s) left out)")
+                } else {
+                    String::new()
+                }
+            )),
+            Err(err) => state.error(format!("Shape: {err}")),
+        }
+    } else if open && !cancel {
+        e.shape_dialog = Some(dlg);
+    }
 }
 
 fn editor(state: &mut AppState) -> Option<&mut EditorState> {
@@ -111,6 +193,8 @@ fn top_bar(ui: &mut Ui, state: &mut AppState) {
         }
         let undo = e.session.undo_label().map(str::to_owned);
         let redo = e.session.redo_label().map(str::to_owned);
+        let shape = e.dt1_shape(e.cur.frame);
+        let target = e.dt1.as_ref().and_then(|d| d.new_tiles.clone());
         ui.separator();
         if ui
             .add_enabled(undo.is_some(), egui::Button::new("Undo"))
@@ -141,6 +225,51 @@ fn top_bar(ui: &mut Ui, state: &mut AppState) {
             .clicked()
         {
             state.begin_sprite_save(Target::Editor);
+        }
+        if tiles {
+            if ui
+                .add_enabled(shape.is_some(), egui::Button::new("Shape..."))
+                .on_hover_text(
+                    "Change this tile's shape: a taller or shorter wall, another orientation, floor or roof",
+                )
+                .clicked()
+                && let Some(e) = editor(state)
+                && let Some(s) = shape
+            {
+                e.shape_dialog = Some(crate::ui::tools::newtile::ShapeDialog::new(s));
+            }
+            match target {
+                Some(crate::sprites::dt1edit::NewTilesTarget::Map) => {
+                    let has_map = state.active_doc().is_some();
+                    if ui
+                        .add_enabled(has_map, egui::Button::new("Add to this map..."))
+                        .on_hover_text(
+                            "Rebuild the painted tiles and add them to the map's own DT1 (a preview lists every change)",
+                        )
+                        .on_disabled_hover_text("Open a map first")
+                        .clicked()
+                    {
+                        match crate::ui::tools::newtile::add_from_editor(state) {
+                            Ok(m) => state.info(m),
+                            Err(err) => state.error(format!("Add to this map: {err}")),
+                        }
+                    }
+                }
+                Some(crate::sprites::dt1edit::NewTilesTarget::Library(p)) => {
+                    let short = p.rsplit('\\').next().unwrap_or(&p).to_owned();
+                    if ui
+                        .button(format!("Add to {short}"))
+                        .on_hover_text("Rebuild the painted tiles and append them to the library in Tile libraries")
+                        .clicked()
+                    {
+                        match crate::ui::tools::newtile::add_from_editor(state) {
+                            Ok(m) => state.info(m),
+                            Err(err) => state.error(format!("Add: {err}")),
+                        }
+                    }
+                }
+                None => {}
+            }
         }
         ui.menu_button("Export", |ui| {
             let busy = state.sprites.dialogs.is_open();
@@ -668,7 +797,7 @@ fn frames_strip(ui: &mut Ui, state: &mut AppState) {
                 }
             }
             ui.label(match &e.dt1 {
-                Some(doc) => doc.label(e.cur.frame),
+                Some(doc) => doc.label(e.cur.frame, e.session.lock_tag(e.cur.frame)),
                 None => format!("Frame {} / {}", e.cur.frame, e.frames()),
             });
             if ui.small_button("<").on_hover_text(",").clicked() {
@@ -778,7 +907,7 @@ fn frames_strip(ui: &mut Ui, state: &mut AppState) {
                         };
                         ui.painter().rect_stroke(r, 0.0, stroke, StrokeKind::Inside);
                         let tip = match &e.dt1 {
-                            Some(doc) => doc.label(frame),
+                            Some(doc) => doc.label(frame, e.session.lock_tag(frame)),
                             None => format!("frame {frame}"),
                         };
                         if resp.on_hover_text(tip).clicked() {
@@ -1047,7 +1176,8 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
     if e.dt1.is_some()
         && let Some(m) = e.session.editable(e.cur.frame)
     {
-        if e.lock_tex.as_ref().map(|t| t.0) != Some(e.cur.frame) {
+        let key = (e.cur.frame, e.session.lock_revision());
+        if e.lock_tex.as_ref().map(|t| t.0) != Some(key) {
             let mut rgba = vec![0u8; m.bits.len() * 4];
             for (px, &free) in rgba.as_chunks_mut::<4>().0.iter_mut().zip(&m.bits) {
                 if !free {
@@ -1055,7 +1185,7 @@ fn canvas(ui: &mut Ui, state: &mut AppState) {
                 }
             }
             e.lock_tex = rgba_texture(ui.ctx(), "sprite-editor-lock", m.width, m.height, &rgba)
-                .map(|t| (e.cur.frame, t));
+                .map(|t| (key, t));
         }
         if let Some((_, t)) = &e.lock_tex {
             painter.image(
