@@ -30,6 +30,25 @@ All notable changes to this project are documented here.
   `paint`, `render_map` and `check_map` use them straight away. Every file
   goes to `capybara\saves\<profile>` with `CHANGED.txt` and a history
   snapshot; only DT1s already in the saves are changed.
+- **New tile** (Map > Tile libraries > New tile, the Tiles panel's
+  **New tile...**). Make a floor, roof, shadow, upper wall of any orientation,
+  both halves of a north corner or a lower wall, with the wall height shown
+  rounded to whole blocks. Start blank, from one colour or from a PNG, BMP,
+  GIF or PCX placed as-is, centred or fitted and matched to the map's act
+  palette with the Converter's options. A live preview shows the tile on its
+  cell with the template and the pixels that do not fit; the sub-tile flags
+  start from the orientation's usual pattern and can be painted. **Add to this
+  map...** puts the tiles into the level type's own DT1 at free numbers
+  through the Add to this map preview (registration, saves, CHANGED.txt,
+  History snapshot) and makes the new tile the brush; **Open in editor**
+  paints it first, with every pixel of the template editable.
+- **Changing a tile's shape.** **Shape...** in the sprite editor (DT1) and
+  **Shape of the selected tile** in Tile libraries re-split a tile into a
+  taller or shorter wall, another orientation, or floor <-> roof, telling
+  first how many pixels the new shape cannot hold; one undo step.
+- **New empty DT1** and **New tile into this DT1...** in Tile libraries: a
+  library with no tiles under a checked name, saved to the profile and
+  optionally registered for the open map's level type.
 
 ## [1.2.3] - 2026-10-21
 

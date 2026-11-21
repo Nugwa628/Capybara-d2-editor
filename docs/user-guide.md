@@ -936,7 +936,10 @@ saves and every library LvlTypes lists) or type its game path, then:
   **Duplicate** saves a copy under a new name in the same folder; **Rename**
   writes the library under the new name and points LvlTypes.txt / LvlPrest.txt
   at it (the old file is left alone). **Save to the saves folder** writes it
-  in place.
+  in place. **New empty DT1** makes a library with no tiles,
+  **New tile into this DT1...** opens [New tile](#new-tile-map--tile-libraries--new-tile)
+  aimed at the open library, and **Shape of the selected tile** changes a
+  tile's shape (see [Changing a tile's shape](#changing-a-tiles-shape)).
 - **Tile settings**: direction, roof height, sound, animation, orientation,
   main and sub index of the selected tile, and **Export / Import .ini** in
   DT1 Tools' format.
@@ -952,6 +955,117 @@ saves and every library LvlTypes lists) or type its game path, then:
 - **Review libraries**: duplicate libraries, libraries that clash on the
   tiles the map places, mixed colour versions, unplaced tiles, and **Collect
   the placed tiles into an own DT1** (`<map>_custom.dt1`).
+
+### New tile (Map > Tile libraries > New tile)
+
+![The New tile dialog: a left wall from a picture, with its preview on the cell](images/new-tile-dialog.png)
+
+**New tile** makes brand-new DT1 tiles: floors, roofs, shadows and walls,
+blank or from a picture. Open it from **Map > Tile libraries > New tile**,
+the **New tile...** button next to the **DT1** drop-down of the Tiles panel
+(or the same entry in a tile's right-click menu), Ctrl+K ("New tile"), or
+**New tile into this DT1...** in Tile libraries.
+
+**Shape.**
+
+| Kind | Orientation | What it is |
+|---|---|---|
+| Floor | 0 | The 160x79 floor diamond of one cell. |
+| Roof | 15 | A diamond like a floor, drawn lifted by **Roof height** (most shipped roofs use 80). |
+| Shadow | 13 | Drawn on the shadow layer, standing on the cell like a wall. |
+| Upper wall | 1-9, 12, 14 | A picture 160 wide standing on the cell: Left wall (1), Right wall (2), North corner right / left part (3 / 4), East, West, South corner (5, 6, 7), Left / Right door (8, 9), Column / pillar (12), Tree / object (14). |
+| North corner (both halves) | 3 + 4 | One picture cut at x = 80 into the left half (4) and the right half (3), both with the same number; a cell holding 3 draws both. |
+| Lower wall | 16-19 | Drawn under the floor (cliffs, pits): Lower wall left, right, north, south. |
+
+The small diamond next to the kind shows where on the cell a wall of that
+orientation stands (orange: the sub-tiles it blocks by default). Walls,
+shadows and lower walls take a **Height** in pixels; tiles are stored in
+whole 32-pixel blocks, so the height is rounded up and the dialog shows what
+it becomes ("stored as 128 px"). The special marker tiles (orientations 10
+and 11: warps, stairs) cannot be made here, because the game's map flow does
+not take them.
+
+**Picture.**
+
+- **Blank**: no pixels yet; paint it with **Open in editor**.
+- **One colour**: the whole drawable area in one palette index.
+- **Picture file**: a PNG, BMP, GIF (first frame) or PCX. **Placement** puts
+  it **As is** (its top-left on the top-left of the drawable area: paint
+  your art on a 160-wide canvas of the wall's height and it lands exactly),
+  **Centre**d, or scaled to **Fit** (nearest neighbour, aspect kept). Colours
+  are matched to the act **Palette** (the map's act when the dialog opens)
+  with the Converter's options: dither, transparent colour, alpha cut-off and
+  "protect transparent".
+
+**Preview.** The tile as the map view draws it on its cell: the yellow
+diamond is the cell's floor, blue is where pixels can go (the template), red
+marks picture pixels that fall outside it. Under it: the blocks and pixels
+each tile gets, and warnings when pixels are left out or use palette index
+0 (the transparent colour of DT1 tiles, so they would not show).
+
+**Sub-tile flags.** The tile starts with the most common pattern of shipped
+tiles of its orientation (for example "block walking, sight and jumps" along
+the edge a wall stands on; none for floors). Paint the 5x5 sub-tiles with the
+same brush as **Collision flags**; **Back to the defaults** undoes that.
+
+**Into.** **This map's own DT1**, or, when a library is open in Tile
+libraries, that library.
+
+- **Add to this map...** opens the [Add to this map](#the-tiles-panel)
+  preview for the new tiles: they get a number no DT1 of the map's level type
+  uses, go into the level type's own `<type name>_custom.dt1`, which is
+  registered in LvlTypes and LvlPrest (Dt1Mask) and listed in the DS1, all
+  saved to `capybara\saves\<profile>` with CHANGED.txt entries and a History
+  snapshot. The brush becomes the new tile (both halves of a corner pair are
+  drawn when you paint orientation 3), and the Tiles browser lists it once the
+  saves are re-indexed. **Ctrl+Z** undoes the map's file list and what you
+  painted; the DT1 and tables are restored from the History panel.
+- **Add to <library>** appends the tiles to the library in Tile libraries at
+  free numbers (one undo step there); save the library from that window.
+- **Open in editor** opens the tiles in the sprite editor (below).
+
+![Created brick walls standing in the Rogue Encampment](images/new-tile-in-map.jpg)
+
+#### Painting a new tile
+
+**Open in editor** switches to Sprites mode with the new tiles in the
+Editor, one frame per tile (two for a corner pair), in the dialog's act
+palette. Every pixel of the tile's template is editable, not only the
+blocks it already has: a blank floor can be painted anywhere inside its
+diamond, a blank wall anywhere in its 160-wide box. Pixels outside the
+template are dimmed and locked. **Add to this map...** (or **Add to
+<library>**) in the Editor's top bar rebuilds the tiles from what you
+painted, split into blocks the way shipped tiles are, and opens the same
+preview as the dialog. **Save to game path...** saves them as a DT1 file of
+their own instead.
+
+![A new wall in the sprite editor after Shape... made it taller](images/new-tile-editor.png)
+
+#### Changing a tile's shape
+
+A tile's shape is its kind, orientation and height. **Shape...** in the
+Editor's top bar (for a DT1, on the current tile) and **Shape of the selected
+tile** in Tile libraries change it: a taller or shorter wall, another
+orientation, a floor into a roof and back. The picture stays where it is on
+its cell (a wall keeps its base), and the tile is re-split into the new
+shape's blocks. Pixels the new shape cannot hold are counted first ("12
+pixel(s) lie outside the new shape and will be lost") and Apply is one undo
+step, so Undo brings them back. In the Editor the editable area becomes the
+new template right away; the file changes when you save. The tile keeps its
+number, rarity, sound and animation, and its sub-tile flags unless the
+orientation changes (then it gets the new orientation's defaults).
+
+#### New empty DT1
+
+**New empty DT1** in Tile libraries makes a library with no tiles: a
+**Folder** under `data\global\tiles` (**The map's** fills in the folder of
+the open map's level type) and a **Name** of letters, digits and `_` (the
+same check as Duplicate and Rename, with the longest name the game's tile
+paths allow). It is saved to `capybara\saves\<profile>` and opened.
+**Register it for the open map's level type** makes the game load it: a File
+slot of the map's LvlTypes row, the map's LvlPrest Dt1Mask bit and the DS1's
+file list, as Add to this map does. Then use **New tile into this DT1...** to
+fill it.
 
 ### Presets (right column > Presets)
 
@@ -1278,7 +1392,9 @@ but not converted or saved.
 A `.dt1` opens as a list of tiles: **Tile** picks one by index, or type its
 **orientation**, **main** and **sub** to jump to it. **Open in editor** edits
 the tiles in the sprite editor (every tile is a frame; saving re-encodes only
-the blocks you changed). **Convert to palette...** remaps the whole set.
+the blocks you changed, and re-splits a tile whose shape you changed with
+**Shape...**). **Convert to palette...** remaps the whole set. To make new
+tiles, see [New tile](#new-tile-map--tile-libraries--new-tile).
 
 ### The Converter
 
@@ -1577,7 +1693,12 @@ another sprite asks first.
 Viewer. Each tile is one frame (the whole tile, all its blocks composed), and
 the frame tooltips show its orientation, main and sub index; the tile selected
 in the Viewer is the one shown first. Pixels outside every block (and outside
-the isometric diamonds) are dimmed and locked for all tools. Frames,
+the isometric diamonds) are dimmed and locked for all tools, so painting an
+existing tile changes only the blocks it has; **Shape...** changes the
+current tile's shape and then frees its whole template (see
+[Changing a tile's shape](#changing-a-tiles-shape)), and a tile made with
+[New tile](#new-tile-map--tile-libraries--new-tile) is editable across its
+whole template from the start. Frames,
 directions and offsets cannot be changed, and DC6/DCC exports, the DCC check
 and GIF export are unavailable. **Save to game path...** (or **Export**) cuts
 the changed tiles back into their blocks and re-encodes only those blocks;
@@ -1755,7 +1876,9 @@ into the paint brush.
 ### The Tiles panel
 
 From top to bottom: the category chips, the **DT1** drop-down (one of the
-active map's DT1s, or all of them), the filter box and the thumbnail grid.
+active map's DT1s, or all of them) with **New tile...** next to it (see
+[New tile](#new-tile-map--tile-libraries--new-tile)), the filter box and the
+thumbnail grid.
 Everything else is in the **Search options** section under the filter box
 (closed at start):
 
@@ -1788,7 +1911,7 @@ On a thumbnail:
 | Click | Select it. |
 | Double-click, or Enter | Use it: a tile becomes the brush (on its layer kind) and the Paint tool is picked; a map opens; a sprite opens in Sprites mode. |
 | The star | Add to or remove from favorites (the first group, or a new "Favorites" group). |
-| Right-click | The tile menu: **Use as brush / open**, **Set alias...**, **Add tag...** / **Remove tag**, **Add note...** / **Edit note...**, **Add to favorites** (a group, or **New group...**), **Remove from** a group, **Find similar**, **Show maps that use it**, **Copy key**. |
+| Right-click | The tile menu: **Use as brush / open**, **Set alias...**, **Add tag...** / **Remove tag**, **Add note...** / **Edit note...**, **Add to favorites** (a group, or **New group...**), **Remove from** a group, **Add to this map...**, **New tile...**, **Find similar**, **Show maps that use it**, **Copy key**. |
 
 **Add to this map.** Right-click a tile with the orange **!** and choose
 **Add to this map...** (Ctrl+click first to pick several tiles; the menu then

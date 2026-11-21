@@ -43,6 +43,10 @@ credit for that design goes to its author; go check it out.
   act's or UI palette with an adjustable colour plan, overrides, before/after
   preview and batch, and a per-file palette memory that warns before art is
   saved under the wrong palette.
+- **New tiles.** Make floors, roofs, shadows and walls of any orientation
+  and height, blank or from a picture, with a live preview on the map's cell,
+  and add them to the map's own DT1 in one step; change an existing tile's
+  shape (taller wall, other orientation, floor <-> roof).
 - **Tile browser and search.** A background index of every tile and sprite in
   the profile, a Tiles browser with thumbnails, favorites, recents and saved
   searches, and Ctrl+K search with filters such as `type:floor color:green`.
