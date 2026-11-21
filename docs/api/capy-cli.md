@@ -87,7 +87,7 @@ line, protocol versions 2025-06-18 / 2025-03-26 / 2024-11-05) on stdin/stdout:
 profile, &mut input, &mut output)` is the testable entry point. Tools:
 `list_maps open_map new_map map_info get_cells paint set_cell copy_area
 find_replace reroll resize_map set_cell_flags list_objects add_object
-edit_objects undo redo check_map render_map save_map`. One map is open at a
+edit_objects undo redo check_map render_map save_map` (more below). One map is open at a
 time and edited through `capy_edit::Document` (so a session equals the same
 direct calls, tested); `save_map` writes `capybara\saves\<profile>` +
 `CHANGED.txt` + a history snapshot and never the game folder. Tool failures are
@@ -95,3 +95,29 @@ results with `isError`; protocol errors are JSON-RPC errors. `render_map`
 returns a PNG image content. Also `regions`, `no_spawn_area`, `list_tiles`,
 `list_placeable`, `add_layer`, `clear` and
 `history` are ported; overlay rendering in `render_map` is not.
+
+Tile creation (`mcp/session/tiles.rs`, on `capy_mod::tiles_create`; no
+creation logic of its own): `tile_template`, `create_tile`,
+`import_tile_image`, `reshape_tile`, `new_dt1`, `list_own_tiles`,
+`inspect_tile`. Shapes are `orientation` (0-19) + `height` (wall-like
+tiles, rounded up to 32) + `roof_height` (roofs, default 80) + `corner_pair`
+(3/4: `build_corner_pair` from one 160-wide picture). `create_tile` pixels are
+`{data: base64, width, height}` (at most 2048 a side) in the plain top-left
+space of `TileTemplate::rect` (placed with `place_indexed`), index 0 or
+`transparent_index` empty, over an optional `fill` of `TileTemplate::mask`.
+`import_tile_image` reads `path` (a file, .png/.bmp/.gif/.pcx, at most 16 MB)
+or `data` (base64), refuses pictures over 4096 a side, and calls
+`import_tile_image` with the act palette. Targets: no `dt1` = the open map's
+own DT1 via `add_new_tiles_to_map` (number from `free_tile_number` over every
+DT1 of the type, or `main`/`sub`; the core renumbers clashes); `dt1` = a DT1
+the profile's saves already hold (others are refused), numbers avoiding the
+other DT1s the open map loads. Tables are read and saved as the app's "Add to
+this map" does (`tables_for_tiles` / `save_registration`: decoded `.bin` and
+in-place `patch_bin_field` on 1.13c, `.txt` mirrored via
+`mirror_registration`; else the `.txt`). The DS1 file list change is one
+`Patch::replace` undo step. After a write the map's `MapInfo` is re-resolved
+and its `TileSet` dropped, so placement tools see the tiles. Every write is
+`SavesDir::save` + a `SnapshotStore` record; `inspect_tile` `render: "file"`
+writes `capybara\renders\<name>.png` (`is_safe_name`). DT1 paths are under
+`data\global\tiles` (no `..`, drive, or reserved characters); `new_dt1` names
+go through `custom_name_problem`.

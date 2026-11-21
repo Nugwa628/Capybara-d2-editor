@@ -18,6 +18,18 @@ All notable changes to this project are documented here.
   floor <-> roof), an empty DT1, free tile numbers, and adding created tiles
   to a map's own DT1 through the "Add to this map" flow. Pixels a tile cannot
   hold are reported, not lost silently.
+- **MCP tools to create tiles** (`capy mcp`): `tile_template` (the drawable
+  area of a shape, optionally as a base64 mask or PNG), `create_tile` (from a
+  palette-indexed pixel grid, a fill colour or blank; a north corner as a
+  pair), `import_tile_image` (PNG/BMP/GIF/PCX file or base64, placed and
+  quantized to the map's act palette), `reshape_tile`, `new_dt1`,
+  `list_own_tiles` and `inspect_tile` (with a PNG render). Without `dt1`, new
+  tiles go to the open map's own DT1 through "Add to this map": renumbered past
+  every DT1 of its level type, registered in LvlTypes/LvlPrest (compiled
+  `.bin` fields patched on 1.13c) and listed in the map, so `list_tiles`,
+  `paint`, `render_map` and `check_map` use them straight away. Every file
+  goes to `capybara\saves\<profile>` with `CHANGED.txt` and a history
+  snapshot; only DT1s already in the saves are changed.
 
 ## [1.2.3] - 2026-10-21
 

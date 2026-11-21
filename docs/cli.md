@@ -316,13 +316,82 @@ MCP client as the command `CapybarasD2Editor.exe mcp --profile vanilla`.
 Tools: `list_maps`, `open_map`, `new_map`, `map_info`, `get_cells`, `paint`,
 `set_cell`, `copy_area`, `find_replace`, `reroll`, `resize_map`,
 `set_cell_flags`, `list_objects`, `add_object`, `edit_objects`, `undo`,
-`redo`, `check_map`, `render_map` (returns a PNG) and `save_map`.
+`redo`, `check_map`, `render_map` (returns a PNG), `save_map`, `regions`,
+`no_spawn_area`, `list_tiles`, `list_placeable`, `add_layer`, `clear`,
+`history`, and the tile-creation tools below.
 
 One map is open at a time; edits can be undone until the map is replaced.
 `save_map` writes to `capybara\saves\<profile>\<game path>`, adds the file to
 `CHANGED.txt` and records a history snapshot, exactly as the editor's Save
 does. The game folder is never written. A tool that fails returns a result
 marked `isError` with the reason.
+
+### Creating tiles
+
+New DT1 tiles are built the way shipped tiles of their kind are (see
+`docs/specs/dt1.md` section 14). A **shape** is given as:
+
+| argument | meaning |
+|---|---|
+| `orientation` | 0 floor, 1-9, 12, 14 upper walls (1 left, 2 right, 3/4 the halves of a north corner, 7 south corner, 8/9 doors, 12 pillar, 14 tree), 10/11 special, 13 shadow, 15 roof, 16-19 lower walls |
+| `height` | walls, shadows, specials, lower walls: the picture height in pixels, 1-2016, rounded up to a multiple of 32 |
+| `roof_height` | roofs: how far up the game lifts the roof (default 80) |
+| `corner_pair` | with orientation 3 or 4: one 160-wide picture becomes both halves (x 0-79 orientation 4, x 80-159 orientation 3), numbered together |
+
+Tools:
+
+- `tile_template {shape, mask?}`: the picture size for the shape, where its
+  pixel (0,0) is in tile space, what part is drawable (floors and roofs: the
+  160x79 diamond only), the sub-block count and the default sub-tile flags.
+  `mask: "base64"` adds the drawable area as one byte per pixel (1 =
+  drawable), `mask: "png"` as a PNG.
+- `create_tile {shape, pixels?, fill?, placement?, transparent_index?,
+  target...}`: `pixels` is `{data, width, height}`: `data` is base64 of
+  `width * height` palette indices, row by row, in the picture of
+  `tile_template` (pixel (0,0) on its top-left; at most 2048 a side). Index 0
+  (or `transparent_index`) is empty. `fill` (1-255) paints the whole drawable
+  area first; with neither the tile is blank. `placement`: `as_is` (default),
+  `center` or `fit` (scaled to fit, aspect kept).
+- `import_tile_image {shape, path | data, format?, placement?, dither?,
+  transparent_rgb?, alpha_threshold?, act?, target...}`: a PNG, BMP, GIF
+  (first frame) or PCX picture, from a file (at most 16 MB) or base64 `data`,
+  at most 4096 pixels a side; placed, then quantized to the act palette (the
+  map's by default). `dither`: `none` or `floyd_steinberg`; `transparent_rgb`
+  `[r, g, b]` (default black) or `null` for alpha only.
+- `reshape_tile {dt1?, index | orientation+main+sub(+variant), new_orientation?,
+  new_height?, new_roof_height?}`: re-splits a tile of an own DT1 into another
+  shape; its pixels stay where they are and what no longer fits is reported.
+- `new_dt1 {name, folder?, register?}`: an empty DT1
+  `<folder>/<name>.dt1` (letters, digits and `_`, within the game's path
+  length) in the profile's saves; `folder` defaults to the open map's own-DT1
+  folder. `register: true` also registers it for the open map's level type
+  (LvlTypes File slot and LvlPrest Dt1Mask) and lists it in the map.
+- `list_own_tiles {dt1?, limit?}`: the tiles of the open map's own DT1 (or
+  `dt1`): number, kind, shape, rarity, sound, blocked sub-tiles, blocks.
+- `inspect_tile {dt1?, index | orientation+main+sub(+variant), render?, name?,
+  act?}`: header fields, sub-tile flags, blocks, and a picture: `render:
+  "image"` (default, a PNG in the result), `"file"` (written to
+  `capybara\renders\<name>.png`) or `"none"`.
+
+**Target** (`create_tile`, `import_tile_image`): without `dt1` the tile goes
+into the open map's own DT1 (`<level type>_custom.dt1`, or
+`<map>_custom.dt1`), exactly like the editor's *Add to this map*: its number
+avoids every DT1 of the level type (a clash is renumbered; corner halves stay
+together), the DT1 is registered in LvlTypes and the map's LvlPrest Dt1Mask
+(on 1.13c the compiled `.bin` fields are patched in place and the `.txt`
+forms kept in step) and the map's DS1 lists it (one undo step; `save_map`
+keeps it). With `dt1` the tile is appended to that DT1, which must already be
+in the profile's saves (made by `new_dt1` or an earlier addition); DT1s of the
+game are never changed. `main` (0-63) and `sub` (0-255) ask for a number;
+`flags` (25 numbers, `y * 5 + x`), `rarity` and `sound` set the header. The
+result names the number each tile got, lists every file written and warns
+about pixels outside the drawable area and opaque pixels of palette index 0
+(which DT1s draw as transparent). Special tiles (10, 11) can only go into a
+`dt1`, as in the editor.
+
+After a tile is added the map's tile set is reloaded, so `list_tiles`,
+`paint`, `render_map` and `check_map` use the new tile at once. All files go
+to `capybara\saves\<profile>` with `CHANGED.txt` and a history snapshot.
 
 ---
 
